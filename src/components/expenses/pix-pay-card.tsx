@@ -9,6 +9,7 @@ const STEPS = ["Toque em “Copiar Pix Copia e Cola”.", "Abra o app do seu ban
 /** Cartão "Sua parte": copiar o código Pix, ver o QR Code e, como alternativa, copiar a chave. */
 export function PixPayCard({
 	shareCents,
+	paidSoFarCents = 0,
 	payeeName,
 	pix,
 	payload,
@@ -18,7 +19,10 @@ export function PixPayCard({
 	onCopyCode,
 	onCopyKey,
 }: Readonly<{
+	/** Quanto falta pagar (o valor do código Pix). */
 	shareCents: number;
+	/** Se a pessoa já pagou uma parte, avisa quanto e que o código é só do que falta. */
+	paidSoFarCents?: number;
 	payeeName: string;
 	pix: { type: PixKeyType; key: string };
 	/** Código "Copia e Cola"; null se não foi possível gerar. */
@@ -34,10 +38,15 @@ export function PixPayCard({
 		<Card as="section" tone="high" aria-labelledby="sua-parte" className="space-y-5 p-5 md:p-6">
 			<div>
 				<h2 id="sua-parte" className="text-title-large text-on-surface-variant">
-					Sua parte
+					{paidSoFarCents > 0 ? "Falta pagar" : "Sua parte"}
 				</h2>
 				<p className="money text-display-small font-bold text-error">{formatBRL(shareCents)}</p>
 				<p className="text-body-large text-on-surface-variant">para {payeeName}</p>
+				{paidSoFarCents > 0 && (
+					<p className="mt-1 text-body-large text-on-surface">
+						Você já pagou {formatBRL(paidSoFarCents)}; falta {formatBRL(shareCents)}.
+					</p>
+				)}
 			</div>
 
 			{payload ? (

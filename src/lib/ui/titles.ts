@@ -12,5 +12,5 @@ export function screenInfo(pathname: string): ScreenInfo {
 		return { title: "Despesa", back: `/app/grupos/${expense[1]}`, nav: "/app" };
 	}
 	if (pathname.startsWith("/app/grupos/")) return { title: "Grupo", back: "/app", nav: "/app" };
-	return { title: "Pague Sua Parte", back: null, nav: "/app" };
+	return { title: "PagueSuaParte", back: null, nav: "/app" };
 }

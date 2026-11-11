@@ -3,16 +3,18 @@ import { ObjectId, type Db } from "mongodb";
 import type { AttachmentStore } from "@/lib/storage/attachments";
 
 vi.mock("@opennextjs/cloudflare", () => ({ getCloudflareContext: vi.fn() }));
-const { createExpense, deleteExpense, getAttachmentRef, getExpenseDetail, getSummary, listExpenses, setSharePaid } = await import("./repo");
+const { createExpense, deleteExpense, getAttachmentRef, getExpenseDetail, getSummary, listExpenses, setSharePaid, updateParticipants } = await import("./repo");
+const { listGroups } = await import("@/lib/groups/repo");
 
 const GID = "507f1f77bcf86cd799439011";
 const EID = "507f1f77bcf86cd799439022";
 const AID = "a".repeat(32);
 const member = (uid: string, role: "admin" | "member" = "member") => ({ uid, role, joinedAt: new Date() });
-const group = () => ({ _id: new ObjectId(GID), name: "G", members: [member("u1", "admin"), member("u2"), member("u3")] });
+const group = () => ({ _id: new ObjectId(GID), name: "G", members: [member("u1", "admin"), member("u2"), member("u3"), member("u4")] });
 const PIX = { type: "email", key: "ana@x.com" };
 
-type Share = { uid: string; amountCents: number; status: "payer" | "pending" | "paid" };
+type Share = { uid: string; amountCents: number; paidCents: number; paidAt?: Date; markedBy?: string; method?: "manual" };
+const S = (uid: string, amountCents: number, paidCents = 0, extra: Partial<Share> = {}): Share => ({ uid, amountCents, paidCents, ...extra });
 const expense = (over: Record<string, unknown> = {}) => ({
 	_id: new ObjectId(EID),
 	groupId: new ObjectId(GID),
@@ -22,11 +24,8 @@ const expense = (over: Record<string, unknown> = {}) => ({
 	amountCents: 3000,
 	date: "2026-11-10",
 	pix: { ...PIX, payeeName: "Beto" },
-	shares: [
-		{ uid: "u2", amountCents: 1000, status: "payer" },
-		{ uid: "u1", amountCents: 1000, status: "pending" },
-		{ uid: "u3", amountCents: 1000, status: "pending" },
-	] as Share[],
+	shares: [S("u2", 1000), S("u1", 1000), S("u3", 1000)],
+	version: 0,
 	attachments: [{ id: AID, key: "groups/g/e/" + AID, name: "nota.pdf", contentType: "application/pdf", size: 10 }],
 	createdAt: new Date("2026-11-10T10:00:00Z"),
 	updatedAt: new Date(),
@@ -83,10 +82,11 @@ describe("createExpense", () => {
 		const doc = expenses.insertOne.mock.calls[0][0];
 		expect(doc).toMatchObject({ paidBy: "u1", createdBy: "u1", pix: { type: "email", key: "ana@x.com", payeeName: "Ana" } });
 		expect(doc.shares).toEqual([
-			{ uid: "u1", amountCents: 1000, status: "payer" },
-			{ uid: "u2", amountCents: 1000, status: "pending" },
-			{ uid: "u3", amountCents: 1000, status: "pending" },
+			{ uid: "u1", amountCents: 1000, paidCents: 0 },
+			{ uid: "u2", amountCents: 1000, paidCents: 0 },
+			{ uid: "u3", amountCents: 1000, paidCents: 0 },
 		]);
+		expect(doc.version).toBe(0);
 		expect(doc.attachments).toHaveLength(1);
 		expect(doc.attachments[0].key).toBe(`groups/${GID}/${doc._id.toHexString()}/${doc.attachments[0].id}`);
 		expect(store.put).toHaveBeenCalledOnce();
@@ -94,7 +94,7 @@ describe("createExpense", () => {
 	it("quem paga fora da divisão não ganha cota", async () => {
 		const { db, expenses } = mockDb();
 		await create(db, fakeStore(), { participantUids: ["u2", "u3"] }, []);
-		expect(expenses.insertOne.mock.calls[0][0].shares.map((s: Share) => s.status)).toEqual(["pending", "pending"]);
+		expect(expenses.insertOne.mock.calls[0][0].shares.map((s: Share) => s.uid)).toEqual(["u2", "u3"]);
 	});
 	it("não membro ou id malformado: no_group, sem tocar no storage", async () => {
 		const store = fakeStore();
@@ -114,8 +114,12 @@ describe("createExpense", () => {
 		expect(r).toMatchObject({ status: "invalid", field: "participantUids" });
 		expect(store.put).not.toHaveBeenCalled();
 	});
-	it("só o próprio usuário como participante", async () => {
-		expect(await create(mockDb().db, fakeStore(), { participantUids: ["u1"] })).toMatchObject({ status: "invalid", field: "participantUids" });
+	it("só o próprio usuário como participante é permitido", async () => {
+		const { db, expenses } = mockDb();
+		const r = await create(db, fakeStore(), { participantUids: ["u1"] }, []);
+		expect(r.status).toBe("ok");
+		expect(expenses.insertOne.mock.calls[0][0].shares).toEqual([{ uid: "u1", amountCents: 3000, paidCents: 0 }]);
+		if (r.status === "ok") expect(r.expense).toMatchObject({ participantUids: ["u1"], canEditParticipants: true });
 	});
 	it("valor menor que o número de participantes", async () => {
 		expect(await create(mockDb().db, fakeStore(), { amountCents: 2 })).toMatchObject({ status: "invalid", field: "amountCents" });
@@ -141,16 +145,20 @@ describe("listExpenses", () => {
 	it("null para não membro", async () => {
 		expect(await listExpenses(mockDb({ group: null }).db, GID, "x")).toBeNull();
 	});
-	it("yourStatus para pagador, devedor e não participante; ordenação e limite", async () => {
-		const noPart = expense({ _id: new ObjectId(), shares: [{ uid: "u2", amountCents: 500, status: "payer" }, { uid: "u3", amountCents: 500, status: "pending" }] });
-		const mine = expense({ _id: new ObjectId(), paidBy: "u1", createdBy: "u1", shares: [{ uid: "u1", amountCents: 1000, status: "payer" }, { uid: "u2", amountCents: 1000, status: "paid" }, { uid: "u3", amountCents: 1000, status: "pending" }] });
-		const m = mockDb({ expenses: [expense(), noPart, mine] });
+	it("yourStatus, due/refund, contagens; ordenação e limite", async () => {
+		const noPart = expense({ _id: new ObjectId(), shares: [S("u2", 500), S("u3", 500)] });
+		const mine = expense({ _id: new ObjectId(), paidBy: "u1", createdBy: "u1", shares: [S("u1", 1000), S("u2", 1000, 1000), S("u3", 1000)] });
+		const refunds = expense({ _id: new ObjectId(), shares: [S("u2", 600), S("u1", 0, 400), S("u3", 600, 900)] });
+		const partial = expense({ _id: new ObjectId(), shares: [S("u2", 600), S("u1", 600, 250)] });
+		const m = mockDb({ expenses: [expense(), noPart, mine, refunds, partial] });
 		const list = (await listExpenses(m.db, GID, "u1"))!;
 		expect(m.cursor.sort).toHaveBeenCalledWith({ date: -1, createdAt: -1, _id: -1 });
 		expect(m.cursor.limit).toHaveBeenCalledWith(100);
-		expect(list[0]).toMatchObject({ yourStatus: "pending", yourShareCents: 1000, pendingCount: 2, attachmentCount: 1, paidBy: { uid: "u2", name: "Beto", isYou: false } });
-		expect(list[1]).toMatchObject({ yourStatus: "none", yourShareCents: 0, pendingCount: 1, attachmentCount: 1 });
-		expect(list[2]).toMatchObject({ yourStatus: "payer", yourShareCents: 1000, pendingCount: 1, paidBy: { name: "Aninha", isYou: true } });
+		expect(list[0]).toMatchObject({ yourStatus: "pending", yourShareCents: 1000, yourDueCents: 1000, yourRefundCents: 0, pendingCount: 2, refundCount: 0, attachmentCount: 1, paidBy: { uid: "u2", name: "Beto", isYou: false } });
+		expect(list[1]).toMatchObject({ yourStatus: "none", yourShareCents: 0, yourDueCents: 0, yourRefundCents: 0, pendingCount: 1, refundCount: 0 });
+		expect(list[2]).toMatchObject({ yourStatus: "payer", yourShareCents: 1000, yourDueCents: 0, pendingCount: 1, refundCount: 0, paidBy: { name: "Aninha", isYou: true } });
+		expect(list[3]).toMatchObject({ yourStatus: "refund", yourShareCents: 0, yourDueCents: 0, yourRefundCents: 400, pendingCount: 0, refundCount: 2 });
+		expect(list[4]).toMatchObject({ yourStatus: "pending", yourDueCents: 350, yourRefundCents: 0, pendingCount: 1 });
 	});
 });
 
@@ -180,7 +188,7 @@ describe("getExpenseDetail", () => {
 		};
 		expect(await get("u2")).toBe(true); // criador
 		expect(await get("u3")).toBe(false); // outro membro
-		expect(await get("u1", expense({ shares: [{ uid: "u1", amountCents: 1, status: "paid" }] }))).toBe(false);
+		expect(await get("u1", expense({ shares: [S("u2", 1), S("u1", 1, 1)] }))).toBe(false);
 	});
 });
 
@@ -201,7 +209,7 @@ describe("deleteExpense", () => {
 		const m = mockDb();
 		const store = fakeStore();
 		expect(await deleteExpense(m.db, store, GID, EID, "u2")).toEqual({ status: "ok" });
-		expect(m.expenses.deleteOne).toHaveBeenCalledWith(expect.objectContaining({ "shares.status": { $ne: "paid" } }));
+		expect(m.expenses.deleteOne).toHaveBeenCalledWith(expect.objectContaining({ shares: { $not: { $elemMatch: { paidCents: { $gt: 0 } } } } }));
 		expect(store.delete).toHaveBeenCalledWith(["groups/g/e/" + AID]);
 	});
 	it("admin apaga despesa de outro", async () => {
@@ -213,13 +221,19 @@ describe("deleteExpense", () => {
 		expect(m.expenses.deleteOne).not.toHaveBeenCalled();
 	});
 	it("com cota paga: has_payment, inclusive se a corrida for perdida", async () => {
-		const paid = expense({ shares: [{ uid: "u2", amountCents: 1, status: "payer" }, { uid: "u1", amountCents: 1, status: "paid" }] });
+		const paid = expense({ shares: [S("u2", 1), S("u1", 1, 1)] });
 		const store = fakeStore();
 		expect((await deleteExpense(mockDb({ expense: paid }).db, store, GID, EID, "u2")).status).toBe("has_payment");
 		const race = mockDb();
 		race.expenses.deleteOne.mockResolvedValue({ deletedCount: 0 });
 		expect((await deleteExpense(race.db, store, GID, EID, "u2")).status).toBe("has_payment");
 		expect(store.delete).not.toHaveBeenCalled();
+	});
+	it("só reembolso pendente (cota 0 com pagamento) também bloqueia; cota do dono não conta", async () => {
+		const refundOnly = expense({ shares: [S("u2", 1000), S("u3", 0, 400)] });
+		expect((await deleteExpense(mockDb({ expense: refundOnly }).db, fakeStore(), GID, EID, "u2")).status).toBe("has_payment");
+		const ownerPaidField = expense({ shares: [S("u2", 1000, 1000), S("u3", 1000)] });
+		expect((await deleteExpense(mockDb({ expense: ownerPaidField }).db, fakeStore(), GID, EID, "u2")).status).toBe("ok");
 	});
 	it("não membro / inexistente", async () => {
 		expect((await deleteExpense(mockDb({ group: null }).db, fakeStore(), GID, EID, "x")).status).toBe("no_group");
@@ -228,105 +242,133 @@ describe("deleteExpense", () => {
 });
 
 describe("getSummary", () => {
+	const G2 = new ObjectId("507f1f77bcf86cd799439033");
 	it("zero sem grupos, sem consultar despesas", async () => {
 		const m = mockDb();
 		m.groups.find.mockReturnValue({ toArray: vi.fn().mockResolvedValue([]) });
 		expect(await getSummary(m.db, "u1")).toEqual({ toReceiveCents: 0, toPayCents: 0 });
 		expect(m.expenses.aggregate).not.toHaveBeenCalled();
 	});
-	it("mapeia o resultado da agregação e restringe aos grupos atuais", async () => {
-		const m = mockDb({ agg: [{ _id: null, toPay: 700, toReceive: 2500 }] });
-		expect(await getSummary(m.db, "u1")).toEqual({ toReceiveCents: 2500, toPayCents: 700 });
+	it("soma os saldos por grupo (uma agregação) e restringe aos grupos atuais", async () => {
+		const m = mockDb({ agg: [{ _id: new ObjectId(GID), toPay: 700, toReceive: 2500 }, { _id: G2, toPay: 50, toReceive: 5 }] });
+		m.groups.find.mockReturnValue({ toArray: vi.fn().mockResolvedValue([{ _id: new ObjectId(GID) }, { _id: G2 }]) });
+		expect(await getSummary(m.db, "u1")).toEqual({ toReceiveCents: 2505, toPayCents: 750 });
+		expect(m.expenses.aggregate).toHaveBeenCalledTimes(1);
 		const pipeline = m.expenses.aggregate.mock.calls[0][0];
-		expect(pipeline[0].$match.groupId.$in).toHaveLength(1);
-		expect(JSON.stringify(pipeline)).toContain('"pending"');
+		expect(pipeline[0].$match.groupId.$in).toHaveLength(2);
 		expect(m.groups.find).toHaveBeenCalledWith({ "members.uid": "u1" }, expect.anything());
 	});
-	it("sem cotas pendentes: zeros", async () => {
-		expect(await getSummary(mockDb().db, "u1")).toEqual({ toReceiveCents: 0, toPayCents: 0 });
+	it("summary == soma dos grupos de GET /api/groups (mesma agregação)", async () => {
+		const rows = [{ _id: new ObjectId(GID), toPay: 700, toReceive: 2500 }, { _id: G2, toPay: 50, toReceive: 5 }];
+		const gdocs = [
+			{ _id: new ObjectId(GID), name: "A", members: [member("u1")], createdAt: new Date() },
+			{ _id: G2, name: "B", members: [member("u1")], createdAt: new Date() },
+		];
+		const m = mockDb({ agg: rows });
+		m.groups.find.mockReturnValue({ toArray: vi.fn().mockResolvedValue(gdocs), sort: vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue(gdocs) }) });
+		const groups = await listGroups(m.db, "u1");
+		const summary = await getSummary(m.db, "u1");
+		expect(summary).toEqual({
+			toReceiveCents: groups.reduce((a, g) => a + g.toReceiveCents, 0),
+			toPayCents: groups.reduce((a, g) => a + g.toPayCents, 0),
+		});
+		expect(summary).toEqual({ toReceiveCents: 2505, toPayCents: 750 });
+	});
+	it("o pipeline usa due/refund (max 0) e ignora a cota de quem pagou", async () => {
+		const m = mockDb();
+		await getSummary(m.db, "u1");
+		const text = JSON.stringify(m.expenses.aggregate.mock.calls[0][0]);
+		expect(text).toContain("$shares.paidCents");
+		expect(text).toContain('"$max"');
+		expect(text).toContain('"$ne":["$shares.uid","$paidBy"]');
 	});
 });
 
-describe("detalhe: pagamento manual", () => {
-	const paidAt = new Date("2026-11-11T12:00:00Z");
-	const withPaid = () =>
-		expense({
-			shares: [
-				{ uid: "u2", amountCents: 1000, status: "payer" },
-				{ uid: "u1", amountCents: 1000, status: "paid", paidAt, markedBy: "u2", method: "manual" },
-				{ uid: "u3", amountCents: 1000, status: "pending" },
-			],
-		});
-	it("expõe canMarkPaid, paidAt e method", async () => {
-		const get = async (uid: string) => {
-			const r = await getExpenseDetail(mockDb({ expense: withPaid() }).db, GID, EID, uid);
-			if (r.status !== "ok") throw new Error("esperava ok");
-			return r.expense;
-		};
-		const owner = await get("u2");
-		expect(owner.canMarkPaid).toBe(true);
-		expect(owner.shares.map((s) => [s.paidAt, s.method])).toEqual([
-			[null, null],
-			[paidAt.toISOString(), "manual"],
-			[null, null],
-		]);
-		expect((await get("u1")).canMarkPaid).toBe(false);
-		expect(owner.shares.every((s) => !("markedBy" in s))).toBe(true);
-	});
-	it("parte paga à mão sai das contas: lista e resumo só contam pendentes", async () => {
-		const list = await listExpenses(mockDb({ expenses: [withPaid()] }).db, GID, "u2");
-		expect(list?.[0].pendingCount).toBe(1);
-		const m = mockDb();
-		await getSummary(m.db, "u1");
-		const pipeline = m.expenses.aggregate.mock.calls[0][0];
-		expect(pipeline).toContainEqual({ $match: { "shares.status": "pending" } });
-	});
-});
+// ---------- fake com estado: simula findOne/updateOne com filtro de versão ----------
+
+function statefulDb(initial: ReturnType<typeof expense>, opts: { failUpdates?: number; raceOnce?: boolean } = {}) {
+	const clone = (d: ReturnType<typeof expense>) => ({ ...d, shares: d.shares.map((x) => ({ ...x })) }) as ReturnType<typeof expense>;
+	let doc = clone(initial);
+	let failures = opts.failUpdates ?? 0;
+	const writes: unknown[] = [];
+	const expenses = {
+		findOne: vi.fn(async () => clone(doc)),
+		updateOne: vi.fn(async (filter: Record<string, unknown>, update: { $set: Record<string, unknown>; $inc?: { version: number } }) => {
+			if (failures > 0) {
+				failures--;
+				return { matchedCount: 0 };
+			}
+			const v = filter.version as number | { $exists: boolean };
+			const cur = (doc as { version?: number }).version;
+			const ok = typeof v === "object" ? cur === undefined : cur === v;
+			if (!ok) return { matchedCount: 0 };
+			doc = { ...doc, ...update.$set, version: (cur ?? 0) + (update.$inc?.version ?? 0) } as typeof doc;
+			writes.push(update);
+			return { matchedCount: 1 };
+		}),
+	};
+	const base = mockDb();
+	const db = { collection: (n: string) => (n === "expenses" ? expenses : n === "groups" ? base.groups : base.users) } as unknown as Db;
+	return { db, expenses, writes, get doc() { return doc; } };
+}
+const totalOf = (shares: { amountCents: number }[]) => shares.reduce((a, s) => a + s.amountCents, 0);
 
 describe("setSharePaid", () => {
 	const mark = (db: Db, target = "u1", status: "paid" | "pending" = "paid", uid = "u2", eid = EID, gid = GID) =>
 		setSharePaid(db, gid, eid, uid, target, status);
 
-	it("dono marca como pago: um updateOne condicional com paidBy do chamador", async () => {
-		const m = mockDb();
+	it("quita pendente: paidCents = amountCents, com paidAt/markedBy/method, e sobe a versão", async () => {
+		const m = statefulDb(expense());
 		const r = await mark(m.db);
 		expect(r.status).toBe("ok");
-		expect(m.expenses.updateOne).toHaveBeenCalledTimes(1);
-		const [filter, update, opts] = m.expenses.updateOne.mock.calls[0];
-		expect(filter).toMatchObject({ _id: new ObjectId(EID), groupId: new ObjectId(GID), paidBy: "u2" });
-		expect(filter.shares.$elemMatch).toEqual({ uid: "u1", status: { $ne: "payer" } });
-		expect(update.$set).toMatchObject({
-			"shares.$[t].status": "paid",
-			"shares.$[t].markedBy": "u2",
-			"shares.$[t].method": "manual",
-		});
-		expect(update.$set["shares.$[t].paidAt"]).toBeInstanceOf(Date);
-		expect(opts.arrayFilters).toEqual([{ "t.uid": "u1", "t.status": "pending" }]);
+		const u1 = m.doc.shares.find((s) => s.uid === "u1")!;
+		expect(u1).toMatchObject({ paidCents: 1000, markedBy: "u2", method: "manual" });
+		expect(u1.paidAt).toBeInstanceOf(Date);
+		expect((m.doc as { version?: number }).version).toBe(1);
+		expect(m.expenses.updateOne.mock.calls[0][0]).toMatchObject({ _id: new ObjectId(EID), groupId: new ObjectId(GID), paidBy: "u2", version: 0 });
+		if (r.status === "ok") expect(r.expense.shares.find((s) => s.uid === "u1")).toMatchObject({ status: "paid", paidCents: 1000, dueCents: 0, refundCents: 0, method: "manual" });
 	});
-	it("devolve o detalhe completo", async () => {
-		const r = await mark(mockDb().db);
+	it("desfazer volta a pending e remove paidAt, markedBy e method", async () => {
+		const m = statefulDb(expense());
+		await mark(m.db);
+		const r = await mark(m.db, "u1", "pending");
+		expect(r.status).toBe("ok");
+		expect(m.doc.shares.find((s) => s.uid === "u1")).toEqual(S("u1", 1000, 0));
+		expect((m.doc as { version?: number }).version).toBe(2);
+	});
+	it("idempotente: repetir não grava nem muda paidAt", async () => {
+		const m = statefulDb(expense());
+		await mark(m.db);
+		const paidAt = m.doc.shares.find((s) => s.uid === "u1")!.paidAt;
+		expect((await mark(m.db)).status).toBe("ok");
+		expect(m.writes).toHaveLength(1);
+		expect(m.doc.shares.find((s) => s.uid === "u1")!.paidAt).toEqual(paidAt);
+		expect((await mark(m.db, "u3", "pending")).status).toBe("ok");
+		expect(m.writes).toHaveLength(1);
+	});
+	it("devolve reembolso a quem saiu: a linha desaparece", async () => {
+		const m = statefulDb(expense());
+		await mark(m.db, "u3");
+		await updateParticipants(m.db, GID, EID, "u2", ["u2", "u1"]);
+		expect(m.doc.shares.find((s) => s.uid === "u3")).toMatchObject({ amountCents: 0, paidCents: 1000 });
+		const r = await mark(m.db, "u3");
+		expect(r.status).toBe("ok");
+		expect(m.doc.shares.map((s) => s.uid)).toEqual(["u2", "u1"]);
+		if (r.status === "ok") expect(r.expense.shares.map((s) => s.uid)).toEqual(["u2", "u1"]);
+	});
+	it("devolve reembolso de quem ainda participa: fica paid com paidCents = nova cota", async () => {
+		const m = statefulDb(expense());
+		await mark(m.db, "u1");
+		await updateParticipants(m.db, GID, EID, "u2", ["u2", "u1", "u3", "u4"]);
+		expect(m.doc.shares.find((s) => s.uid === "u1")).toMatchObject({ amountCents: 750, paidCents: 1000 });
+		const r = await mark(m.db, "u1");
 		if (r.status !== "ok") throw new Error("esperava ok");
-		expect(r.expense).toMatchObject({ id: EID, canMarkPaid: true });
-		expect(r.expense.shares).toHaveLength(3);
+		expect(r.expense.shares.find((s) => s.uid === "u1")).toMatchObject({ status: "paid", paidCents: 750, refundCents: 0 });
 	});
-	it("desfazer volta para pending e remove paidAt, markedBy e method", async () => {
-		const m = mockDb();
-		expect((await mark(m.db, "u1", "pending")).status).toBe("ok");
-		const [, update, opts] = m.expenses.updateOne.mock.calls[0];
-		expect(update.$set).toMatchObject({ "shares.$[t].status": "pending" });
-		expect(Object.keys(update.$unset).sort()).toEqual(["shares.$[t].markedBy", "shares.$[t].method", "shares.$[t].paidAt"]);
-		expect(opts.arrayFilters).toEqual([{ "t.uid": "u1", "t.status": "paid" }]);
-	});
-	it("idempotente: repetir a ação continua ok (casou, mesmo sem alterar)", async () => {
-		const m = mockDb();
-		expect((await mark(m.db)).status).toBe("ok");
-		expect((await mark(m.db)).status).toBe("ok");
-		expect((await mark(m.db, "u1", "pending")).status).toBe("ok");
-	});
-	it("quem não pagou a despesa: forbidden", async () => {
-		const m = mockDb({ matched: 0 });
+	it("quem não pagou a despesa: forbidden, sem escrever", async () => {
+		const m = statefulDb(expense());
 		expect((await mark(m.db, "u3", "paid", "u1")).status).toBe("forbidden");
-		expect(m.expenses.updateOne.mock.calls[0][0]).toMatchObject({ paidBy: "u1" });
+		expect(m.expenses.updateOne).not.toHaveBeenCalled();
 	});
 	it("não membro / grupo inválido: no_group, sem escrever", async () => {
 		const m = mockDb({ group: null });
@@ -335,13 +377,174 @@ describe("setSharePaid", () => {
 		expect(m.expenses.updateOne).not.toHaveBeenCalled();
 	});
 	it("despesa inexistente ou id malformado: no_expense", async () => {
-		expect((await mark(mockDb({ expense: null, matched: 0 }).db)).status).toBe("no_expense");
+		expect((await mark(mockDb({ expense: null }).db)).status).toBe("no_expense");
 		const m = mockDb();
 		expect((await mark(m.db, "u1", "paid", "u2", "xx")).status).toBe("no_expense");
 		expect(m.expenses.updateOne).not.toHaveBeenCalled();
 	});
 	it("quem não tem cota e a cota de quem pagou: no_share", async () => {
-		expect((await mark(mockDb({ matched: 0 }).db, "u9")).status).toBe("no_share");
-		expect((await mark(mockDb({ matched: 0 }).db, "u2")).status).toBe("no_share");
+		expect((await mark(statefulDb(expense()).db, "u9")).status).toBe("no_share");
+		expect((await mark(statefulDb(expense()).db, "u2")).status).toBe("no_share");
+	});
+	it("conflito de versão: tenta de novo uma vez; ok se a segunda passar, senão conflict", async () => {
+		const once = statefulDb(expense(), { failUpdates: 1 });
+		expect((await mark(once.db)).status).toBe("ok");
+		expect(once.expenses.findOne).toHaveBeenCalledTimes(2);
+		expect(once.expenses.updateOne).toHaveBeenCalledTimes(2);
+		const twice = statefulDb(expense(), { failUpdates: 2 });
+		expect(await mark(twice.db)).toEqual({ status: "conflict" });
+		expect(twice.expenses.updateOne).toHaveBeenCalledTimes(2);
+		expect(twice.doc.shares.find((s) => s.uid === "u1")!.paidCents).toBe(0);
+	});
+	it("despesa antiga sem version: filtra por $exists:false e passa a ter version 1", async () => {
+		const legacy = expense();
+		delete (legacy as { version?: number }).version;
+		const m = statefulDb(legacy);
+		expect((await mark(m.db)).status).toBe("ok");
+		expect(m.expenses.updateOne.mock.calls[0][0].version).toEqual({ $exists: false });
+		expect((m.doc as { version?: number }).version).toBe(1);
+	});
+});
+
+describe("updateParticipants", () => {
+	const upd = (db: Db, uids: string[], uid = "u2", eid = EID, gid = GID) => updateParticipants(db, gid, eid, uid, uids);
+	const detail = async (r: Awaited<ReturnType<typeof upd>>) => {
+		if (r.status !== "ok") throw new Error("esperava ok, veio " + r.status);
+		return r.expense;
+	};
+
+	it("adiciona alguém depois que um participante pagou: surge reembolso e o total fecha", async () => {
+		// grupo do mock: u1, u2, u3. u2 é dono. u3 paga 1000; entra u1... u1 já está; trocamos 3 -> 2 -> 3 abaixo.
+		const m = statefulDb(expense({ shares: [S("u2", 1500), S("u1", 1500)], amountCents: 3000 }));
+		await setSharePaid(m.db, GID, EID, "u2", "u1", "paid"); // u1 pagou 1500
+		const d = await detail(await upd(m.db, ["u2", "u1", "u3"]));
+		const u1 = d.shares.find((s) => s.uid === "u1")!;
+		expect(u1).toMatchObject({ amountCents: 1000, paidCents: 1500, status: "refund", refundCents: 500, dueCents: 0, participates: true });
+		expect(d.shares.find((s) => s.uid === "u3")).toMatchObject({ amountCents: 1000, status: "pending", dueCents: 1000 });
+		expect(totalOf(m.doc.shares)).toBe(3000);
+		expect(d.participantUids.sort()).toEqual(["u1", "u2", "u3"]);
+		expect(d.canEditParticipants).toBe(true);
+	});
+	it("remove quem não pagou: a cota some", async () => {
+		const m = statefulDb(expense());
+		const d = await detail(await upd(m.db, ["u2", "u1"]));
+		expect(d.shares.map((s) => s.uid)).toEqual(["u2", "u1"]);
+		expect(totalOf(m.doc.shares)).toBe(3000);
+		expect(m.doc.shares.map((s) => s.amountCents)).toEqual([1500, 1500]);
+	});
+	it("remove quem pagou: cota 0, reembolso integral, linha por último; adicionar de volta restaura", async () => {
+		const m = statefulDb(expense());
+		await setSharePaid(m.db, GID, EID, "u2", "u3", "paid");
+		const d = await detail(await upd(m.db, ["u2", "u1"]));
+		expect(d.shares.map((s) => s.uid)).toEqual(["u2", "u1", "u3"]);
+		expect(d.shares[2]).toMatchObject({ amountCents: 0, paidCents: 1000, status: "refund", refundCents: 1000, participates: false });
+		expect(d.participantUids).toEqual(["u2", "u1"]);
+		expect(totalOf(m.doc.shares)).toBe(3000);
+		const back = await detail(await upd(m.db, ["u2", "u1", "u3"]));
+		expect(back.shares.find((s) => s.uid === "u3")).toMatchObject({ amountCents: 1000, paidCents: 1000, status: "paid" });
+	});
+	it("só o dono na lista: ele fica com o total", async () => {
+		const m = statefulDb(expense());
+		const d = await detail(await upd(m.db, ["u2"]));
+		expect(d.shares.map((s) => [s.uid, s.amountCents, s.status])).toEqual([["u2", 3000, "payer"]]);
+		expect(d.participantUids).toEqual(["u2"]);
+	});
+	it("dono fora da divisão: sem cota para ele, total fecha entre os outros", async () => {
+		const m = statefulDb(expense());
+		const d = await detail(await upd(m.db, ["u1", "u3"]));
+		expect(d.shares.map((s) => s.uid)).toEqual(["u1", "u3"]);
+		expect(totalOf(m.doc.shares)).toBe(3000);
+	});
+	it("grava com $inc de version e filtro pela versão lida", async () => {
+		const m = statefulDb(expense());
+		await upd(m.db, ["u2", "u1"]);
+		expect(m.expenses.updateOne.mock.calls[0][0]).toMatchObject({ paidBy: "u2", version: 0 });
+		expect(m.expenses.updateOne.mock.calls[0][1].$inc).toEqual({ version: 1 });
+	});
+	it("conflito de versão: repete uma vez; depois conflict, sem alterar nada", async () => {
+		const once = statefulDb(expense(), { failUpdates: 1 });
+		expect((await upd(once.db, ["u2", "u1"])).status).toBe("ok");
+		const twice = statefulDb(expense(), { failUpdates: 2 });
+		expect(await upd(twice.db, ["u2", "u1"])).toEqual({ status: "conflict" });
+		expect(twice.doc.shares).toHaveLength(3);
+	});
+	it("duas edições concorrentes reais: a segunda relê a versão nova e não perde a primeira", async () => {
+		const m = statefulDb(expense());
+		// u2 edita; entre a leitura e a escrita a versão muda (simulado: uma escrita externa antes do 1º update)
+		const original = m.expenses.updateOne.getMockImplementation()!;
+		let injected = false;
+		m.expenses.updateOne.mockImplementation(async (f, u) => {
+			if (!injected) {
+				injected = true;
+				await original({ ...f }, { $set: { shares: [S("u2", 1000), S("u1", 1000, 1000, { paidAt: new Date(), markedBy: "u2", method: "manual" }), S("u3", 1000)] }, $inc: { version: 1 } });
+			}
+			return original(f, u);
+		});
+		const d = await detail(await upd(m.db, ["u2", "u1"]));
+		expect(d.shares.find((s) => s.uid === "u1")).toMatchObject({ paidCents: 1500 - 500, amountCents: 1500, status: "pending", dueCents: 500 });
+	});
+	it("só o dono: forbidden, sem escrever", async () => {
+		const m = statefulDb(expense());
+		expect((await upd(m.db, ["u1"], "u1")).status).toBe("forbidden");
+		expect(m.expenses.updateOne).not.toHaveBeenCalled();
+	});
+	it("participante fora do grupo, repetido ou vazio: invalid em participantUids", async () => {
+		const m = statefulDb(expense());
+		expect(await upd(m.db, ["u2", "intruso"])).toMatchObject({ status: "invalid", field: "participantUids" });
+		expect(await upd(m.db, ["u2", "u2"])).toMatchObject({ status: "invalid", field: "participantUids" });
+		expect(await upd(m.db, [])).toMatchObject({ status: "invalid", field: "participantUids" });
+		expect(m.expenses.updateOne).not.toHaveBeenCalled();
+	});
+	it("valor menor que o número de participantes: invalid em amountCents", async () => {
+		const m = statefulDb(expense({ amountCents: 2, shares: [S("u2", 1), S("u1", 1)] }));
+		expect(await upd(m.db, ["u2", "u1", "u3"])).toMatchObject({ status: "invalid", field: "amountCents" });
+		expect(m.expenses.updateOne).not.toHaveBeenCalled();
+	});
+	it("não membro / despesa inexistente / id malformado", async () => {
+		expect((await upd(mockDb({ group: null }).db, ["u2"])).status).toBe("no_group");
+		expect((await upd(mockDb({ expense: null }).db, ["u2"])).status).toBe("no_expense");
+		expect((await upd(mockDb().db, ["u2"], "u2", "xx")).status).toBe("no_expense");
+	});
+	it("sequência longa: totais sempre somam o valor e nenhuma cota 0 sem pagamento sobra", async () => {
+		const m = statefulDb(expense({ amountCents: 1000, shares: [S("u2", 334), S("u1", 333), S("u3", 333)] }));
+		const steps = [["u2"], ["u2", "u1"], ["u1", "u3"], ["u2", "u1", "u3"], ["u3"]];
+		for (const [i, p] of steps.entries()) {
+			if (i === 1) await setSharePaid(m.db, GID, EID, "u2", "u1", "paid");
+			await upd(m.db, p);
+			expect(totalOf(m.doc.shares)).toBe(1000);
+			expect(m.doc.shares.some((s) => s.uid !== "u2" && s.amountCents === 0 && s.paidCents === 0)).toBe(false);
+		}
+	});
+});
+
+describe("detalhe: derivação e permissões", () => {
+	const paidAt = new Date("2026-11-11T12:00:00Z");
+	const mixed = () =>
+		expense({
+			shares: [S("u2", 1000), S("u1", 1000, 1000, { paidAt, markedBy: "u2", method: "manual" }), S("u3", 0, 300, { paidAt, markedBy: "u2", method: "manual" })],
+		});
+	const get = async (uid: string) => {
+		const r = await getExpenseDetail(mockDb({ expense: mixed() }).db, GID, EID, uid);
+		if (r.status !== "ok") throw new Error("esperava ok");
+		return r.expense;
+	};
+	it("expõe campos derivados, paidAt e method; esconde markedBy", async () => {
+		const owner = await get("u2");
+		expect(owner.canMarkPaid).toBe(true);
+		expect(owner.canEditParticipants).toBe(true);
+		expect(owner.shares.map((s) => [s.uid, s.status, s.paidCents, s.dueCents, s.refundCents, s.participates])).toEqual([
+			["u2", "payer", 0, 0, 0, true],
+			["u1", "paid", 1000, 0, 0, true],
+			["u3", "refund", 300, 0, 300, false],
+		]);
+		expect(owner.shares.map((s) => [s.paidAt, s.method])).toEqual([[null, null], [paidAt.toISOString(), "manual"], [paidAt.toISOString(), "manual"]]);
+		expect(owner.shares.every((s) => !("markedBy" in s))).toBe(true);
+		const other = await get("u1");
+		expect(other.canMarkPaid).toBe(false);
+		expect(other.canEditParticipants).toBe(false);
+	});
+	it("lista: parte paga ou reembolsada não conta como pendente; reembolso conta em refundCount", async () => {
+		const list = await listExpenses(mockDb({ expenses: [mixed()] }).db, GID, "u2");
+		expect(list?.[0]).toMatchObject({ pendingCount: 0, refundCount: 1 });
 	});
 });

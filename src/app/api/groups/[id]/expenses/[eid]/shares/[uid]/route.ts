@@ -8,6 +8,8 @@ export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ id: string; eid: string; uid: string }> };
 
+const CONFLICT = "Essa despesa acabou de ser alterada. Tente de novo.";
+
 const bodySchema = z.object({ status: z.enum(["paid", "pending"]) });
 
 export async function PATCH(request: Request, { params }: Ctx) {
@@ -34,6 +36,8 @@ export async function PATCH(request: Request, { params }: Ctx) {
 				return jsonError("Só quem pagou a despesa pode marcar pagamentos.", 403);
 			case "no_share":
 				return jsonError("Essa pessoa não participa desta despesa.", 404);
+			case "conflict":
+				return jsonError(CONFLICT, 409);
 			case "ok":
 				return Response.json(res.expense);
 		}

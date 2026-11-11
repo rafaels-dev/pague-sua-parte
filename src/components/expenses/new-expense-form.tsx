@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth/auth-provider";
 import type { Group, Member } from "@/components/groups/group-detail";
-import { Avatar, Banner, Button, Card, EmptyState, FilterChip, Icon, MoneyField, Skeleton, TextField } from "@/components/ui";
+import { Banner, Button, Card, EmptyState, Icon, MoneyField, Skeleton, TextField } from "@/components/ui";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { formatBRL } from "@/lib/money";
 import { formatDateShort, isValidISODate, todayISO } from "@/lib/ui/dates";
@@ -13,6 +13,7 @@ import { cx } from "@/lib/ui/cx";
 import { AttachmentPicker } from "./attachment-picker";
 import { setFlash } from "./types";
 import { useAttachments } from "./use-attachments";
+import { WhoSplits, type SplitMode } from "./who-splits";
 
 export type FormErrors = Partial<Record<"amount" | "description" | "date" | "participants" | "files" | "form", string>>;
 
@@ -41,6 +42,7 @@ export type NewExpenseFormViewProps = {
 	date: string;
 	dateOpen: boolean;
 	selected: string[];
+	splitMode: SplitMode;
 	errors: FormErrors;
 	busy: boolean;
 	/** Texto do botão enquanto envia (ex.: "Enviando anexos..."). */
@@ -51,6 +53,7 @@ export type NewExpenseFormViewProps = {
 	onDate: (v: string) => void;
 	onOpenDate: () => void;
 	onToggle: (uid: string) => void;
+	onSplitMode: (m: SplitMode) => void;
 	onSubmit: () => void;
 };
 
@@ -58,6 +61,7 @@ export type NewExpenseFormViewProps = {
 export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 	const me = p.members.find((m) => m.isYou);
 	const today = todayISO();
+	const onlyMe = p.selected.length === 1 && p.selected[0] === me?.uid;
 	const preview = useMemo(
 		() => splitPreview(p.amountCents, p.selected, me?.uid ?? ""),
 		[p.amountCents, p.selected, me?.uid],
@@ -119,25 +123,15 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 
 			<fieldset id="campo-participantes" tabIndex={-1} className="space-y-3 outline-none">
 				<legend className="text-title-large">Dividir entre</legend>
-				<div className="flex flex-wrap gap-2">
-					{p.members.map((m) => (
-						<FilterChip
-							key={m.uid}
-							selected={p.selected.includes(m.uid)}
-							onToggle={() => p.onToggle(m.uid)}
-							leading={<Avatar name={m.name} src={m.picture} size="sm" className="size-10" />}
-							className="max-w-full sm:max-w-xs"
-						>
-							{m.isYou ? "Você" : m.name}
-						</FilterChip>
-					))}
-				</div>
-				{p.errors.participants && (
-					<p role="alert" className="text-body-large text-error">
-						{p.errors.participants}
-					</p>
-				)}
-				{preview.kind === "ok" && (
+				<WhoSplits
+					members={p.members}
+					selected={p.selected}
+					mode={p.splitMode}
+					onMode={p.onSplitMode}
+					onToggle={p.onToggle}
+					error={p.errors.participants}
+				/>
+				{preview.kind === "ok" && !onlyMe && (
 					<Card tone="high" className="space-y-1 p-4" aria-live="polite">
 						<p className="money text-title-large">{preview.line}</p>
 						{preview.note && <p className="text-body-large text-on-surface-variant">{preview.note}</p>}
@@ -212,6 +206,7 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 	const [date, setDate] = useState(() => todayISO());
 	const [dateOpen, setDateOpen] = useState(false);
 	const [selected, setSelected] = useState<string[] | null>(null);
+	const [splitMode, setSplitMode] = useState<SplitMode>("all");
 	const [errors, setErrors] = useState<FormErrors>({});
 	const [busy, setBusy] = useState(false);
 	const att = useAttachments({ enabled: !busy });
@@ -284,7 +279,6 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 		);
 	}
 
-	const me = group.members.find((m) => m.isYou);
 
 	function validate(): FormErrors {
 		const e: FormErrors = {};
@@ -293,7 +287,7 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 		if (!desc) e.description = "Escreva o que foi a despesa.";
 		else if (desc.length > 80) e.description = "Use até 80 letras.";
 		if (!isValidISODate(date) || date > todayISO()) e.date = "Escolha uma data válida, que não seja no futuro.";
-		if (!selected!.some((uid) => uid !== me?.uid)) e.participants = "Escolha pelo menos uma pessoa além de você.";
+		if (selected!.length === 0) e.participants = "Escolha pelo menos uma pessoa.";
 		else if (amountCents > 0 && amountCents < selected!.length) e.participants = "O valor é pequeno demais para dividir entre tantas pessoas.";
 		return e;
 	}
@@ -345,6 +339,7 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 				date={date}
 				dateOpen={dateOpen}
 				selected={selected}
+				splitMode={splitMode}
 				errors={errors}
 				busy={busy}
 				busyLabel={att.items.length > 0 ? "Enviando anexos..." : "Lançando..."}
@@ -363,6 +358,11 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 				onOpenDate={() => setDateOpen(true)}
 				onToggle={(uid) => {
 					setSelected((cur) => (cur ?? []).includes(uid) ? (cur ?? []).filter((x) => x !== uid) : [...(cur ?? []), uid]);
+					if (errors.participants) setErrors((x) => ({ ...x, participants: undefined }));
+				}}
+				onSplitMode={(m) => {
+					setSplitMode(m);
+					if (m === "all") setSelected(group.members.map((x) => x.uid));
 					if (errors.participants) setErrors((x) => ({ ...x, participants: undefined }));
 				}}
 				onSubmit={() => void submit()}

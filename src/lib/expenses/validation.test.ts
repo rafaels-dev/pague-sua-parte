@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkFileLimits, parseExpenseInput, sanitizeFileName, sniffContentType, sniffFiles, todayInSaoPaulo } from "./validation";
+import { checkFileLimits, parseExpenseInput, parseParticipantsInput, sanitizeFileName, sniffContentType, sniffFiles, todayInSaoPaulo } from "./validation";
 
 const bytes = (...b: number[]) => new Uint8Array([...b, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
 const JPEG = bytes(0xff, 0xd8, 0xff, 0xe0);
@@ -95,4 +95,17 @@ describe("parseExpenseInput", () => {
 		expect(bad(null)?.status).toBe(422);
 		expect(bad([])?.status).toBe(422);
 	});
+});
+
+describe("parseParticipantsInput", () => {
+	it("aceita lista válida, inclusive só um participante", () => {
+		expect(parseParticipantsInput({ participantUids: ["a"] })).toEqual({ ok: true, value: ["a"] });
+		expect(parseParticipantsInput({ participantUids: ["a", "b"] })).toEqual({ ok: true, value: ["a", "b"] });
+	});
+	it.each([[null], [[]], ["x"], [{}], [{ participantUids: [] }], [{ participantUids: ["a", "a"] }], [{ participantUids: [1] }], [{ participantUids: "a" }]])(
+		"422 em participantUids para %j",
+		(raw) => {
+			expect(parseParticipantsInput(raw)).toMatchObject({ ok: false, status: 422, field: "participantUids" });
+		},
+	);
 });

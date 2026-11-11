@@ -109,6 +109,19 @@ export function parseExpenseInput(raw: unknown, now: Date = new Date()): { ok: t
 	};
 }
 
+const participantsSchema = z.object({ participantUids: schema.shape.participantUids });
+
+/** Corpo de `PUT .../participants`: `{ participantUids }` com as mesmas regras do lançamento. */
+export function parseParticipantsInput(raw: unknown): { ok: true; value: string[] } | Invalid {
+	const fail = (error: string): Invalid => ({ ok: false, status: 422, error, field: "participantUids" });
+	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return fail("Escolha quem divide a despesa.");
+	const parsed = participantsSchema.safeParse(raw);
+	if (!parsed.success) return fail(parsed.error.issues[0].message);
+	const uids = parsed.data.participantUids;
+	if (new Set(uids).size !== uids.length) return fail("Há participantes repetidos.");
+	return { ok: true, value: uids };
+}
+
 /** Confere quantidade e tamanho ANTES de ler os bytes. */
 export function checkFileLimits(files: { size: number }[]): Invalid | null {
 	if (files.length > MAX_FILES) {

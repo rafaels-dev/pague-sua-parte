@@ -5,7 +5,7 @@ export function buildInviteLink(origin: string, token: string): string {
 }
 
 export function buildShareText(groupName: string, link: string): string {
-	return `Entre no grupo "${groupName}" no Pague Sua Parte para dividirmos as despesas: ${link}`;
+	return `Entre no grupo "${groupName}" no PagueSuaParte para dividirmos as despesas: ${link}`;
 }
 
 export function buildWhatsAppUrl(text: string): string {

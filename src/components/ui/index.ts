@@ -12,6 +12,7 @@ export { MoneyField } from "./money-field";
 export { NavigationBar, NavigationRail, type NavItem } from "./navigation";
 export { CircularProgress, Skeleton } from "./progress";
 export { QrCode } from "./qr-code";
+export { SegmentedButton } from "./segmented-button";
 export { Sheet } from "./sheet";
 export { Snackbar } from "./snackbar";
 export { TextField } from "./text-field";

@@ -8,7 +8,7 @@ import { formatBRL } from "@/lib/money";
 import { formatDateShort } from "@/lib/ui/dates";
 import { listStatus, paidByLabel } from "@/lib/ui/expense-status";
 import { cx } from "@/lib/ui/cx";
-import type { ExpenseSummary } from "./types";
+import { normalizeSummary, type ExpenseSummary } from "./types";
 
 export type ExpenseListState =
 	| { kind: "loading" }
@@ -127,7 +127,7 @@ export function ExpenseList({ groupId }: Readonly<{ groupId: string }>) {
 		let cancelled = false;
 		apiFetch<{ expenses: ExpenseSummary[] }>(`/api/groups/${encodeURIComponent(groupId)}/expenses`)
 			.then((r) => {
-				if (!cancelled) setState({ kind: "ready", expenses: r.expenses });
+				if (!cancelled) setState({ kind: "ready", expenses: r.expenses.map(normalizeSummary) });
 			})
 			.catch((e) => {
 				if (cancelled) return;

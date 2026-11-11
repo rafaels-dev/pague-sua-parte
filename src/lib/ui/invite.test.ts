@@ -3,13 +3,13 @@ import { buildInviteLink, buildShareText, buildWhatsAppUrl, initialOf, peopleLab
 
 describe("invite helpers", () => {
 	it("builds the invite link", () => {
-		expect(buildInviteLink("https://paguesuaparte.example", "abc123")).toBe("https://paguesuaparte.example/convite/abc123");
+		expect(buildInviteLink("https://pague-sua-parte.example", "abc123")).toBe("https://pague-sua-parte.example/convite/abc123");
 		expect(buildInviteLink("http://localhost:3000/", "t")).toBe("http://localhost:3000/convite/t");
 	});
 
 	it("builds the share text with name and link", () => {
 		expect(buildShareText("Família", "https://x/convite/1")).toBe(
-			'Entre no grupo "Família" no Pague Sua Parte para dividirmos as despesas: https://x/convite/1',
+			'Entre no grupo "Família" no PagueSuaParte para dividirmos as despesas: https://x/convite/1',
 		);
 	});
 

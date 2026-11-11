@@ -21,6 +21,7 @@ const group = (extra: Record<string, unknown> = {}) => ({
 function mockDb(opts: {
 	groups?: Record<string, unknown>;
 	users?: unknown[];
+	balanceRows?: unknown[];
 }) {
 	const groups = {
 		findOne: vi.fn(),
@@ -32,10 +33,11 @@ function mockDb(opts: {
 	};
 	const usersToArray = vi.fn().mockResolvedValue(opts.users ?? []);
 	const users = { find: vi.fn().mockReturnValue({ toArray: usersToArray }) };
+	const expenses = { aggregate: vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue(opts.balanceRows ?? []) }) };
 	const db = {
-		collection: vi.fn((name: string) => (name === "groups" ? groups : users)),
+		collection: vi.fn((name: string) => (name === "groups" ? groups : name === "expenses" ? expenses : users)),
 	} as unknown as Db;
-	return { db, groups, users };
+	return { db, groups, users, expenses };
 }
 
 describe("createGroup", () => {
@@ -51,14 +53,35 @@ describe("createGroup", () => {
 });
 
 describe("listGroups", () => {
-	it("filtra por membro, mais novos primeiro, e informa o papel", async () => {
+	it("filtra por membro, mais novos primeiro, e informa o papel (saldo zero sem despesas)", async () => {
 		const toArray = vi.fn().mockResolvedValue([group()]);
 		const sort = vi.fn().mockReturnValue({ toArray });
 		const { db, groups } = mockDb({});
 		groups.find.mockReturnValue({ sort });
-		expect(await listGroups(db, "u2")).toEqual([{ id: GID, name: "Viagem", memberCount: 2, role: "member" }]);
+		expect(await listGroups(db, "u2")).toEqual([
+			{ id: GID, name: "Viagem", memberCount: 2, role: "member", toReceiveCents: 0, toPayCents: 0 },
+		]);
 		expect(groups.find).toHaveBeenCalledWith({ "members.uid": "u2" });
 		expect(sort.mock.calls[0][0]).toMatchObject({ createdAt: -1 });
+	});
+});
+
+describe("listGroups: saldos", () => {
+	it("uma única agregação para todos os grupos e saldo por grupo", async () => {
+		const g2 = { ...group(), _id: new ObjectId("507f1f77bcf86cd799439099"), name: "Casa" };
+		const sort = vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue([group(), g2]) });
+		const { db, groups, expenses } = mockDb({ balanceRows: [{ _id: new ObjectId(GID), toPay: 300, toReceive: 1200 }] });
+		groups.find.mockReturnValue({ sort });
+		const list = await listGroups(db, "u2");
+		expect(expenses.aggregate).toHaveBeenCalledTimes(1);
+		expect(expenses.aggregate.mock.calls[0][0][0].$match.groupId.$in).toHaveLength(2);
+		expect(list.map((g) => [g.toReceiveCents, g.toPayCents])).toEqual([[1200, 300], [0, 0]]);
+	});
+	it("sem grupos, nem consulta despesas", async () => {
+		const { db, groups, expenses } = mockDb({});
+		groups.find.mockReturnValue({ sort: vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue([]) }) });
+		expect(await listGroups(db, "u2")).toEqual([]);
+		expect(expenses.aggregate).not.toHaveBeenCalled();
 	});
 });
 

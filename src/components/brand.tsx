@@ -1,4 +1,4 @@
-/** Marca do Pague Sua Parte: quadrado arredondado com losangos sobrepostos (alusão ao Pix). */
+/** Marca do PagueSuaParte: quadrado arredondado com losangos sobrepostos (alusão ao Pix). */
 export function BrandMark({ size = 40, className }: Readonly<{ size?: number; className?: string }>) {
 	return (
 		<svg viewBox="0 0 48 48" width={size} height={size} aria-hidden="true" className={className}>
@@ -13,7 +13,7 @@ export function Wordmark({ className }: Readonly<{ className?: string }>) {
 	return (
 		<span className={`inline-flex items-center gap-3 ${className ?? ""}`}>
 			<BrandMark />
-			<span className="text-title-large font-bold text-on-surface">Pague Sua Parte</span>
+			<span className="text-title-large font-bold text-on-surface">PagueSuaParte</span>
 		</span>
 	);
 }

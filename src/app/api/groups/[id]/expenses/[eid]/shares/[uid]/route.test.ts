@@ -36,6 +36,10 @@ describe("PATCH /expenses/:eid/shares/:uid", () => {
 		setSharePaid.mockResolvedValue({ status: "no_share" });
 		expect(await out(await patch({ status: "paid" }))).toEqual([404, { error: "Essa pessoa não participa desta despesa." }]);
 	});
+	it("409 quando perde a corrida de edição", async () => {
+		setSharePaid.mockResolvedValue({ status: "conflict" });
+		expect(await out(await patch({ status: "paid" }))).toEqual([409, { error: "Essa despesa acabou de ser alterada. Tente de novo." }]);
+	});
 	it("422 para corpo inválido, sem chamar o repo", async () => {
 		for (const body of ["not json", {}, { status: "payer" }, { status: 1 }, null]) {
 			expect((await patch(body)).status).toBe(422);

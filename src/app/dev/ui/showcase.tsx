@@ -41,9 +41,9 @@ const noop = () => {};
 const USER = { name: "Rafael Schettino", email: "rafael@example.com", picture: null };
 
 const GROUPS: GroupSummary[] = [
-	{ id: "1", name: "Família Silva", memberCount: 5, role: "admin" },
-	{ id: "2", name: "Viagem a Floripa", memberCount: 4, role: "member" },
-	{ id: "3", name: "Despesas da vó", memberCount: 1, role: "admin" },
+	{ id: "1", name: "Família Silva", memberCount: 5, role: "admin", toReceiveCents: 12850, toPayCents: 0 },
+	{ id: "2", name: "Viagem a Floripa", memberCount: 4, role: "member", toReceiveCents: 0, toPayCents: 4590 },
+	{ id: "3", name: "Despesas da vó", memberCount: 1, role: "admin", toReceiveCents: 0, toPayCents: 0 },
 ];
 
 const GROUP: Group = {
@@ -107,7 +107,7 @@ export function Showcase({
 	return (
 		<main className="mx-auto max-w-6xl space-y-12 px-4 py-8 md:px-8">
 			<header className="space-y-2">
-				<h1 className="text-headline-large">Pague Sua Parte — kit Material 3</h1>
+				<h1 className="text-headline-large">PagueSuaParte — kit Material 3</h1>
 				<p className="text-body-large text-on-surface-variant">Vitrine de desenvolvimento. Não existe em produção e não usa a API.</p>
 			</header>
 
@@ -268,7 +268,7 @@ export function Showcase({
 			</Section>
 
 			<Section title="Navegação, FAB, Sheet e Snackbar">
-				<TopAppBar title="Pague Sua Parte" leading={<IconButton icon="arrow_back" label="Voltar" />} trailing={<Avatar name="Rafael" size="sm" />} />
+				<TopAppBar title="PagueSuaParte" leading={<IconButton icon="arrow_back" label="Voltar" />} trailing={<Avatar name="Rafael" size="sm" />} />
 				<div className="flex flex-wrap gap-3">
 					<Button onClick={() => setSheet(true)} icon="share">
 						Abrir Sheet de convite
@@ -394,7 +394,7 @@ export function Showcase({
 						<Card className="max-w-md p-6">
 							<h2 className="mb-4 text-headline-small">Convite pronto!</h2>
 							<InviteSheetContent
-								link="https://paguesuaparte.example/convite/abc"
+								link="https://pague-sua-parte.example/convite/abc"
 								groupName="Família Silva"
 								isAdmin
 								busy={false}
@@ -415,7 +415,7 @@ export function Showcase({
 
 			<Sheet open={sheet} onClose={() => setSheet(false)} title="Convite pronto!">
 				<InviteSheetContent
-					link="https://paguesuaparte.example/convite/abc"
+					link="https://pague-sua-parte.example/convite/abc"
 					groupName="Família Silva"
 					isAdmin
 					busy={false}

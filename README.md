@@ -1,4 +1,4 @@
-# Pague Sua Parte
+# PagueSuaParte
 
 Divida despesas em grupo e receba por Pix: lance o gasto, cada um paga a sua parte com Pix Copia e Cola e anexa o comprovante. Site mobile-first, em pt-BR, que roda inteiro em planos gratuitos.
 
@@ -25,7 +25,7 @@ npm run dev                     # http://localhost:3000
 Os anexos (foto ou PDF, até 3 por despesa, 5 MB cada) ficam num bucket R2. Antes do primeiro deploy, crie o bucket:
 
 ```bash
-npx wrangler r2 bucket create paguesuaparte-anexos
+npx wrangler r2 bucket create pague-sua-parte-anexos
 ```
 
 No `npm run dev` o OpenNext simula o binding localmente (não precisa de conta Cloudflare); reinicie o servidor ao alterar o `wrangler.jsonc`.
