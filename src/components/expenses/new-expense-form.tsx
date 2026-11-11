@@ -6,7 +6,7 @@ import { useAuth } from "@/components/auth/auth-provider";
 import type { Group, Member } from "@/components/groups/group-detail";
 import { CarerPicker } from "@/components/groups/managed-sheet";
 import { normalizeGroupDetail } from "@/components/groups/types";
-import { Banner, Button, Card, EmptyState, Icon, MoneyField, SegmentedButton, Skeleton, TextField } from "@/components/ui";
+import { Banner, Button, Card, EmptyState, Icon, MoneyField, SegmentedButton, Sheet, Skeleton, TextField } from "@/components/ui";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { formatBRL } from "@/lib/money";
 import { formatDateShort, isValidISODate, todayISO } from "@/lib/ui/dates";
@@ -245,12 +245,10 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 				</Banner>
 			)}
 
-			{/* Celular: barra colada acima da navegação inferior, sempre à vista. Telas largas: botão comum no fim. */}
-			<div className="sticky bottom-[calc(5rem+env(safe-area-inset-bottom))] z-20 -mx-4 border-t border-outline-variant bg-surface px-4 pb-3 pt-3 md:static md:mx-0 md:border-0 md:bg-transparent md:p-0">
-				<Button type="submit" fullWidth loading={p.busy} icon={p.busy ? undefined : "check"}>
-					{p.busy ? (p.busyLabel ?? "Lançando...") : "Lançar despesa"}
-				</Button>
-			</div>
+			{/* No fim do formulário, de propósito: a pessoa passa por tudo antes de lançar. */}
+			<Button type="submit" fullWidth loading={p.busy} icon={p.busy ? undefined : "check"}>
+				{p.busy ? (p.busyLabel ?? "Lançando...") : "Lançar despesa"}
+			</Button>
 		</form>
 	);
 }
@@ -305,6 +303,7 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 	const [splitMode, setSplitMode] = useState<SplitMode>("all");
 	const [errors, setErrors] = useState<FormErrors>({});
 	const [busy, setBusy] = useState(false);
+	const [confirmNoAttachment, setConfirmNoAttachment] = useState(false);
 	const att = useAttachments({ enabled: !busy });
 	const focusTarget = useRef<string | null>(null);
 
@@ -407,10 +406,12 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 		if (first === "date") setTimeout(() => document.getElementById("campo-data")?.focus(), 0);
 	}
 
-	async function submit() {
+	async function submit(withoutAttachmentOk = false) {
 		if (busy) return;
 		const e = validate();
 		if (Object.keys(e).length > 0) return showErrors(e);
+		// Sem anexo, pergunta antes: o comprovante ajuda os outros a confiar na despesa.
+		if (att.items.length === 0 && !withoutAttachmentOk) return setConfirmNoAttachment(true);
 		setErrors({});
 		setBusy(true);
 		try {
@@ -523,6 +524,33 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 					/>
 				}
 			/>
+			<Sheet open={confirmNoAttachment} onClose={() => setConfirmNoAttachment(false)} title="Lançar sem anexo?">
+				<div className="space-y-4">
+					<p className="text-body-large text-on-surface-variant">Tem certeza que não quer colocar um anexo? A nota ou o comprovante ajuda as outras pessoas a conferir a despesa.</p>
+					<div className="flex flex-col gap-3 md:flex-row-reverse">
+						<Button
+							fullWidth
+							icon="attach_file"
+							onClick={() => {
+								setConfirmNoAttachment(false);
+								setTimeout(() => document.getElementById("anexos-titulo")?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+							}}
+						>
+							Colocar anexo
+						</Button>
+						<Button
+							variant="outlined"
+							fullWidth
+							onClick={() => {
+								setConfirmNoAttachment(false);
+								void submit(true);
+							}}
+						>
+							Lançar sem anexo
+						</Button>
+					</div>
+				</div>
+			</Sheet>
 			{att.dragging && (
 				<div
 					aria-hidden="true"
