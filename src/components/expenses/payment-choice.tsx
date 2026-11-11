@@ -14,13 +14,18 @@ import {
 	nextMonthSameDay,
 } from "@/lib/ui/due-dates";
 
-/** Como a compra foi paga: à vista, no cartão (pede a data da compra) ou parcelado (uma despesa por mês, com vencimento). */
-export type PaymentKind = "cash" | "card" | "installments";
+/** Como a compra foi paga: à vista em dinheiro, cartão (pede a data da próxima fatura) ou Pix; ou parcelado (uma despesa por mês). */
+export type PaymentKind = "cash" | "card" | "pix" | "installments";
 
-const OPTIONS = [
-	{ value: "cash", label: "À vista" },
-	{ value: "card", label: "No cartão" },
+const MODES = [
+	{ value: "once", label: "À vista" },
 	{ value: "installments", label: "Parcelado" },
+] as const;
+
+const METHODS = [
+	{ value: "cash", label: "Dinheiro" },
+	{ value: "card", label: "Cartão" },
+	{ value: "pix", label: "Pix" },
 ] as const;
 
 /** Campo de data no estilo do TextField, com atalhos opcionais ("Dia 10", "Dia 15", "Mês que vem"). */
@@ -144,7 +149,7 @@ export function InstallmentSummary({ amountCents, count, firstDue }: Readonly<{ 
 	);
 }
 
-/** "Como foi pago?": à vista (nada a mais), no cartão (pede a data da compra) ou parcelado (pede parcelas e o primeiro vencimento). */
+/** "Como foi pago?": à vista (com a forma de pagamento; no cartão, pede a data da próxima fatura) ou parcelado (pede parcelas e o primeiro vencimento). */
 export function PaymentChoice({
 	payment,
 	onPayment,
@@ -154,7 +159,6 @@ export function PaymentChoice({
 	onInstallments,
 	amountCents,
 	purchaseDate,
-	onPurchaseDate,
 	today,
 	errors,
 }: Readonly<{
@@ -165,28 +169,40 @@ export function PaymentChoice({
 	installments: number;
 	onInstallments: (n: number) => void;
 	amountCents: number;
-	/** Dia da compra: é o que se pede no cartão; no parcelado, o vencimento não pode ser antes dele. */
+	/** Dia da compra: a fatura ou a primeira parcela não podem vencer antes dele. */
 	purchaseDate: string;
-	onPurchaseDate: (v: string) => void;
 	today: string;
-	errors: { date?: string; dueDate?: string; installments?: string };
+	errors: { dueDate?: string; installments?: string };
 }>) {
 	return (
 		<fieldset className="min-w-0 space-y-3">
 			<legend className="mb-2 text-title-medium text-on-surface-variant">Como foi pago?</legend>
-			<SegmentedButton label="Como foi pago?" value={payment} options={OPTIONS} onChange={onPayment} />
-			{payment === "card" && (
-				<TextField
-					id="campo-data"
-					type="date"
-					floatLabel
-					label="Data da compra"
-					value={purchaseDate}
-					max={today}
-					onChange={(e) => onPurchaseDate(e.target.value)}
-					error={errors.date}
-					supportingText="Dia em que você passou o cartão"
-				/>
+			<SegmentedButton
+				label="Como foi pago?"
+				value={payment === "installments" ? "installments" : "once"}
+				options={MODES}
+				onChange={(m) => {
+					if (m === "installments") onPayment("installments");
+					else if (payment === "installments") onPayment("cash");
+				}}
+			/>
+			{payment !== "installments" && (
+				<div className="space-y-3 pt-1">
+					<p className="text-title-medium text-on-surface-variant">Forma de pagamento</p>
+					<SegmentedButton label="Forma de pagamento" value={payment} options={METHODS} onChange={onPayment} />
+					{payment === "card" && (
+						<DueDateField
+							id="campo-vencimento"
+							label="Data da próxima fatura"
+							helper="Dia em que a fatura do cartão vence"
+							value={dueDate}
+							min={purchaseDate}
+							today={today}
+							error={errors.dueDate}
+							onChange={onDueDate}
+						/>
+					)}
+				</div>
 			)}
 			{payment === "installments" && (
 				<div className="space-y-5 pt-1">
