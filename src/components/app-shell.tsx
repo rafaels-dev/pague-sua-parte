@@ -3,14 +3,40 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { BrandMark } from "@/components/brand";
-import { Avatar, Icon, IconButton, NavigationBar, NavigationRail, TopAppBar, type NavItem } from "@/components/ui";
+import { Avatar, Icon, IconButton, NavigationBar, NavigationRail, SegmentedButton, TopAppBar, type NavItem } from "@/components/ui";
 import { screenInfo } from "@/lib/ui/titles";
 import { cx } from "@/lib/ui/cx";
+import { applyTheme, readTheme, type Theme } from "@/lib/ui/theme";
 
 export const NAV_ITEMS: NavItem[] = [
 	{ href: "/app", label: "Início", icon: "home" },
 	{ href: "/app/perfil", label: "Meu perfil", icon: "person" },
 ];
+
+const THEMES = [
+	{ value: "auto", label: "Auto" },
+	{ value: "light", label: "Claro" },
+	{ value: "dark", label: "Escuro" },
+] as const;
+
+/** "Tema": automático (segue o aparelho), claro ou escuro. */
+function ThemeChoice() {
+	const [theme, setTheme] = useState<Theme>(() => (typeof document === "undefined" ? "auto" : readTheme()));
+	return (
+		<div className="space-y-2 border-t border-outline-variant px-4 py-3">
+			<p className="text-title-medium text-on-surface-variant">Tema</p>
+			<SegmentedButton
+				label="Tema"
+				value={theme}
+				options={THEMES}
+				onChange={(t) => {
+					setTheme(t);
+					applyTheme(t);
+				}}
+			/>
+		</div>
+	);
+}
 
 export type ShellUser = { name: string; email: string; picture: string | null };
 
@@ -62,6 +88,7 @@ function AccountMenu({ user, onSignOut }: Readonly<{ user: ShellUser; onSignOut:
 						<p className="truncate text-title-medium">{user.name}</p>
 						<p className="truncate text-body-large text-on-surface-variant">{user.email}</p>
 					</div>
+					<ThemeChoice />
 					<div className="border-t border-outline-variant py-1">
 						<Link
 							role="menuitem"

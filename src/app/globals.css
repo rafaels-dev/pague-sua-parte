@@ -2,7 +2,7 @@
 
 /*
  * Material Design 3 — papéis de cor (semente: verde-azulado do Pix).
- * Claro e escuro seguem prefers-color-scheme.
+ * Claro e escuro seguem prefers-color-scheme, a não ser que a pessoa escolha um tema no menu da conta.
  */
 :root {
 	--md-primary: #006b5e;
@@ -39,7 +39,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-	:root {
+	:root:not([data-theme="light"]) {
 		--md-primary: #83d5c5;
 		--md-on-primary: #003730;
 		--md-primary-container: #005046;
@@ -69,6 +69,38 @@
 		--google-border: #8e918f;
 		color-scheme: dark;
 	}
+}
+
+/* Escolha manual no menu da conta (data-theme no <html>): vale mais que o sistema. */
+:root[data-theme="dark"] {
+	--md-primary: #83d5c5;
+	--md-on-primary: #003730;
+	--md-primary-container: #005046;
+	--md-on-primary-container: #9ff2e1;
+	--md-secondary-container: #334b46;
+	--md-on-secondary-container: #cce8e1;
+	--md-tertiary-container: #5c4200;
+	--md-on-tertiary-container: #ffdea6;
+	--md-surface: #0e1513;
+	--md-surface-container-low: #171d1b;
+	--md-surface-container: #1b211f;
+	--md-surface-container-high: #252b29;
+	--md-on-surface: #dee4e1;
+	--md-on-surface-variant: #bec9c5;
+	--md-outline: #899390;
+	--md-outline-variant: #3f4946;
+	--md-error: #ffb4ab;
+	--md-on-error: #690005;
+	--md-error-container: #93000a;
+	--md-on-error-container: #ffdad6;
+	--md-inverse-surface: #dee4e1;
+	--md-inverse-on-surface: #2c3230;
+	--md-inverse-primary: #006b5e;
+	--md-receive: #8ad99a;
+	--google-bg: #131314;
+	--google-fg: #e3e3e3;
+	--google-border: #8e918f;
+	color-scheme: dark;
 }
 
 @theme inline {

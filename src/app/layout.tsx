@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Roboto } from "next/font/google";
 import { AuthProvider } from "@/components/auth/auth-provider";
+import { THEME_INIT_SCRIPT } from "@/lib/ui/theme";
 import "./globals.css";
 
 const roboto = Roboto({
@@ -30,8 +31,10 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
 	return (
-		<html lang="pt-BR" translate="no" className={roboto.variable}>
+		<html lang="pt-BR" translate="no" className={roboto.variable} suppressHydrationWarning>
 			<head>
+				{/* Aplica o tema escolhido antes da primeira pintura. */}
+				<script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
 				<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 			</head>
 			<body className="min-h-dvh antialiased"><AuthProvider>{children}</AuthProvider></body>

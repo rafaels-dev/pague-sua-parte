@@ -33,7 +33,7 @@ export function AddManagedButton({ onClick }: Readonly<{ onClick: () => void }>)
 	);
 }
 
-/** Visual da tela do grupo: despesas em primeiro lugar; convite e pessoas numa seção própria (ao lado em telas largas). `expenses` e `invite` entram como slots. */
+/** Visual da tela do grupo: despesas em primeiro lugar; convite e pessoas numa seção recolhida ("Pessoas do grupo"). `expenses` e `invite` entram como slots. */
 export function GroupDetailView({
 	group,
 	invite,
@@ -58,13 +58,16 @@ export function GroupDetailView({
 				</Button>
 			</div>
 
-			<div className="grid items-start gap-8 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-				{expenses}
-
-				<section className="space-y-3" aria-labelledby="membros-titulo">
-					<h2 id="membros-titulo" className="text-title-large">
-						Pessoas do grupo
-					</h2>
+			{/* As pessoas ficam recolhidas: a tela é das despesas. Abre sozinho só quando ainda não há mais ninguém para dividir. */}
+			<details open={group.members.length <= 1} className="group rounded-shape-md bg-surface-container-low">
+				<summary className="state-layer flex min-h-14 cursor-pointer list-none items-center gap-3 rounded-shape-md px-4 text-title-medium [&::-webkit-details-marker]:hidden">
+					<Icon name="group" className="text-on-surface-variant" />
+					<span className="flex-1">
+						Pessoas do grupo <span className="font-normal text-on-surface-variant">({group.members.length})</span>
+					</span>
+					<Icon name="expand_more" className="text-on-surface-variant transition-transform group-open:rotate-180" />
+				</summary>
+				<div className="space-y-3 px-2 pb-3 pt-1">
 					{invite}
 					{addManaged}
 					<List>
@@ -102,8 +105,10 @@ export function GroupDetailView({
 							);
 						})}
 					</List>
-				</section>
-			</div>
+				</div>
+			</details>
+
+			{expenses}
 		</div>
 	);
 }
