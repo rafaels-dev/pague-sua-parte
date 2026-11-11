@@ -309,6 +309,21 @@ body {
 
 /* Foco por teclado sempre bem visível. */
 @layer base {
+	/*
+	 * Campo de data no iPhone: o Safari dá ao campo uma largura mínima própria e ele passa da tela,
+	 * criando rolagem para o lado. Sem a aparência nativa ele respeita a largura do formulário.
+	 */
+	input[type="date"] {
+		-webkit-appearance: none;
+		appearance: none;
+		display: block;
+		min-width: 0;
+		max-width: 100%;
+	}
+	input[type="date"]::-webkit-date-and-time-value {
+		text-align: left;
+	}
+
 	:focus-visible {
 		outline: 3px solid var(--md-primary);
 		outline-offset: 2px;
