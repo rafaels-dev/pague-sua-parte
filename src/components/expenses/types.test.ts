@@ -90,6 +90,22 @@ describe("Quero ajudar", () => {
 	});
 });
 
+describe("pago junto (batch)", () => {
+	it("formato antigo: sem batch", () => {
+		expect(normalizeExpense({ shares: [{ uid: "b", name: "B", status: "paid" }] }).shares[0].batch).toBeNull();
+	});
+	it("mantém o que o servidor manda e descarta o estranho", () => {
+		const e = normalizeExpense({
+			shares: [
+				{ uid: "a", name: "A", batch: { totalCents: 35000, count: 3 } },
+				{ uid: "b", name: "B", batch: { totalCents: "x", count: 3 } },
+			],
+		} as never);
+		expect(e.shares[0].batch).toEqual({ totalCents: 35000, count: 3 });
+		expect(e.shares[1].batch).toBeNull();
+	});
+});
+
 describe("comprovantes", () => {
 	it("formato antigo: sem método, comprovante nem permissões", () => {
 		const e = normalizeExpense({ shares: [{ uid: "b", name: "B", amountCents: 1000, status: "paid" }] });

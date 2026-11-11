@@ -130,7 +130,7 @@ const EXPENSES: ExpenseSummary[] = [
 	sum({ id: "e5", description: "Cuidadora de sábado", amountCents: 20000, date: "2025-06-14", paidBy: { uid: "d", name: "Ana Paula", isYou: false }, yourShareCents: 0, yourStatus: "none", pendingCount: 2, attachmentCount: 0 }),
 ];
 
-function Shell({ pathname, children, framed, user = USER }: Readonly<{ pathname: string; children: React.ReactNode; framed: boolean; user?: typeof USER }>) {
+export function Shell({ pathname, children, framed, user = USER }: Readonly<{ pathname: string; children: React.ReactNode; framed: boolean; user?: typeof USER }>) {
 	return (
 		<AppShellView pathname={pathname} user={user} onSignOut={noop} className={framed ? "min-h-0!" : undefined}>
 			{children}
@@ -499,12 +499,13 @@ const ATTACHMENTS: AttachmentView[] = [
 ];
 
 type RawDetail = Omit<ExpenseDetailData, "canHelp" | "helpAsUids" | "helpShareCents" | "ownerAlone">;
-export type MockMode = "help-alone" | "help-split" | "helped" | "help-care" | "installment" | "overdue" | "owner-installment" | "monthly" | "debtor" | "payer" | "partial" | "refund" | "owner-return" | "recalc" | "two-parts" | "care-paid" | "self-owner" | "self-debtor";
+export type MockMode = "help-alone" | "help-split" | "helped" | "help-care" | "installment" | "overdue" | "owner-installment" | "monthly" | "batch" | "debtor" | "payer" | "partial" | "refund" | "owner-return" | "recalc" | "two-parts" | "care-paid" | "self-owner" | "self-debtor";
 const isCare = (mode: MockMode) => mode === "two-parts" || mode === "care-paid" || mode === "help-care";
 
 type MS = Partial<ExpenseShare> & Pick<ExpenseShare, "uid" | "name" | "amountCents" | "status">;
 const share = (s: MS): ExpenseShare => ({
 	helped: false,
+	batch: null,
 	picture: null,
 	isYou: false,
 	paidAt: null,
@@ -767,6 +768,14 @@ function rawDetail(mode: MockMode): RawDetail {
 	});
 	const RECEIPT = { name: "comprovante-pix.png", contentType: "image/png", size: 210_000 };
 	switch (mode) {
+		case "batch":
+			// Rafael pagou 3 contas de uma vez para Maria (R$ 350,00 no total) e enviou um comprovante só.
+			return out("Remédios da farmácia", 28990, 2, [
+				share({ ...B, amountCents: 7247, status: "payer" }),
+				share({ ...A, amountCents: 7248, status: "paid", isYou: true, paidAt: PAID_AT, method: "self", receipt: RECEIPT, canAddReceipt: true, batch: { totalCents: 35000, count: 3 } }),
+				share({ uid: "c", name: "José", amountCents: 7248, status: "paid", paidAt: PAID_AT, method: "manual" }),
+				share({ uid: "d", name: "Ana Paula", amountCents: 7247, status: "pending" }),
+			]);
 		case "self-owner":
 			// Rafael pagou a conta: Maria avisou que pagou (com comprovante); José ainda não.
 			return out("Consulta com a cardiologista", 45000, 1, [

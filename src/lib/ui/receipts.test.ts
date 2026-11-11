@@ -19,7 +19,25 @@ describe("receiptSheetCopy", () => {
 	});
 });
 
+describe("receiptSheetCopy (várias contas)", () => {
+	it("já paguei tudo: um comprovante vale para todas", () => {
+		const c = receiptSheetCopy("batch", "Maria", 3);
+		expect(c.title).toBe("Já paguei tudo");
+		expect(c.intro).toBe("Um comprovante só vale para as 3 contas.");
+		expect(c.send).toBe("Enviar comprovante");
+		expect(c.skip).toBe("Avisar sem comprovante");
+		expect(receiptDoneMessage("batch")).toBe("Pagamento avisado!");
+	});
+});
+
 describe("paidCaption", () => {
+	it("pago junto com outras contas", () => {
+		const batch = { count: 3, totalCents: 35000 };
+		expect(paidCaption({ ...base, batch }, "Hoje")).toBe("Avisou que pagou · Hoje · Pago junto com outras 2 contas (R$ 350,00 no total)");
+		expect(paidCaption({ ...base, method: null, batch }, "")).toBe("Pago junto com outras 2 contas (R$ 350,00 no total)");
+		expect(paidCaption({ ...base, status: "pending", batch }, "")).toBeNull();
+		expect(paidCaption({ ...base, batch: null }, "")).toBe("Avisou que pagou");
+	});
 	it("avisou que pagou", () => {
 		expect(paidCaption(base, "Hoje")).toBe("Avisou que pagou · Hoje");
 		expect(paidCaption(base, "")).toBe("Avisou que pagou");

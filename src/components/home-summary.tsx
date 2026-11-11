@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
 import Link from "next/link";
-import { Avatar, Card, Icon, Skeleton } from "@/components/ui";
+import { Avatar, Button, Card, Icon, Skeleton } from "@/components/ui";
 import { GroupBalance } from "@/components/groups/groups-list";
 import { apiFetch } from "@/lib/api-client";
 import { formatBRL } from "@/lib/money";
@@ -21,6 +21,7 @@ export function HomeSummary({
 	receiveNowCents,
 	payNowCents,
 	overdueCents = 0,
+	payAll = false,
 	loading = false,
 }: Readonly<{
 	receiveCents: number | null;
@@ -30,6 +31,8 @@ export function HomeSummary({
 	payNowCents?: number | null;
 	/** O que a pessoa deve e já venceu. */
 	overdueCents?: number;
+	/** Há algo a pagar agora (sua parte ou de quem você cuida): mostra "Pagar tudo de uma vez". */
+	payAll?: boolean;
 	loading?: boolean;
 }>) {
 	const today = todayISO();
@@ -65,6 +68,13 @@ export function HomeSummary({
 					<Icon name="warning" size={22} />
 					<span className="money">{formatBRL(overdueCents)} vencido</span>
 				</p>
+			)}
+			{!loading && payAll && (
+				<div className="col-span-2 border-t border-outline-variant pt-4">
+					<Button href="/app/pagar" variant="tonal" icon="qr_code" fullWidth>
+						Pagar tudo de uma vez
+					</Button>
+				</div>
 			)}
 		</Card>
 	);
@@ -126,6 +136,7 @@ export function HomeSummaryLive() {
 				receiveNowCents={ready?.toReceiveNowCents}
 				payNowCents={ready?.toPayNowCents}
 				overdueCents={ready?.overdueToPayCents ?? 0}
+				payAll={!!ready && ready.toPayNowCents + ready.managed.reduce((sum, m) => sum + m.toPayNowCents, 0) > 0}
 			/>
 			{ready && <ManagedSummaryCards managed={ready.managed} />}
 		</div>

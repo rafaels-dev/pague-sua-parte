@@ -170,6 +170,8 @@ export type ExpenseDetail = {
 		method: ShareMethod | null;
 		/** Só para quem pode baixar (a pessoa, quem age por ela ou por quem pagou); null para os demais. */
 		receipt: { name: string; contentType: string; size: number } | null;
+		/** Pago num lote ("pagar tudo de uma vez"); visível para quem vê o comprovante. */
+		batch: { totalCents: number; count: number } | null;
 		/** Você age por esta pessoa e a parte dela está pendente: pode avisar que pagou. */
 		canPay: boolean;
 		/** Você age por esta pessoa e ela já pagou o valor todo: pode anexar ou trocar o comprovante. */
@@ -288,6 +290,7 @@ async function toDetail(db: Db, e: ExpenseDoc, group: GroupDoc, uid: string, now
 				method: s.paidCents > 0 ? (s.method ?? null) : null,
 				receipt:
 					s.receipt && (actsForShare || owns) ? { name: s.receipt.name, contentType: s.receipt.contentType, size: s.receipt.size } : null,
+				batch: s.batch && (actsForShare || owns) ? { totalCents: s.batch.totalCents, count: s.batch.count } : null,
 				canPay: actsForShare && status === "pending",
 				canAddReceipt: actsForShare && s.uid !== e.paidBy && s.amountCents > 0 && s.paidCents === s.amountCents,
 			};
@@ -306,7 +309,7 @@ export type GetExpenseResult =
 	| { status: "no_group" }
 	| { status: "no_expense" };
 
-async function findExpense(db: Db, groupId: string, eid: string) {
+export async function findExpense(db: Db, groupId: string, eid: string) {
 	if (!isObjectIdHex(eid)) return null;
 	const e = await expensesCollection(db).findOne({ _id: new ObjectId(eid), groupId: new ObjectId(groupId) });
 	// Lê cotas do modelo antigo (status) como paidCents, num só lugar.
@@ -592,6 +595,23 @@ async function releaseAttachments(db: Db, store: AttachmentStore, keys: string[]
 }
 
 /**
+ * Apaga do armazenamento só os comprovantes que nenhuma cota restante referencia (um comprovante de lote é
+ * compartilhado por várias cotas, até de outras despesas). Chamar DEPOIS de gravar a mudança nas cotas.
+ */
+export async function releaseReceipts(db: Db, store: AttachmentStore, keys: string[]): Promise<void> {
+	const unique = [...new Set(keys)];
+	if (unique.length === 0) return;
+	const still = await expensesCollection(db)
+		.find({ "shares.receipt.key": { $in: unique } }, { projection: { "shares.receipt.key": 1 } })
+		.toArray();
+	const referenced = new Set(still.flatMap((d) => d.shares.flatMap((s) => (s.receipt ? [s.receipt.key] : []))));
+	await deleteAttachments(
+		store,
+		unique.filter((k) => !referenced.has(k)),
+	);
+}
+
+/**
  * `scope: 'following'` apaga esta parcela e as seguintes da série que não têm pagamento; as que têm ficam (`kept`).
  * A parcela pedida precisa poder ser apagada (sem pagamento), como no apagamento simples.
  */
@@ -619,7 +639,7 @@ export async function deleteExpense(
 			return (await findExpense(db, groupId, eid)) ? { status: "has_payment" } : { status: "no_expense" };
 		}
 		await releaseAttachments(db, store, e.attachments.map((a) => a.key));
-		await deleteAttachments(store, receiptKeysOf(e));
+		await releaseReceipts(db, store, receiptKeysOf(e));
 		return { status: "ok", deleted: 1, kept: 0 };
 	}
 
@@ -631,15 +651,8 @@ export async function deleteExpense(
 		return (await findExpense(db, groupId, eid)) ? { status: "has_payment" } : { status: "no_expense" };
 	}
 	await releaseAttachments(db, store, targets.flatMap((t) => t.attachments.map((a) => a.key)));
-	const withReceipts = targets.filter((t) => receiptKeysOf(t).length > 0);
-	if (withReceipts.length > 0) {
-		// Só as parcelas que de fato foram apagadas perdem os comprovantes.
-		const left = await expensesCollection(db)
-			.find({ _id: { $in: withReceipts.map((t) => t._id) } }, { projection: { _id: 1 } })
-			.toArray();
-		const stillThere = new Set(left.map((d) => d._id.toHexString()));
-		await deleteAttachments(store, withReceipts.filter((t) => !stillThere.has(t._id.toHexString())).flatMap(receiptKeysOf));
-	}
+	// Só o que nenhuma cota restante referencia é apagado (parcelas que ficaram e outros lotes mantêm o objeto).
+	await releaseReceipts(db, store, targets.flatMap(receiptKeysOf));
 	return { status: "ok", deleted: res.deletedCount, kept: targets.length - res.deletedCount };
 }
 
@@ -661,8 +674,8 @@ async function followingOf(db: Db, e: ExpenseDoc): Promise<ExpenseDoc[]> {
 const CONFLICT_RETRIES = 1;
 const versionFilter = (e: ExpenseDoc) => (e.version === undefined ? { version: { $exists: false } } : { version: e.version });
 
-type Mutation = (e: ExpenseDoc) => { shares: ExpenseShare[]; changed: boolean } | { error: unknown };
-type Mutated =
+export type Mutation = (e: ExpenseDoc) => { shares: ExpenseShare[]; changed: boolean } | { error: unknown };
+export type Mutated =
 	| { kind: "ok"; doc: ExpenseDoc; before: ExpenseDoc; wrote: boolean }
 	| { kind: "no_expense" }
 	| { kind: "conflict" }
@@ -672,7 +685,7 @@ type Mutated =
  * Lê a despesa, calcula as novas cotas e grava só se a `version` lida ainda for a atual.
  * Se perder a corrida, relê e tenta mais uma vez; depois disso, "conflict".
  */
-async function mutateShares(db: Db, groupId: string, eid: string, mutate: Mutation): Promise<Mutated> {
+export async function mutateShares(db: Db, groupId: string, eid: string, mutate: Mutation): Promise<Mutated> {
 	if (!isObjectIdHex(eid)) return { kind: "no_expense" };
 	for (let attempt = 0; attempt <= CONFLICT_RETRIES; attempt++) {
 		const e = await findExpense(db, groupId, eid);
@@ -726,7 +739,7 @@ export async function setSharePaid(
 	if (r.kind === "no_expense") return { status: "no_expense" };
 	if (r.kind === "conflict") return { status: "conflict" };
 	if (r.kind === "rejected") return { status: r.error === "forbidden" ? "forbidden" : "no_share" };
-	if (store && r.wrote) await deleteAttachments(store, droppedReceiptKeys(r.before.shares, r.doc.shares));
+	if (store && r.wrote) await releaseReceipts(db, store, droppedReceiptKeys(r.before.shares, r.doc.shares));
 	return { status: "ok", expense: await toDetail(db, r.doc, group, uid, now) };
 }
 
@@ -773,7 +786,7 @@ export async function markSelfPaid(
 	if (r.kind === "no_expense") return { status: "no_expense" };
 	if (r.kind === "conflict") return { status: "conflict" };
 	if (r.kind === "rejected") return { status: "no_share" };
-	if (r.wrote) await deleteAttachments(store, droppedReceiptKeys(r.before.shares, r.doc.shares));
+	if (r.wrote) await releaseReceipts(db, store, droppedReceiptKeys(r.before.shares, r.doc.shares));
 	return { status: "ok", expense: await toDetail(db, r.doc, group, uid, now) };
 }
 
@@ -835,7 +848,7 @@ export async function updateParticipants(
 		if (r.kind === "no_expense") return { status: "no_expense" };
 		if (r.kind === "conflict") return { status: "conflict" };
 		if (r.kind === "rejected") return rejection(r.error);
-		if (store && r.wrote) await deleteAttachments(store, droppedReceiptKeys(r.before.shares, r.doc.shares));
+		if (store && r.wrote) await releaseReceipts(db, store, droppedReceiptKeys(r.before.shares, r.doc.shares));
 		return { status: "ok", expense: await toDetail(db, r.doc, group, uid, now) };
 	}
 
@@ -873,7 +886,7 @@ export async function updateParticipants(
 		return failure;
 	}
 	// Quem saiu da divisão sem ter pago perde só a cota; comprovante só some junto com a cota inteira.
-	if (store) await deleteAttachments(store, written.flatMap((w) => droppedReceiptKeys(w.before.shares, w.doc.shares)));
+	if (store) await releaseReceipts(db, store, written.flatMap((w) => droppedReceiptKeys(w.before.shares, w.doc.shares)));
 	const mine = written.find((w) => w.doc._id.equals(first._id))?.doc ?? first;
 	return { status: "ok", expense: await toDetail(db, mine, group, uid, now) };
 }

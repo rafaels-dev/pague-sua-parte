@@ -31,6 +31,110 @@ export function AccountHeader({ id, name, managed }: Readonly<{ id: string; name
 	);
 }
 
+/**
+ * Parte de baixo do pagamento por Pix: copiar o código "Copia e Cola", passo a passo, QR Code e a chave como alternativa.
+ * Usado tanto pela parte de uma despesa quanto por "Pagar tudo de uma vez".
+ */
+export function PixCodeBlock({
+	amountCents,
+	payeeName,
+	pix,
+	payload,
+	qrOpen,
+	codeFallback,
+	onToggleQr,
+	onCopyCode,
+	onCopyKey,
+}: Readonly<{
+	amountCents: number;
+	payeeName: string;
+	pix: { type: PixKeyType; key: string };
+	/** Código "Copia e Cola"; null se não foi possível gerar. */
+	payload: string | null;
+	qrOpen: boolean;
+	/** Quando copiar automaticamente falhou: mostra o código num campo para copiar à mão. */
+	codeFallback: boolean;
+	onToggleQr: () => void;
+	onCopyCode: () => void;
+	onCopyKey: () => void;
+}>) {
+	return (
+		<div className="space-y-5">
+				{payload ? (
+					<>
+						<Button icon="content_copy" fullWidth onClick={onCopyCode}>
+							Copiar Pix Copia e Cola
+						</Button>
+
+						<ol className="space-y-2">
+							{STEPS.map((s, i) => (
+								<li key={s} className="flex items-start gap-3 text-body-large">
+									<span
+										aria-hidden="true"
+										className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary-container text-sm font-bold text-on-secondary-container"
+									>
+										{i + 1}
+									</span>
+									<span className="pt-0.5">{s}</span>
+								</li>
+							))}
+						</ol>
+
+						{codeFallback && (
+							<div className="space-y-2">
+								<p role="alert" className="text-body-large text-on-surface">
+									Não deu para copiar sozinho. Toque no código abaixo, selecione tudo e copie.
+								</p>
+								<textarea
+									readOnly
+									rows={4}
+									value={payload}
+									aria-label="Código Pix Copia e Cola"
+									onFocus={(e) => e.currentTarget.select()}
+									className="w-full resize-none break-all rounded-shape-sm border border-outline bg-surface p-3 font-mono text-sm text-on-surface"
+								/>
+							</div>
+						)}
+
+						<div>
+							<Button
+								variant="tonal"
+								size="md"
+								icon="qr_code"
+								onClick={onToggleQr}
+								fullWidth
+								aria-expanded={qrOpen}
+								className="sm:w-auto"
+							>
+								{qrOpen ? "Esconder QR Code" : "Mostrar QR Code"}
+							</Button>
+							{qrOpen && (
+								<div className="mt-4 flex flex-col items-center gap-2">
+									<QrCode value={payload} size={224} label={`QR Code Pix de ${formatBRL(amountCents)} para ${payeeName}`} className="rounded-shape-md" />
+									<p className="text-center text-body-large text-on-surface-variant">Para pagar de outro celular: aponte a câmera do app do banco.</p>
+								</div>
+							)}
+						</div>
+					</>
+				) : (
+					<Banner tone="error" icon="error" role="alert">
+						Não foi possível gerar o código Pix. Use a chave abaixo.
+					</Banner>
+				)}
+
+				<div className="flex items-center gap-3 border-t border-outline-variant pt-4">
+					<div className="min-w-0 flex-1">
+						<p className="text-body-large text-on-surface-variant">Ou pague pela chave ({PIX_KEY_LABELS[pix.type]})</p>
+						<p className="break-all text-body-large font-medium">{pix.key}</p>
+					</div>
+					<Button variant="text" size="md" onClick={onCopyKey} className="shrink-0">
+						Copiar chave
+					</Button>
+				</div>
+		</div>
+	);
+}
+
 /** Cartão de pagamento de uma parte: copiar o código Pix, ver o QR Code e, como alternativa, copiar a chave. */
 export function PixPayCard({
 	accountName,
@@ -104,77 +208,17 @@ export function PixPayCard({
 				)}
 			</div>
 
-			{payload ? (
-				<>
-					<Button icon="content_copy" fullWidth onClick={onCopyCode}>
-						Copiar Pix Copia e Cola
-					</Button>
-
-					<ol className="space-y-2">
-						{STEPS.map((s, i) => (
-							<li key={s} className="flex items-start gap-3 text-body-large">
-								<span
-									aria-hidden="true"
-									className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary-container text-sm font-bold text-on-secondary-container"
-								>
-									{i + 1}
-								</span>
-								<span className="pt-0.5">{s}</span>
-							</li>
-						))}
-					</ol>
-
-					{codeFallback && (
-						<div className="space-y-2">
-							<p role="alert" className="text-body-large text-on-surface">
-								Não deu para copiar sozinho. Toque no código abaixo, selecione tudo e copie.
-							</p>
-							<textarea
-								readOnly
-								rows={4}
-								value={payload}
-								aria-label="Código Pix Copia e Cola"
-								onFocus={(e) => e.currentTarget.select()}
-								className="w-full resize-none break-all rounded-shape-sm border border-outline bg-surface p-3 font-mono text-sm text-on-surface"
-							/>
-						</div>
-					)}
-
-					<div>
-						<Button
-							variant="tonal"
-							size="md"
-							icon="qr_code"
-							onClick={onToggleQr}
-							fullWidth
-							aria-expanded={qrOpen}
-							className="sm:w-auto"
-						>
-							{qrOpen ? "Esconder QR Code" : "Mostrar QR Code"}
-						</Button>
-						{qrOpen && (
-							<div className="mt-4 flex flex-col items-center gap-2">
-								<QrCode value={payload} size={224} label={`QR Code Pix de ${formatBRL(shareCents)} para ${payeeName}`} className="rounded-shape-md" />
-								<p className="text-center text-body-large text-on-surface-variant">Para pagar de outro celular: aponte a câmera do app do banco.</p>
-							</div>
-						)}
-					</div>
-				</>
-			) : (
-				<Banner tone="error" icon="error" role="alert">
-					Não foi possível gerar o código Pix. Use a chave abaixo.
-				</Banner>
-			)}
-
-			<div className="flex items-center gap-3 border-t border-outline-variant pt-4">
-				<div className="min-w-0 flex-1">
-					<p className="text-body-large text-on-surface-variant">Ou pague pela chave ({PIX_KEY_LABELS[pix.type]})</p>
-					<p className="break-all text-body-large font-medium">{pix.key}</p>
-				</div>
-				<Button variant="text" size="md" onClick={onCopyKey} className="shrink-0">
-					Copiar chave
-				</Button>
-			</div>
+			<PixCodeBlock
+				amountCents={shareCents}
+				payeeName={payeeName}
+				pix={pix}
+				payload={payload}
+				qrOpen={qrOpen}
+				codeFallback={codeFallback}
+				onToggleQr={onToggleQr}
+				onCopyCode={onCopyCode}
+				onCopyKey={onCopyKey}
+			/>
 
 			{canPay && onPaid && (
 				<div className="space-y-2 border-t border-outline-variant pt-4">

@@ -4,6 +4,7 @@ import { GoogleButtonView } from "@/components/auth/sign-in-button";
 import { LandingView } from "@/components/landing-view";
 import { todayISO } from "@/lib/ui/dates";
 import { nextDayOfMonth } from "@/lib/ui/due-dates";
+import { MockPayAll } from "../pay-all-mocks";
 import { DUE_GROUPS, MOCK_GROUP, MockExpense, MockGroup, MockHome, MockManagedSheet, MockNewExpense, MockNoPixKey, MockRecurrenceSheet, MockReport } from "../expense-mocks";
 
 export function Telas({ tela }: Readonly<{ tela: string }>) {
@@ -223,6 +224,42 @@ export function Telas({ tela }: Readonly<{ tela: string }>) {
 			return <MockRecurrenceSheet framed={false} view="end" />;
 		case "despesa-todo-mes":
 			return <MockExpense mode="monthly" framed={false} />;
+		case "pagar-home":
+			return (
+				<MockHome
+					framed={false}
+					groups={DUE_GROUPS}
+					summary={{ receiveNowCents: 30000, payNowCents: 45000, overdueCents: 12000, payAll: true }}
+				/>
+			);
+		case "pagar-tudo":
+			return <MockPayAll framed={false} />;
+		case "pagar-tudo-pix":
+			return <MockPayAll framed={false} scene="pix" />;
+		case "pagar-tudo-desmarcado":
+			return <MockPayAll framed={false} scene="desmarcado" />;
+		case "pagar-tudo-nada":
+			return <MockPayAll framed={false} scene="nada" />;
+		case "pagar-tudo-comprovante":
+			return <MockPayAll framed={false} scene="comprovante" />;
+		case "pagar-tudo-comprovante-arquivo":
+			return <MockPayAll framed={false} scene="comprovante-arquivo" />;
+		case "pagar-tudo-pago":
+			return <MockPayAll framed={false} scene="pago" />;
+		case "pagar-tudo-avisar":
+			return <MockPayAll framed={false} scene="avisar" />;
+		case "pagar-tudo-parcial":
+			return <MockPayAll framed={false} scene="parcial" />;
+		case "pagar-tudo-vazio":
+			return <MockPayAll framed={false} scene="vazio" />;
+		case "pagar-tudo-carregando":
+			return <MockPayAll framed={false} scene="carregando" />;
+		case "pagar-tudo-erro":
+			return <MockPayAll framed={false} scene="erro" />;
+		case "pagar-tudo-indisponivel":
+			return <MockPayAll framed={false} scene="indisponivel" />;
+		case "despesa-pago-junto":
+			return <MockExpense mode="batch" framed={false} />;
 		default:
 			return <MockGroup framed={false} />;
 	}

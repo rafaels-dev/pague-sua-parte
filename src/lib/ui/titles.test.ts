@@ -7,6 +7,9 @@ describe("screenInfo", () => {
 	it("novo grupo volta ao início", () => {
 		expect(screenInfo("/app/grupos/novo")).toMatchObject({ title: "Criar grupo", back: "/app" });
 	});
+	it("pagar tudo volta ao início", () => {
+		expect(screenInfo("/app/pagar")).toEqual({ title: "Pagar tudo", back: "/app", nav: "/app" });
+	});
 	it("grupo", () => expect(screenInfo("/app/grupos/abc")).toMatchObject({ title: "Grupo", back: "/app", nav: "/app" }));
 	it("lançar despesa volta ao grupo", () => {
 		expect(screenInfo("/app/grupos/abc/despesas/nova")).toMatchObject({ title: "Lançar despesa", back: "/app/grupos/abc", nav: "/app" });

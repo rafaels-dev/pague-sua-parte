@@ -18,6 +18,7 @@ const PICKER_COPY = {
 export function ReceiptSheetContent({
 	mode,
 	payeeName,
+	count = 0,
 	items,
 	problems,
 	processing,
@@ -35,6 +36,8 @@ export function ReceiptSheetContent({
 }: Readonly<{
 	mode: ReceiptMode;
 	payeeName: string;
+	/** Quantas contas o comprovante cobre ("Já paguei tudo"). */
+	count?: number;
 	items: PickedFile[];
 	problems: string[];
 	processing: boolean;
@@ -52,7 +55,7 @@ export function ReceiptSheetContent({
 	onSkip: () => void;
 	onCancel: () => void;
 }>) {
-	const copy = receiptSheetCopy(mode, payeeName);
+	const copy = receiptSheetCopy(mode, payeeName, count);
 	return (
 		<div className="space-y-4">
 			<p className="text-body-large text-on-surface-variant">{copy.intro}</p>
@@ -100,6 +103,7 @@ export function ReceiptSheetContent({
 export function ReceiptSheetBody({
 	mode,
 	payeeName,
+	count = 0,
 	busy,
 	error,
 	fileError,
@@ -108,6 +112,7 @@ export function ReceiptSheetBody({
 }: Readonly<{
 	mode: ReceiptMode;
 	payeeName: string;
+	count?: number;
 	busy: boolean;
 	error: string | null;
 	fileError: string | null;
@@ -119,6 +124,7 @@ export function ReceiptSheetBody({
 		<ReceiptSheetContent
 			mode={mode}
 			payeeName={payeeName}
+			count={count}
 			items={att.items}
 			problems={att.problems}
 			processing={att.processing}

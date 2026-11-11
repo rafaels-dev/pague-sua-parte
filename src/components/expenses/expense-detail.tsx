@@ -18,6 +18,7 @@ import { buildExpenseLink, buildExpenseShareText, buildPaidShareText, shareIntro
 import { paidByLabel, shareStatusChip } from "@/lib/ui/expense-status";
 import { paidCaption, receiptActions, receiptDoneMessage, receiptSheetCopy, undoLabel, type ReceiptMode } from "@/lib/ui/receipts";
 import { managedCaption } from "@/lib/ui/managed";
+import { batchCaption } from "@/lib/ui/pay-all";
 import { HelpCard, HelpContent, canHelpOn, helperOptions } from "./help";
 import { ExpenseAttachments, type AttachmentView } from "./expense-attachments";
 import { DeleteInstallmentContent, ResplitScopeContent, type InstallmentScope } from "./installment-scope";
@@ -168,6 +169,7 @@ function PartStatusCard({
 	const managed = share.youManage;
 	const who = managed ? share.name : "Você";
 	const told = share.method === "self";
+	const joint = batchCaption(share.batch);
 	const title = refund
 		? "A receber de volta"
 		: told
@@ -197,6 +199,7 @@ function PartStatusCard({
 							{who} pagou {formatBRL(share.refundCents)} a mais. {ownerName} vai devolver.
 						</p>
 					)}
+					{!refund && joint && <p className="text-body-large">{joint}.</p>}
 				</div>
 			</div>
 			{/* Comprovante da parte paga: anexar, ver ou trocar, e avisar quem recebeu. */}

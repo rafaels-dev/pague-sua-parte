@@ -50,6 +50,11 @@ export function receiptKey(groupId: string, expenseId: string, receiptId: string
 	return `receipts/${groupId}/${expenseId}/${receiptId}`;
 }
 
+/** Comprovante de um lote ("pagar tudo de uma vez"): um só objeto referenciado por várias cotas. */
+export function batchReceiptKey(batchId: string, receiptId: string): string {
+	return `receipts/batch/${batchId}/${receiptId}`;
+}
+
 export async function putAttachment(
 	store: AttachmentStore,
 	args: { groupId: string; expenseId: string; bytes: Uint8Array; name: string; contentType: string },
@@ -66,6 +71,16 @@ export async function putReceipt(
 ): Promise<AttachmentMeta> {
 	const id = randomId();
 	const key = receiptKey(args.groupId, args.expenseId, id);
+	await store.put(key, args.bytes, args.contentType);
+	return { id, key, name: args.name, contentType: args.contentType, size: args.bytes.byteLength };
+}
+
+export async function putBatchReceipt(
+	store: AttachmentStore,
+	args: { batchId: string; bytes: Uint8Array; name: string; contentType: string },
+): Promise<AttachmentMeta> {
+	const id = randomId();
+	const key = batchReceiptKey(args.batchId, id);
 	await store.put(key, args.bytes, args.contentType);
 	return { id, key, name: args.name, contentType: args.contentType, size: args.bytes.byteLength };
 }

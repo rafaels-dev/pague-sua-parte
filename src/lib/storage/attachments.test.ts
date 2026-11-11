@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { attachmentKey, deleteAttachments, getAttachmentStore, putAttachment, putReceipt, randomId, receiptKey, resolveAttachmentStore, type AttachmentStore } from "./attachments";
+import { batchReceiptKey, putBatchReceipt, attachmentKey, deleteAttachments, getAttachmentStore, putAttachment, putReceipt, randomId, receiptKey, resolveAttachmentStore, type AttachmentStore } from "./attachments";
 
 
 const fake = (): AttachmentStore & { put: ReturnType<typeof vi.fn>; delete: ReturnType<typeof vi.fn> } => ({
@@ -80,5 +80,16 @@ describe("resolveAttachmentStore", () => {
 		} finally {
 			vi.unstubAllEnvs();
 		}
+	});
+});
+
+describe("comprovante de lote", () => {
+	it("usa o prefixo receipts/batch/<lote>/ e não leva o nome do arquivo", async () => {
+		const store = fake();
+		const m = await putBatchReceipt(store, { batchId: "b1", bytes: new Uint8Array(2), name: "../pix.png", contentType: "image/png" });
+		expect(m.key).toBe(batchReceiptKey("b1", m.id));
+		expect(m.key.startsWith("receipts/batch/b1/")).toBe(true);
+		expect(m.key).not.toContain("pix");
+		expect(store.put).toHaveBeenCalledWith(m.key, expect.any(Uint8Array), "image/png");
 	});
 });

@@ -12,7 +12,7 @@ const member = (uid: string, role: "admin" | "member" = "member") => ({ uid, rol
 const group = () => ({ _id: new ObjectId(GID), name: "G", members: [member("u1", "admin"), member("u2"), member("u3"), member("u4")] });
 const PIX = { type: "email", key: "ana@x.com" };
 
-type Share = { uid: string; amountCents: number; paidCents: number; paidAt?: Date; markedBy?: string; method?: "manual" | "self"; receipt?: { id: string; key: string; name: string; contentType: string; size: number } };
+type Share = { uid: string; amountCents: number; paidCents: number; paidAt?: Date; markedBy?: string; method?: "manual" | "self"; receipt?: { id: string; key: string; name: string; contentType: string; size: number }; batch?: { id: string; totalCents: number; count: number } };
 const S = (uid: string, amountCents: number, paidCents = 0, extra: Partial<Share> = {}): Share => ({ uid, amountCents, paidCents, ...extra });
 const expense = (over: Record<string, unknown> = {}) => ({
 	_id: new ObjectId(EID),
@@ -310,6 +310,13 @@ function statefulDb(initial: ReturnType<typeof expense>, opts: { failUpdates?: n
 	const writes: unknown[] = [];
 	const expenses = {
 		findOne: vi.fn(async () => clone(doc)),
+		// Consulta de referências a comprovantes (`shares.receipt.key`): devolve a despesa se alguma cota usa uma das chaves.
+		find: vi.fn((filter: Record<string, { $in?: string[] }>) => ({
+			toArray: async () => {
+				const keys = filter["shares.receipt.key"]?.$in ?? [];
+				return doc.shares.some((x) => x.receipt && keys.includes(x.receipt.key)) ? [clone(doc)] : [];
+			},
+		})),
 		updateOne: vi.fn(async (filter: Record<string, unknown>, update: { $set: Record<string, unknown>; $inc?: { version: number } }) => {
 			if (failures > 0) {
 				failures--;
@@ -668,6 +675,16 @@ describe("comprovantes: desfazer, recalcular, apagar, detalhe", () => {
 		await setSharePaid(m.db, GID, EID, "u2", "u1", "pending", undefined, store);
 		expect(store.delete).toHaveBeenCalledTimes(1);
 	});
+	it("comprovante de lote compartilhado: desfazer uma cota mantém o objeto enquanto outra cota o referencia", async () => {
+		const batch = { id: "b", totalCents: 2000, count: 2 };
+		const m = statefulDb(expense({ shares: [S("u2", 1000), S("u1", 1000, 1000, { method: "self", paidAt: paidAtR, receipt: rcpt("r1"), batch }), S("u3", 1000, 1000, { method: "self", paidAt: paidAtR, receipt: rcpt("r1"), batch })] }));
+		const store = fakeStore();
+		await setSharePaid(m.db, GID, EID, "u2", "u1", "pending", undefined, store);
+		expect(m.doc.shares.find((s) => s.uid === "u1")).toEqual(S("u1", 1000, 0));
+		expect(store.delete).not.toHaveBeenCalled();
+		await setSharePaid(m.db, GID, EID, "u2", "u3", "pending", undefined, store);
+		expect(store.delete).toHaveBeenCalledWith([rcpt("r1").key]);
+	});
 	it("dono quita (paid) cota que já tem comprovante: mantém tudo", async () => {
 		const m = statefulDb(expense({ shares: [S("u2", 1000), selfPaid(), S("u3", 1000)] }));
 		const store = fakeStore();
@@ -719,6 +736,20 @@ describe("comprovantes: desfazer, recalcular, apagar, detalhe", () => {
 		expect(owner.u4.receipt).not.toBeNull(); // linha de reembolso: o dono vê
 		expect(other.u4.receipt).toBeNull();
 		for (const v of Object.values(self)) expect(v).not.toHaveProperty("key");
+	});
+	it("detalhe: batch (lote) aparece só para quem vê o comprovante", async () => {
+		const batch = { id: "b", totalCents: 2000, count: 2 };
+		const doc = () => expense({ shares: [S("u2", 1000), S("u1", 1000, 1000, { method: "self", paidAt: paidAtR, receipt: rcpt("r1"), batch }), S("u3", 1000)] });
+		const get = async (uid: string) => {
+			const r = await getExpenseDetail(mockDb({ expense: doc() }).db, GID, EID, uid);
+			if (r.status !== "ok") throw new Error("esperava ok");
+			return Object.fromEntries(r.expense.shares.map((s) => [s.uid, s]));
+		};
+		expect((await get("u1")).u1.batch).toEqual({ totalCents: 2000, count: 2 });
+		expect((await get("u2")).u1.batch).toEqual({ totalCents: 2000, count: 2 });
+		expect((await get("u3")).u1.batch).toBeNull();
+		expect((await get("u1")).u3.batch).toBeNull();
+		expect(JSON.stringify(await get("u1"))).not.toContain('"id":"b"');
 	});
 	it("getReceiptRef: a pessoa e o dono baixam; os outros e a cota sem comprovante dão not_found", async () => {
 		const open = (uid: string, target = "u1") => getReceiptRef(mockDb({ expense: expense({ shares: [S("u2", 1000), selfPaid(), S("u3", 1000)] }) }).db, GID, EID, target, uid);

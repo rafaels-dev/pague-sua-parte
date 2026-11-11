@@ -11,6 +11,8 @@ export type ShareStatus = "payer" | "pending" | "paid" | "refund";
 export type ShareMethod = "manual" | "self";
 /** Comprovante de pagamento da cota (mesmo formato de um anexo). `key` nunca sai da API. */
 export type ShareReceipt = AttachmentMeta;
+/** "Pagar tudo de uma vez": o pagamento fez parte de um lote com um só comprovante. */
+export type ShareBatch = { id: string; totalCents: number; count: number };
 export type ExpenseShare = {
 	uid: string;
 	amountCents: number;
@@ -20,6 +22,8 @@ export type ExpenseShare = {
 	markedBy?: string;
 	method?: ShareMethod;
 	receipt?: ShareReceipt;
+	/** Presente quando a cota foi paga num lote (vários pagamentos ao mesmo destinatário, um só comprovante). */
+	batch?: ShareBatch;
 	/** "Quero ajudar": a pessoa entrou na divisão por conta própria (pela ação de ajudar), não por escolha do dono. */
 	helped?: boolean;
 	helpedAt?: Date;
@@ -167,11 +171,59 @@ export function payShare(
 		const paid: ExpenseShare = { ...s, paidCents: s.amountCents, paidAt: now, markedBy: actorUid, method: "self" };
 		if (receipt) paid.receipt = receipt;
 		else delete paid.receipt;
+		delete paid.batch;
 		return put(paid);
 	}
 	// Já quitada: só troca o comprovante (mantém paidAt, markedBy e method). Sem arquivo não muda nada.
-	if (s.paidCents === s.amountCents && receipt) return put({ ...s, receipt });
+	// O comprovante novo vale só para esta cota: ela sai do lote (as outras do lote mantêm o comprovante do lote).
+	if (s.paidCents === s.amountCents && receipt) {
+		const moved: ExpenseShare = { ...s, receipt };
+		delete moved.batch;
+		return put(moved);
+	}
 	return { shares, changed: false };
+}
+
+export type BatchOutcome =
+	| { uid: string; result: "paid"; amountCents: number }
+	| { uid: string; result: "already_paid" | "not_found" };
+
+/**
+ * Quita várias cotas de uma mesma despesa de uma vez (`method: "self"`), todas com o mesmo comprovante e o mesmo lote.
+ * Cota que não existe (ou é a de quem pagou / só reembolso) vira `not_found`; a que já está quitada, `already_paid`;
+ * as demais seguem normalmente. `amountCents` = o que faltava pagar na cota.
+ */
+export function payShares(
+	shares: ExpenseShare[],
+	paidBy: string,
+	targetUids: string[],
+	now: Date,
+	actorUid: string,
+	receipt: ShareReceipt | undefined,
+	batch: ShareBatch,
+): { shares: ExpenseShare[]; changed: boolean; outcomes: BatchOutcome[] } {
+	const targets = new Set(targetUids);
+	const outcomes: BatchOutcome[] = [];
+	let changed = false;
+	const next = shares.map((s) => {
+		if (!targets.has(s.uid)) return s;
+		if (s.uid === paidBy || s.amountCents <= 0) {
+			outcomes.push({ uid: s.uid, result: "not_found" });
+			return s;
+		}
+		if (s.paidCents >= s.amountCents) {
+			outcomes.push({ uid: s.uid, result: "already_paid" });
+			return s;
+		}
+		outcomes.push({ uid: s.uid, result: "paid", amountCents: s.amountCents - s.paidCents });
+		changed = true;
+		const paid: ExpenseShare = { ...s, paidCents: s.amountCents, paidAt: now, markedBy: actorUid, method: "self", batch: { ...batch } };
+		if (receipt) paid.receipt = { ...receipt };
+		else delete paid.receipt;
+		return paid;
+	});
+	for (const uid of targets) if (!outcomes.some((o) => o.uid === uid)) outcomes.push({ uid, result: "not_found" });
+	return { shares: changed ? next : shares, changed, outcomes };
 }
 
 /** Chaves de comprovante que existiam em `before` e não existem mais em `after` (para apagar do armazenamento). */

@@ -493,6 +493,103 @@ describe.skipIf(!ENABLED)("integração: despesas no MongoDB real", () => {
 		}
 	}, 120_000);
 
+	it("pagar tudo de uma vez: contas a pagar por destinatário, lote com um comprovante, desfazer com objeto compartilhado, falha parcial", async () => {
+		const payments = await import("@/lib/payments/repo");
+		const objects = new Map<string, Uint8Array>();
+		let onPut: (() => Promise<void>) | null = null;
+		const mem = {
+			put: async (k: string, b: Uint8Array) => {
+				objects.set(k, b);
+				await onPut?.();
+			},
+			get: async () => null,
+			delete: async (ks: string[]) => void ks.forEach((k) => objects.delete(k)),
+		} as never;
+		const png = { name: "pix.png", contentType: "image/png" as const, bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1]) };
+		const g1 = await newGroup("lote1", [OWNER, A, B]);
+		const g2 = await newGroup("lote2", [OWNER, A, B]);
+		const added = await groupsRepo.addManagedMember(db, g1, OWNER, { name: "Benjamim", managedBy: A });
+		if (added.status !== "ok") throw new Error("addManagedMember: " + added.status);
+		const BEN = added.uid;
+		const mkExp = async (g: string, by: string, amountCents: number, participantUids: string[], dueDate?: string) =>
+			ok(await repo.createExpense(db, mem, { groupId: g, uid: by, input: { description: "Lote " + amountCents, amountCents, date: "2026-11-10", participantUids, ...(dueDate ? { dueDate } : {}) }, files: [] })).expense;
+		const e1 = await mkExp(g1, OWNER, 3000, [OWNER, A, BEN]); // A e Benjamim devem 1000 ao dono
+		await mkExp(g1, OWNER, 3000, [OWNER, A, BEN], "2099-01-01"); // ainda não venceu: fora
+		const e3 = await mkExp(g2, OWNER, 2000, [OWNER, A]); // A deve 1000 ao dono (outro grupo, mesma chave)
+		const e4 = await mkExp(g2, B, 1500, [B, A]); // A deve 750 a B (outro destinatário)
+		const it_ = (g: string, e: string, u: string) => ({ groupId: g, expenseId: e, shareUid: u });
+		const rawShare = async (g: string, e: string, u: string) => (await rawDocs(g)).find((d) => d._id.toHexString() === e)!.shares.find((s) => s.uid === u)!;
+
+		// 1. contas a pagar da A: dono (3000, 3 itens, incl. Benjamim) e B (750); a que vence em 2099 fica de fora
+		const pay = await payments.getPayables(db, A);
+		// o usuário A aparece em outros grupos "__it__" de testes anteriores: só olha os desta rodada
+		const mineRecipients = pay.recipients
+			.map((r) => ({ ...r, items: r.items.filter((i) => [g1, g2].includes(i.groupId)) }))
+			.filter((r) => r.items.length > 0)
+			.map((r) => ({ ...r, totalCents: r.items.reduce((t, i) => t + i.dueCents, 0) }))
+			.sort((x, y) => y.totalCents - x.totalCents);
+		expect(mineRecipients.map((r) => [r.payee.uid, r.totalCents, r.items.length])).toEqual([[OWNER, 3000, 3], [B, 750, 1]]);
+		expect(mineRecipients[0].items.map((i) => [i.shareUid, i.isYou, i.dueCents]).sort()).toEqual([[A, true, 1000], [A, true, 1000], [BEN, false, 1000]].sort());
+		expect(mineRecipients[0].id).not.toBe(mineRecipients[1].id);
+		expect(JSON.stringify(mineRecipients)).not.toContain("receipts/");
+
+		// 2. destinatários misturados: recusado sem mudar nada nem subir arquivo
+		const mixed = await payments.payBatch(db, mem, { uid: A, items: [it_(g1, e1.id, A), it_(g2, e4.id, A)], file: png });
+		expect(mixed).toMatchObject({ status: "invalid", field: "items", error: "Escolha contas de um mesmo destinatário." });
+		expect(objects.size).toBe(0);
+		expect((await rawShare(g1, e1.id, A)).paidCents).toBe(0);
+		expect((await payments.payBatch(db, mem, { uid: C, items: [it_(g1, e1.id, A)] })).status).toBe("no_group");
+		expect((await payments.payBatch(db, mem, { uid: B, items: [it_(g2, e3.id, A)] })).status).toBe("forbidden");
+
+		// 3. lote cheio com um comprovante: as duas cotas apontam para o MESMO objeto
+		const full = await payments.payBatch(db, mem, { uid: A, items: [it_(g1, e1.id, A), it_(g2, e3.id, A)], file: png });
+		if (full.status !== "ok") throw new Error(full.status);
+		expect(full).toMatchObject({ totalPaidCents: 2000, hasReceipt: true, failed: [] });
+		const s1 = await rawShare(g1, e1.id, A);
+		const s3 = await rawShare(g2, e3.id, A);
+		expect(s1.receipt!.key).toBe(s3.receipt!.key);
+		expect(s1.receipt!.key.startsWith(`receipts/batch/${full.batchId}/`)).toBe(true);
+		expect([s1, s3]).toEqual([expect.objectContaining({ method: "self", markedBy: A, paidCents: 1000, batch: { id: full.batchId, totalCents: 2000, count: 2 } }), expect.objectContaining({ method: "self", paidCents: 1000, batch: { id: full.batchId, totalCents: 2000, count: 2 } })]);
+		expect(objects.size).toBe(1);
+		const seen = ok((await repo.getExpenseDetail(db, g1, e1.id, A)) as never) as unknown as { expense: import("./repo").ExpenseDetail };
+		expect(seen.expense.shares.find((s) => s.uid === A)).toMatchObject({ batch: { totalCents: 2000, count: 2 }, receipt: { name: "pix.png" } });
+		expect(JSON.stringify(seen)).not.toContain("receipts/");
+		expect(await repo.getReceiptRef(db, g2, e3.id, A, OWNER)).toMatchObject({ status: "ok", key: s1.receipt!.key });
+		expect((await payments.getPayables(db, A)).recipients.some((r) => r.items.some((i) => i.groupId === g2 && i.expenseId === e3.id))).toBe(false);
+
+		// 4. dono desfaz uma: o objeto fica (a outra ainda referencia); desfaz a última: o objeto some
+		ok(await repo.setSharePaid(db, g1, e1.id, OWNER, A, "pending", undefined, mem));
+		expect(objects.has(s1.receipt!.key)).toBe(true);
+		expect(await repo.getReceiptRef(db, g2, e3.id, A, A)).toMatchObject({ status: "ok", key: s1.receipt!.key });
+		ok(await repo.setSharePaid(db, g2, e3.id, OWNER, A, "pending", undefined, mem));
+		expect(objects.size).toBe(0);
+		expect(await rawShare(g1, e1.id, A)).toEqual({ uid: A, amountCents: 1000, paidCents: 0 });
+
+		// 5. falha parcial: no meio do envio o dono quita a cota do outro grupo; as demais seguem
+		onPut = async () => void ok(await repo.setSharePaid(db, g2, e3.id, OWNER, A, "paid", undefined, mem));
+		const partial = await payments.payBatch(db, mem, { uid: A, items: [it_(g1, e1.id, A), it_(g1, e1.id, BEN), it_(g2, e3.id, A)], file: png });
+		onPut = null;
+		if (partial.status !== "ok") throw new Error(partial.status);
+		expect(partial.paid.map((p) => p.shareUid)).toEqual([A, BEN]);
+		expect(partial.failed).toEqual([{ ...it_(g2, e3.id, A), reason: "already_paid" }]);
+		expect(partial.totalPaidCents).toBe(2000);
+		for (const u of [A, BEN]) {
+			expect(await rawShare(g1, e1.id, u)).toMatchObject({ method: "self", markedBy: A, batch: { id: partial.batchId, totalCents: 2000, count: 2 } });
+		}
+		expect((await rawShare(g2, e3.id, A)).method).toBe("manual");
+		expect(objects.size).toBe(1);
+		// 6. cota única de um lote troca o comprovante: sai do lote, a outra segue com o do lote
+		ok(await repo.markSelfPaid(db, mem, { groupId: g1, eid: e1.id, uid: A, targetUid: A, file: { ...png, bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 2]) } }));
+		expect(await rawShare(g1, e1.id, A)).not.toHaveProperty("batch");
+		expect((await rawShare(g1, e1.id, BEN)).batch).toBeDefined();
+		expect(objects.size).toBe(2);
+		// 7. tudo mudou: nada pago, 409 no HTTP (all_failed) e nenhum objeto novo fica
+		expect((await payments.payBatch(db, mem, { uid: A, items: [it_(g1, e1.id, A)], file: png })).status).toBe("invalid"); // já paga: recusada antes
+		expect(objects.size).toBe(2);
+		// 8. apagar o que sobrou: deleteExpense solta só o que ninguém mais referencia
+		expect((await repo.deleteExpense(db, mem, g1, e1.id, OWNER)).status).toBe("has_payment");
+	}, 120_000);
+
 	it("Quero ajudar (membro e pessoa sem login) e relatório de contribuições", async () => {
 		const reports = await import("@/lib/reports/repo");
 		const compute = await import("@/lib/reports/compute");

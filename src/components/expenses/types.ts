@@ -1,6 +1,7 @@
 import type { ShareStatus, YourStatus } from "@/lib/ui/expense-status";
 import type { PixKeyType } from "@/lib/pix/key";
 import type { ManagedShareSummary, OwnerView } from "@/lib/ui/managed";
+import { normalizeBatch } from "@/lib/ui/pay-all";
 import { normalizeRecurrenceRef, type RecurrenceRef } from "@/components/recurrences/types";
 
 export type { RecurrenceRef };
@@ -82,6 +83,8 @@ export type ExpenseShare = {
 	canAddReceipt: boolean;
 	/** Entrou na divisão depois, pelo "Quero ajudar". */
 	helped: boolean;
+	/** Paga junto com outras contas, num Pix só (`count` inclui esta parte); null = paga sozinha. */
+	batch: { totalCents: number; count: number } | null;
 };
 
 export type ExpenseAttachment = { id: string; name: string; contentType: string; size: number };
@@ -179,6 +182,7 @@ export function normalizeExpense(raw: Loose<Omit<ExpenseDetailData, "shares">> &
 			canPay: !!s.canPay,
 			canAddReceipt: !!s.canAddReceipt,
 			helped: !!s.helped,
+			batch: normalizeBatch(s.batch),
 		};
 	});
 	const paidBy = (raw.paidBy ?? { uid: "", name: "", picture: null, isYou: false }) as Loose<ExpenseDetailData["paidBy"]>;

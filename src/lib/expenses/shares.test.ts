@@ -8,6 +8,7 @@ import {
 	orderShares,
 	participantUidsOf,
 	payShare,
+	payShares,
 	recalcShares,
 	refundCents,
 	settleShare,
@@ -306,5 +307,49 @@ describe("comprovantes: payShare, undoShare, recalcShares", () => {
 		const s = { ...sh("a", 1000, 1000), receipt: R };
 		expect(normalizeShare(s)).toBe(s);
 		expect(normalizeShare({ uid: "a", amountCents: 1000, status: "paid" } as never)).toEqual({ uid: "a", amountCents: 1000, paidCents: 1000 });
+	});
+});
+
+describe("payShares (lote)", () => {
+	const BATCH = { id: "b1", totalCents: 1500, count: 2 };
+	const R = { id: "r1", key: "receipts/batch/b1/r1", name: "pix.png", contentType: "image/png", size: 4 };
+	const shares = [sh(OWNER, 1000), sh("a", 1000), sh("b", 500, 200), sh("c", 700, 700, { method: "manual" })];
+	it("quita só as cotas pedidas, com mesmo comprovante e lote, e informa quanto faltava", () => {
+		const r = payShares(shares, OWNER, ["a", "b"], NOW, "a", R, BATCH);
+		expect(r.changed).toBe(true);
+		expect(r.outcomes).toEqual([
+			{ uid: "a", result: "paid", amountCents: 1000 },
+			{ uid: "b", result: "paid", amountCents: 300 },
+		]);
+		for (const uid of ["a", "b"]) {
+			expect(r.shares.find((s) => s.uid === uid)).toMatchObject({ paidCents: shares.find((s) => s.uid === uid)!.amountCents, method: "self", markedBy: "a", paidAt: NOW, receipt: R, batch: BATCH });
+		}
+		expect(r.shares.find((s) => s.uid === "c")).toBe(shares[3]);
+		expect(r.shares[0]).toBe(shares[0]);
+	});
+	it("sem comprovante grava só o lote; já paga e inexistente não mudam nada", () => {
+		const r = payShares(shares, OWNER, ["a", "c", OWNER, "zz"], NOW, "a", undefined, BATCH);
+		expect(r.shares.find((s) => s.uid === "a")).toMatchObject({ batch: BATCH });
+		expect(r.shares.find((s) => s.uid === "a")).not.toHaveProperty("receipt");
+		expect(r.outcomes).toEqual(
+			expect.arrayContaining([
+				{ uid: "c", result: "already_paid" },
+				{ uid: OWNER, result: "not_found" },
+				{ uid: "zz", result: "not_found" },
+			]),
+		);
+		const none = payShares(shares, OWNER, ["c"], NOW, "a", R, BATCH);
+		expect(none.changed).toBe(false);
+		expect(none.shares).toBe(shares);
+	});
+	it("desfazer remove o lote; trocar o comprovante de uma cota a tira do lote sem mexer nas outras", () => {
+		const paid = payShares(shares, OWNER, ["a", "b"], NOW, "a", R, BATCH).shares;
+		expect(undoShare(paid, OWNER, "a")!.shares.find((s) => s.uid === "a")).toEqual(sh("a", 1000, 0));
+		const other = { ...R, id: "r2", key: "receipts/g/e/r2" };
+		const swapped = payShare(paid, OWNER, "a", NOW, "a", other)!.shares;
+		expect(swapped.find((s) => s.uid === "a")).toMatchObject({ receipt: other });
+		expect(swapped.find((s) => s.uid === "a")).not.toHaveProperty("batch");
+		expect(swapped.find((s) => s.uid === "b")).toMatchObject({ receipt: R, batch: BATCH });
+		expect(droppedReceiptKeys(paid, swapped)).toEqual([]); // "b" ainda referencia a chave
 	});
 });
