@@ -70,16 +70,6 @@ export function periodLabel(period: ReportPeriod): string {
 	return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
-export type FairnessTone = "good" | "ok" | "low";
-/** Palavras simples para o equilíbrio (nunca vermelho: só texto e o mesmo tom da barra). */
-export function fairnessWords(percent: number): { label: string; tone: FairnessTone } {
-	if (percent >= 85) return { label: "Bem dividido", tone: "good" };
-	if (percent >= 60) return { label: "Dá para equilibrar melhor", tone: "ok" };
-	return { label: "Poucas pessoas estão carregando a maior parte", tone: "low" };
-}
-
-export const FAIRNESS_EXPLANATION = "100% quer dizer que todo mundo arcou com a mesma parte das despesas.";
-
 export type ReportPerson = {
 	uid: string;
 	name: string;
@@ -156,20 +146,15 @@ export function normalizeReport(raw: unknown): ReportData | null {
 	};
 }
 
-/** Escala única das barras: a maior entre o maior valor e a parte igual. */
-export function barScale(people: Pick<ReportPerson, "bornCents">[], equalShareCents: number): number {
-	return Math.max(equalShareCents, ...people.map((p) => p.bornCents), 0);
+/** Escala única das barras: o maior valor. */
+export function barScale(people: Pick<ReportPerson, "bornCents">[]): number {
+	return Math.max(...people.map((p) => p.bornCents), 0);
 }
 
 /** Largura (0 a 100) de um valor na escala; quem contribuiu algo ganha pelo menos 2% para a barra aparecer. */
 export function barPercent(cents: number, scale: number): number {
 	if (scale <= 0 || cents <= 0) return 0;
 	return clamp((cents / scale) * 100, 2, 100);
-}
-
-/** Posição (0 a 100) da marca da parte igual. */
-export function markerPercent(equalShareCents: number, scale: number): number {
-	return scale <= 0 ? 0 : clamp((equalShareCents / scale) * 100, 0, 100);
 }
 
 /** "40%" a partir de pontos-base; "menos de 1%" quando é pouco mas não zero. */

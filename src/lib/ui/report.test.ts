@@ -3,8 +3,6 @@ import {
 	barPercent,
 	barScale,
 	currentMonthPeriod,
-	fairnessWords,
-	markerPercent,
 	monthShort,
 	normalizeReport,
 	percentText,
@@ -50,32 +48,18 @@ describe("períodos", () => {
 	});
 });
 
-describe("equilíbrio", () => {
-	it("palavras por faixa", () => {
-		expect(fairnessWords(100).label).toBe("Bem dividido");
-		expect(fairnessWords(85).label).toBe("Bem dividido");
-		expect(fairnessWords(84).label).toBe("Dá para equilibrar melhor");
-		expect(fairnessWords(60).label).toBe("Dá para equilibrar melhor");
-		expect(fairnessWords(59).label).toBe("Poucas pessoas estão carregando a maior parte");
-		expect(fairnessWords(0).tone).toBe("low");
-	});
-});
-
 describe("barras", () => {
 	const people = [{ bornCents: 80000 }, { bornCents: 20000 }, { bornCents: 0 }];
 	it("escala única", () => {
-		expect(barScale(people, 33333)).toBe(80000);
-		expect(barScale([], 0)).toBe(0);
-		expect(barScale([{ bornCents: 100 }], 500)).toBe(500);
+		expect(barScale(people)).toBe(80000);
+		expect(barScale([])).toBe(0);
 	});
-	it("larguras e marca na mesma escala", () => {
+	it("larguras na mesma escala", () => {
 		expect(barPercent(80000, 80000)).toBe(100);
 		expect(barPercent(20000, 80000)).toBe(25);
 		expect(barPercent(0, 80000)).toBe(0);
 		expect(barPercent(10, 80000)).toBe(2);
 		expect(barPercent(5, 0)).toBe(0);
-		expect(markerPercent(40000, 80000)).toBe(50);
-		expect(markerPercent(10, 0)).toBe(0);
 	});
 	it("texto da porcentagem", () => {
 		expect(percentText(4000)).toBe("40%");

@@ -2,18 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
-import { helpCount } from "@/components/expenses/expense-list";
-import { normalizeSummary, type ExpenseSummary } from "@/components/expenses/types";
-import { Avatar, Button, Card, EmptyState, Icon, IconButton, List, SegmentedButton, Skeleton } from "@/components/ui";
+import { Avatar, Button, Card, EmptyState, IconButton, List, SegmentedButton, Skeleton } from "@/components/ui";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { formatBRL } from "@/lib/money";
 import { todayISO } from "@/lib/ui/dates";
 import {
 	barPercent,
 	barScale,
-	FAIRNESS_EXPLANATION,
-	fairnessWords,
-	markerPercent,
 	monthLabel,
 	monthShort,
 	normalizeReport,
@@ -70,43 +65,19 @@ function PeriodControl({ period, today, onPeriod }: Readonly<{ period: ReportPer
 	);
 }
 
-/** Total do período e o medidor "Equilíbrio da família". */
+/** Total do período. */
 function Headline({ data }: Readonly<{ data: ReportData }>) {
-	const words = fairnessWords(data.fairnessPercent);
 	return (
-		<div className="space-y-4">
-			<Card tone="high" className="p-5">
-				<p className="text-title-medium text-on-surface-variant">Total do período</p>
-				<p className="money text-display-small font-bold">{formatBRL(data.totalCents)}</p>
-				<p className="text-body-large text-on-surface-variant">{data.expenseCount === 1 ? "em 1 despesa" : `em ${data.expenseCount} despesas`}</p>
-			</Card>
-			<Card tone="low" className="space-y-3 p-5">
-				<p id="equilibrio-titulo" className="text-title-large">
-					Equilíbrio da família: <span className="money">{data.fairnessPercent}%</span>
-				</p>
-				<div
-					role="meter"
-					aria-labelledby="equilibrio-titulo"
-					aria-valuemin={0}
-					aria-valuemax={100}
-					aria-valuenow={data.fairnessPercent}
-					aria-valuetext={`${data.fairnessPercent}%: ${words.label}`}
-					className="h-4 overflow-hidden rounded-[4px] bg-surface-container-high"
-				>
-					<div className="h-full rounded-[4px] bg-primary" style={{ width: `${Math.max(data.fairnessPercent, data.fairnessPercent > 0 ? 2 : 0)}%` }} />
-				</div>
-				<p className="flex items-start gap-2 text-title-medium">
-					<Icon name={data.fairnessPercent >= 85 ? "check" : "favorite"} size={22} className="mt-0.5 text-primary" />
-					{words.label}
-				</p>
-				<p className="text-body-large text-on-surface-variant">{FAIRNESS_EXPLANATION}</p>
-			</Card>
-		</div>
+		<Card tone="high" className="p-5">
+			<p className="text-title-medium text-on-surface-variant">Total do período</p>
+			<p className="money text-display-small font-bold">{formatBRL(data.totalCents)}</p>
+			<p className="text-body-large text-on-surface-variant">{data.expenseCount === 1 ? "em 1 despesa" : `em ${data.expenseCount} despesas`}</p>
+		</Card>
 	);
 }
 
 /** Uma pessoa: avatar, nome, valor, porcentagem, barra na escala comum e os fatos pequenos. */
-function PersonRow({ person: p, scale, marker }: Readonly<{ person: ReportPerson; scale: number; marker: number }>) {
+function PersonRow({ person: p, scale }: Readonly<{ person: ReportPerson; scale: number }>) {
 	const caption = personCaption(p);
 	const facts = personFacts(p);
 	const width = barPercent(p.bornCents, scale);
@@ -126,12 +97,8 @@ function PersonRow({ person: p, scale, marker }: Readonly<{ person: ReportPerson
 					<p className="text-sm text-on-surface-variant">{percentText(p.bornPercent)} do total</p>
 				</div>
 			</div>
-			<div aria-hidden="true" className="relative h-3 rounded-[4px] bg-surface-container-high">
+			<div aria-hidden="true" className="h-3 rounded-[4px] bg-surface-container-high">
 				{width > 0 && <div className="h-full rounded-[4px] bg-primary" style={{ width: `${width}%` }} />}
-				<span
-					className="absolute -inset-y-1 w-0.5 -translate-x-1/2 rounded-full bg-on-surface shadow-[0_0_0_1px_var(--md-surface-container-low)]"
-					style={{ left: `${marker}%` }}
-				/>
 			</div>
 			{facts.length > 0 && (
 				<ul className="space-y-0.5 text-sm text-on-surface-variant">
@@ -144,31 +111,20 @@ function PersonRow({ person: p, scale, marker }: Readonly<{ person: ReportPerson
 	);
 }
 
-/** "Quanto cada um contribuiu": todas as barras na mesma escala, com a marca da parte igual. */
+/** "Quem pagou mais": do que mais pagou para o que menos pagou, com as barras na mesma escala. */
 export function ContributionList({ data }: Readonly<{ data: ReportData }>) {
-	const scale = barScale(data.people, data.equalShareCents);
-	const marker = markerPercent(data.equalShareCents, scale);
+	const scale = barScale(data.people);
 	return (
 		<section aria-labelledby="quanto-cada-um" className="space-y-3">
 			<h2 id="quanto-cada-um" className="text-title-large">
-				Quanto cada um contribuiu
+				Quem pagou mais
 			</h2>
 			<List>
-				<li aria-hidden="true" className="px-4 pb-0 pt-3">
-					<div className="relative h-9">
-						<span className="absolute top-0 whitespace-nowrap text-sm font-medium" style={{ left: `${marker}%`, transform: `translateX(-${marker}%)` }}>
-							parte igual: <span className="money">{formatBRL(data.equalShareCents)}</span>
-						</span>
-						<span className="absolute bottom-0 h-3 w-0.5 -translate-x-1/2 rounded-full bg-on-surface" style={{ left: `${marker}%` }} />
-					</div>
-				</li>
 				{data.people.map((p) => (
-					<PersonRow key={p.uid || p.name} person={p} scale={scale} marker={marker} />
+					<PersonRow key={p.uid || p.name} person={p} scale={scale} />
 				))}
 			</List>
-			<p className="text-sm text-on-surface-variant">
-				A linha marca a parte igual: <span className="money">{formatBRL(data.equalShareCents)}</span> para cada um, se tudo fosse dividido por igual. As barras usam a mesma escala.
-			</p>
+			<p className="text-sm text-on-surface-variant">Em ordem, de quem pagou mais para quem pagou menos.</p>
 		</section>
 	);
 }
@@ -214,21 +170,18 @@ export function ReportSkeleton() {
 	);
 }
 
-/** Tela do relatório: período em cima, depois total, equilíbrio, contribuição de cada um e a ajuda. */
+/** Tela do relatório: período em cima, depois o total, quem pagou mais e o mês a mês. */
 export function ReportView({
 	groupId,
 	state,
 	period,
 	onPeriod,
-	waitingCount = 0,
 	today = todayISO(),
 }: Readonly<{
 	groupId: string;
 	state: ReportState;
 	period: ReportPeriod;
 	onPeriod: (p: ReportPeriod) => void;
-	/** Despesas esperando ajuda (para o convite final). */
-	waitingCount?: number;
 	today?: string;
 }>) {
 	const gid = encodeURIComponent(groupId);
@@ -238,7 +191,7 @@ export function ReportView({
 			<header className="space-y-1">
 				<h1 className="text-headline-medium md:text-headline-large">Relatório</h1>
 				<p className="text-body-large text-on-surface-variant">
-					{ready?.groupName ? `${ready.groupName}: ` : ""}quanto cada pessoa já contribuiu com as despesas.
+					{ready?.groupName ? `${ready.groupName}: ` : ""}quem pagou mais e quem pagou menos.
 				</p>
 			</header>
 
@@ -291,26 +244,13 @@ export function ReportView({
 						)
 					}
 				>
-					Quando alguém lançar uma despesa, você vê aqui quanto cada um contribuiu.
+					Quando alguém lançar uma despesa, você vê aqui quem pagou mais e quem pagou menos.
 				</EmptyState>
 			)}
 			{ready && ready.expenseCount > 0 && (
 				<>
 					<Headline data={ready} />
 					<ContributionList data={ready} />
-					{waitingCount > 0 && ready.fairnessPercent < 85 && (
-						<Card as="section" aria-labelledby="quer-equilibrar" className="space-y-3 bg-primary-container! p-5 text-on-primary-container">
-							<h2 id="quer-equilibrar" className="text-title-large">
-								Quer equilibrar?
-							</h2>
-							<p className="text-body-large">
-								{waitingCount === 1 ? "Tem 1 despesa esperando ajuda." : `Tem ${waitingCount} despesas esperando ajuda.`} Entrar na divisão deixa a parte de cada um menor.
-							</p>
-							<Button href={`/app/grupos/${gid}?ajuda=1`} icon="favorite" fullWidth className="md:w-auto">
-								Ver despesas esperando ajuda
-							</Button>
-						</Card>
-					)}
 					<MonthStrip months={ready.months} today={today} />
 				</>
 			)}
@@ -323,7 +263,6 @@ export function GroupReport({ groupId }: Readonly<{ groupId: string }>) {
 	const { user } = useAuth();
 	const [period, setPeriod] = useState<ReportPeriod>("all");
 	const [state, setState] = useState<ReportState>({ kind: "loading" });
-	const [waiting, setWaiting] = useState(0);
 	const [reloadKey, setReloadKey] = useState(0);
 
 	useEffect(() => {
@@ -349,19 +288,6 @@ export function GroupReport({ groupId }: Readonly<{ groupId: string }>) {
 		};
 	}, [user, groupId, period, reloadKey]);
 
-	useEffect(() => {
-		if (!user) return;
-		let cancelled = false;
-		apiFetch<{ expenses: ExpenseSummary[] }>(`/api/groups/${encodeURIComponent(groupId)}/expenses`)
-			.then((r) => {
-				if (!cancelled) setWaiting(helpCount(r.expenses.map(normalizeSummary)));
-			})
-			.catch(() => {});
-		return () => {
-			cancelled = true;
-		};
-	}, [user, groupId]);
-
 	return (
 		<ReportView
 			groupId={groupId}
@@ -371,7 +297,6 @@ export function GroupReport({ groupId }: Readonly<{ groupId: string }>) {
 				setState({ kind: "loading" });
 				setPeriod(p);
 			}}
-			waitingCount={waiting}
 		/>
 	);
 }

@@ -920,7 +920,6 @@ export function MockReport({
 				state={stateOverride ?? { kind: "ready", data }}
 				period={period}
 				onPeriod={setPeriod}
-				waitingCount={variant === "uneven" ? 2 : 0}
 				today="2026-11-11"
 			/>
 		</Shell>
