@@ -953,14 +953,30 @@ export type Summary = Balance & {
 };
 
 /**
+ * Os grupos (id, nome, membros) em que `uid` é membro AGORA; com `groupId`, só esse. Com `groupId` inválido ou de um
+ * grupo de que `uid` não faz parte devolve `null` (a rota responde 404); sem `groupId` nunca é `null`.
+ */
+export async function memberGroupsOf(db: Db, uid: string, groupId?: string): Promise<Pick<GroupDoc, "_id" | "name" | "members">[] | null> {
+	if (groupId !== undefined && !isObjectIdHex(groupId)) return null;
+	const groups = await groupsCollection(db)
+		.find(groupId === undefined ? { "members.uid": uid } : { _id: new ObjectId(groupId), "members.uid": uid }, {
+			projection: { _id: 1, name: 1, members: 1 },
+		})
+		.toArray();
+	return groupId !== undefined && groups.length === 0 ? null : groups;
+}
+
+/**
  * Só grupos em que `uid` é membro AGORA. Os totais são estritamente os de `uid` (a mesma conta de GET /api/groups);
  * `managed` traz o saldo de cada pessoa sem login pela qual `uid` é responsável AGORA. Uma única agregação.
  * Todo campo do topo é a soma dos campos dos grupos.
+ * Com `groupId`, a mesma conta restrita a esse grupo (o que o início mostra, só dele); `null` se `uid` não é membro.
  */
-export async function getSummary(db: Db, uid: string, now: Date = new Date()): Promise<Summary> {
-	const groups = await groupsCollection(db)
-		.find({ "members.uid": uid }, { projection: { _id: 1, name: 1, members: 1 } })
-		.toArray();
+export async function getSummary(db: Db, uid: string, now?: Date): Promise<Summary>;
+export async function getSummary(db: Db, uid: string, now: Date | undefined, groupId: string): Promise<Summary | null>;
+export async function getSummary(db: Db, uid: string, now: Date = new Date(), groupId?: string): Promise<Summary | null> {
+	const groups = await memberGroupsOf(db, uid, groupId);
+	if (!groups) return null;
 	await materializeSafely(db, groups.map((g) => g._id), now);
 	const managedList = groups.flatMap((g) =>
 		g.members

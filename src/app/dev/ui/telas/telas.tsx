@@ -282,6 +282,20 @@ export function Telas({ tela }: Readonly<{ tela: string }>) {
 			return <MockReceivables framed={false} scene="erro" />;
 		case "receber-indisponivel":
 			return <MockReceivables framed={false} scene="indisponivel" />;
+		case "grupo-resumo":
+			return <MockGroup framed={false} care summary="valores" />;
+		case "grupo-resumo-em-dia":
+			return <MockGroup framed={false} care summary="em-dia" />;
+		case "grupo-resumo-carregando":
+			return <MockGroup framed={false} care summary="carregando" />;
+		case "pagar-tudo-grupo":
+			return <MockPayAll framed={false} scene="grupo" />;
+		case "pagar-tudo-grupo-vazio":
+			return <MockPayAll framed={false} scene="grupo-vazio" />;
+		case "receber-grupo":
+			return <MockReceivables framed={false} scene="grupo" />;
+		case "receber-grupo-vazio":
+			return <MockReceivables framed={false} scene="grupo-vazio" />;
 		case "despesa-pago-junto":
 			return <MockExpense mode="batch" framed={false} />;
 		default:

@@ -11,7 +11,8 @@ import { ShareExpenseContent } from "@/components/expenses/expense-share";
 import { ResplitContent } from "@/components/expenses/resplit-sheet";
 import { useWhoSplits } from "@/components/expenses/who-splits";
 import { ChooseGroupSheet, GroupsListView, type GroupSummary } from "@/components/groups/groups-list";
-import { HomeSummary } from "@/components/home-summary";
+import type { MeSummary } from "@/lib/ui/managed";
+import { GroupSummaryView, HomeSummary } from "@/components/home-summary";
 import { buildExpenseShareText, shareIntro } from "@/lib/ui/expense-share";
 import type { AttachmentView } from "@/components/expenses/expense-attachments";
 import { HelpContent, helperOptions } from "@/components/expenses/help";
@@ -130,9 +131,9 @@ const EXPENSES: ExpenseSummary[] = [
 	sum({ id: "e5", description: "Cuidadora de sábado", amountCents: 20000, date: "2025-06-14", paidBy: { uid: "d", name: "Ana Paula", isYou: false }, yourShareCents: 0, yourStatus: "none", pendingCount: 2, attachmentCount: 0 }),
 ];
 
-export function Shell({ pathname, children, framed, user = USER }: Readonly<{ pathname: string; children: React.ReactNode; framed: boolean; user?: typeof USER }>) {
+export function Shell({ pathname, search, children, framed, user = USER }: Readonly<{ pathname: string; search?: string; children: React.ReactNode; framed: boolean; user?: typeof USER }>) {
 	return (
-		<AppShellView pathname={pathname} user={user} onSignOut={noop} className={framed ? "min-h-0!" : undefined}>
+		<AppShellView pathname={pathname} search={search} user={user} onSignOut={noop} className={framed ? "min-h-0!" : undefined}>
 			{children}
 		</AppShellView>
 	);
@@ -205,6 +206,27 @@ const HELP_EXPENSES: ExpenseSummary[] = EXPENSES.map((e) =>
 			: e,
 );
 
+/** Resumo de um grupo: algo a pagar e a receber, mais Benjamim (que a Renata cuida) com a parte dele. */
+const GROUP_SUMMARY: MeSummary = {
+	toReceiveCents: 34500,
+	toPayCents: 21000,
+	toReceiveNowCents: 12000,
+	toPayNowCents: 9000,
+	overdueToPayCents: 3000,
+	managed: [
+		{ uid: "m1", name: "Benjamim", groupId: "1", groupName: "Despesas da família", toReceiveCents: 14500, toPayCents: 10333, toReceiveNowCents: 14500, toPayNowCents: 10333, overdueToPayCents: 0 },
+		{ uid: "m3", name: "Tio Carlos", groupId: "1", groupName: "Despesas da família", toReceiveCents: 0, toPayCents: 0, toReceiveNowCents: 0, toPayNowCents: 0, overdueToPayCents: 0 },
+	],
+};
+const GROUP_SUMMARY_SETTLED: MeSummary = {
+	toReceiveCents: 0,
+	toPayCents: 0,
+	toReceiveNowCents: 0,
+	toPayNowCents: 0,
+	overdueToPayCents: 0,
+	managed: GROUP_SUMMARY.managed.map((m) => ({ ...m, toReceiveCents: 0, toPayCents: 0, toReceiveNowCents: 0, toPayNowCents: 0 })),
+};
+
 export function MockGroup({
 	empty = false,
 	framed = true,
@@ -212,13 +234,24 @@ export function MockGroup({
 	due = false,
 	help = false,
 	fixed,
-}: Readonly<{ empty?: boolean; framed?: boolean; care?: boolean; due?: boolean; help?: boolean; fixed?: "closed" | "open" }>) {
+	summary,
+}: Readonly<{
+	empty?: boolean;
+	framed?: boolean;
+	care?: boolean;
+	due?: boolean;
+	help?: boolean;
+	fixed?: "closed" | "open";
+	/** Resumo do grupo no topo: com valores, tudo certo ("settled") ou carregando. */
+	summary?: "valores" | "em-dia" | "carregando";
+}>) {
 	const group = care ? CARE_GROUP : MOCK_GROUP;
 	return (
 		<Shell pathname="/app/grupos/1" framed={framed} user={care ? CARE_USER : USER}>
 			<GroupDetailView
 				group={group}
 				onMemberOptions={noop}
+				summary={summary ? <GroupSummaryView groupId={group.id} loading={summary === "carregando"} summary={summary === "em-dia" ? GROUP_SUMMARY_SETTLED : GROUP_SUMMARY} /> : undefined}
 				invite={
 					<Button icon="share" fullWidth className="md:w-auto">
 						Convidar pessoas

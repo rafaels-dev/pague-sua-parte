@@ -6,12 +6,15 @@ import { AppShellView } from "@/components/app-shell";
 import { useAuth } from "@/components/auth/auth-provider";
 import { CircularProgress } from "@/components/ui";
 import { signOut } from "@/lib/auth/client";
+import { useLocationSearch } from "@/lib/ui/use-location-search";
 import { loginUrlFor } from "@/lib/ui/return-to";
 
 export default function AppLayout({ children }: Readonly<{ children: React.ReactNode }>) {
 	const router = useRouter();
 	const pathname = usePathname();
 	const { user, loading } = useAuth();
+	// A query string só se lê no navegador (sem useSearchParams, que exigiria Suspense): serve ao "voltar" de ?grupo=.
+	const search = useLocationSearch() ?? "";
 
 	const signingOut = useRef(false);
 
@@ -33,6 +36,7 @@ export default function AppLayout({ children }: Readonly<{ children: React.React
 	return (
 		<AppShellView
 			pathname={pathname}
+			search={search}
 			user={{ name: user.name, email: user.email, picture: user.picture ?? null }}
 			onSignOut={() => {
 				signingOut.current = true;

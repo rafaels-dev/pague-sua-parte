@@ -1,6 +1,7 @@
 "use client";
 
 import { Avatar, Banner, Button, Card, EmptyState, Icon, Skeleton, StatusChip } from "@/components/ui";
+import { GroupScopeNote } from "@/components/group-scope-note";
 import { PixCodeBlock } from "@/components/expenses/pix-pay-card";
 import { formatBRL } from "@/lib/money";
 import { todayISO } from "@/lib/ui/dates";
@@ -18,6 +19,7 @@ import {
 	type PayableItem,
 	type PayableRecipient,
 } from "@/lib/ui/pay-all";
+import { payAllUrl } from "@/lib/ui/group-scope";
 import { RECURRING_CHIP } from "@/lib/ui/recurrences";
 
 /** O que cada cartão guarda: o que foi desmarcado e, se já gerou, o Pix (para qual valor, QR aberto, cópia que falhou). */
@@ -40,8 +42,17 @@ export type PayAllPageState =
 	| { kind: "unavailable" }
 	| { kind: "ready"; recipients: PayableRecipient[]; done: DoneBatch[] };
 
-/** Uma conta da lista: caixa para marcar, o que é, de quem é a parte, vencimento e valor. */
-function ItemRow({ item, checked, onToggle, today }: Readonly<{ item: PayableItem; checked: boolean; onToggle: () => void; today: string }>) {
+/** O grupo a que a tela está restrita (`?grupo=`), quando há. */
+export type PayAllScope = { id: string; name: string } | null;
+
+/** Uma conta da lista: caixa para marcar, o que é, de quem é a parte, vencimento e valor. Sem o nome do grupo quando a tela é de um grupo só. */
+function ItemRow({
+	item,
+	checked,
+	onToggle,
+	today,
+	showGroup = true,
+}: Readonly<{ item: PayableItem; checked: boolean; onToggle: () => void; today: string; showGroup?: boolean }>) {
 	const due = dueShort(item.dueDate, item.overdue, today);
 	const chips = [
 		!item.isYou && { tone: "wait" as const, text: `Parte de ${item.shareName}` },
@@ -54,7 +65,7 @@ function ItemRow({ item, checked, onToggle, today }: Readonly<{ item: PayableIte
 				<input type="checkbox" checked={checked} onChange={onToggle} className="mt-0.5 size-6 shrink-0 cursor-pointer accent-primary" />
 				<span className={`min-w-0 flex-1 ${checked ? "" : "opacity-60"}`}>
 					<span className="block break-words text-body-large font-medium text-on-surface">{item.description}</span>
-					{item.groupName && <span className="block break-words text-sm text-on-surface-variant">{item.groupName}</span>}
+					{showGroup && item.groupName && <span className="block break-words text-sm text-on-surface-variant">{item.groupName}</span>}
 					{due && (
 						<span className={`block text-sm ${due.overdue ? "font-medium text-error" : "text-on-surface-variant"}`}>{due.text}</span>
 					)}
@@ -84,7 +95,9 @@ export function RecipientCardView({
 	onCopyCode,
 	onCopyKey,
 	onPaid,
+	showGroup = true,
 }: Readonly<{
+	showGroup?: boolean;
 	recipient: PayableRecipient;
 	card: CardState;
 	onToggleItem: (key: string) => void;
@@ -117,7 +130,7 @@ export function RecipientCardView({
 				<p className="mb-1 text-body-large text-on-surface-variant">Marque o que você vai pagar agora:</p>
 				<ul className="divide-y divide-outline-variant/60 rounded-shape-md bg-surface-container-low px-3">
 					{recipient.items.map((i) => (
-						<ItemRow key={itemKey(i)} item={i} checked={!card.unchecked.includes(itemKey(i))} onToggle={() => onToggleItem(itemKey(i))} today={today} />
+						<ItemRow key={itemKey(i)} item={i} checked={!card.unchecked.includes(itemKey(i))} onToggle={() => onToggleItem(itemKey(i))} today={today} showGroup={showGroup} />
 					))}
 				</ul>
 			</div>
@@ -250,7 +263,10 @@ export function PayAllView({
 	onPaid,
 	onTell,
 	onRetry,
+	scope = null,
 }: Readonly<{
+	/** Tela aberta a partir de um grupo: só as contas dele. */
+	scope?: PayAllScope;
 	state: PayAllPageState;
 	cards: Record<string, CardState>;
 	onToggleItem: (recipientId: string, key: string) => void;
@@ -293,15 +309,26 @@ export function PayAllView({
 		);
 	}
 	const { recipients, done } = state;
+	const home = scope ? `/app/grupos/${encodeURIComponent(scope.id)}` : "/app";
+	const homeLabel = scope ? "Voltar para o grupo" : "Voltar para o início";
+	const note = scope && <GroupScopeNote groupName={scope.name} allHref={payAllUrl()} />;
 	if (recipients.length === 0 && done.length === 0) {
 		return (
-			<EmptyState icon="check" title="Você não tem nada para pagar agora." action={<Button href="/app">Voltar para o início</Button>}>
-				Quando surgir uma conta para pagar neste mês, ela aparece aqui.
-			</EmptyState>
+			<div className="mx-auto max-w-2xl space-y-3">
+				{note}
+				<EmptyState
+					icon="check"
+					title={scope ? "Você não tem nada para pagar agora neste grupo." : "Você não tem nada para pagar agora."}
+					action={<Button href={home}>{homeLabel}</Button>}
+				>
+					Quando surgir uma conta para pagar neste mês, ela aparece aqui.
+				</EmptyState>
+			</div>
 		);
 	}
 	return (
 		<div className="mx-auto max-w-2xl space-y-5">
+			{note}
 			{recipients.length > 1 && <p className="text-body-large text-on-surface-variant">Cada pessoa recebe um Pix separado.</p>}
 			{done.map((d) => (
 				<DoneCardView key={d.id} done={d} onTell={() => onTell(d.id)} />
@@ -317,11 +344,12 @@ export function PayAllView({
 					onCopyCode={() => onCopyCode(r.id)}
 					onCopyKey={() => onCopyKey(r.id)}
 					onPaid={() => onPaid(r.id)}
+					showGroup={!scope}
 				/>
 			))}
 			{recipients.length === 0 && (
-				<Button href="/app" variant="outlined" fullWidth>
-					Voltar para o início
+				<Button href={home} variant="outlined" fullWidth>
+					{homeLabel}
 				</Button>
 			)}
 		</div>

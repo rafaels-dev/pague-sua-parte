@@ -19,6 +19,7 @@ import { todayISO } from "@/lib/ui/dates";
 import { endPeriodProblem, firstDueDate, periodOf } from "@/lib/ui/recurrences";
 import { detectPixKeyType } from "@/lib/pix/key";
 import { managedCaption } from "@/lib/ui/managed";
+import { GroupSummaryLive } from "@/components/home-summary";
 import { InvitePanel } from "./invite-panel";
 import { MemberSheetContent } from "./member-sheet";
 import {
@@ -49,11 +50,14 @@ export function GroupDetailView({
 	group,
 	invite,
 	addManaged,
+	summary,
 	recurrences,
 	expenses,
 	onMemberOptions,
 }: Readonly<{
 	group: Group;
+	/** Resumo do grupo logo abaixo do título (a pagar / a receber, "Pagar tudo", quem você cuida). */
+	summary?: React.ReactNode;
 	invite: React.ReactNode;
 	/** Ação "Adicionar pessoa sem celular" (só administradores). */
 	addManaged?: React.ReactNode;
@@ -67,6 +71,7 @@ export function GroupDetailView({
 		<div className="space-y-6">
 			<div className="space-y-3">
 				<h1 className="break-words text-headline-medium md:text-headline-large">{group.name}</h1>
+				{summary}
 				<Button href={`/app/grupos/${encodeURIComponent(group.id)}/relatorio`} variant="outlined" size="md" icon="bar_chart" fullWidth className="md:w-auto">
 					Relatório
 				</Button>
@@ -414,6 +419,7 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 		<>
 			<GroupDetailView
 				group={group}
+				summary={<GroupSummaryLive groupId={group.id} />}
 				invite={<InvitePanel groupId={group.id} groupName={group.name} isAdmin={isAdmin} />}
 				addManaged={isAdmin ? <AddManagedButton onClick={() => openSheet({ kind: "add" })} /> : undefined}
 				recurrences={<RecurrencesDetails state={recurrences} onOptions={(r) => openRecSheet("options", r)} />}

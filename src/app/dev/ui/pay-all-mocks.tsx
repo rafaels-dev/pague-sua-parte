@@ -86,10 +86,23 @@ const DONE_PARTIAL: DoneBatch = {
 	hasReceipt: false,
 };
 
-export type PayAllScene = "lista" | "pix" | "desmarcado" | "nada" | "comprovante" | "comprovante-arquivo" | "pago" | "parcial" | "avisar" | "vazio" | "carregando" | "erro" | "indisponivel";
+export type PayAllScene = "grupo" | "grupo-vazio" | "lista" | "pix" | "desmarcado" | "nada" | "comprovante" | "comprovante-arquivo" | "pago" | "parcial" | "avisar" | "vazio" | "carregando" | "erro" | "indisponivel";
+
+/** Id (de mentira, mas com cara de id de verdade) do grupo das telas "só deste grupo". */
+export const SCOPE_GROUP_ID = "0123456789abcdef01234567";
+const SCOPE = { id: SCOPE_GROUP_ID, name: "Despesas da vó" };
+const inScope = (items: PayableItem[]): PayableItem[] => items.filter((i) => i.groupId === "1").map((i) => ({ ...i, groupId: SCOPE_GROUP_ID }));
+const SCOPED_RECIPIENTS: PayableRecipient[] = RECIPIENTS.map((r) => {
+	const items = inScope(r.items);
+	return { ...r, items, totalCents: total(items) };
+});
 
 const sceneState = (scene: PayAllScene): PayAllPageState => {
 	switch (scene) {
+		case "grupo":
+			return { kind: "ready", recipients: SCOPED_RECIPIENTS, done: [] };
+		case "grupo-vazio":
+			return { kind: "ready", recipients: [], done: [] };
 		case "carregando":
 			return { kind: "loading" };
 		case "erro":
@@ -131,6 +144,7 @@ export function MockPayAll({ scene = "lista", framed = true }: Readonly<{ scene?
 	const [receiptOpen, setReceiptOpen] = useState(scene === "comprovante" || scene === "comprovante-arquivo");
 	const [shareOpen, setShareOpen] = useState(scene === "avisar");
 	const state = sceneState(scene);
+	const scoped = scene === "grupo" || scene === "grupo-vazio";
 	const card = (id: string) => cards[id] ?? EMPTY_CARD;
 	const patch = (id: string, p: Partial<CardState>) => setCards((c) => ({ ...c, [id]: { ...(c[id] ?? EMPTY_CARD), ...p } }));
 	const recipients = state.kind === "ready" ? state.recipients : [];
@@ -138,9 +152,10 @@ export function MockPayAll({ scene = "lista", framed = true }: Readonly<{ scene?
 	const receiptFor = recipients.find((r) => r.id === "r1") ?? recipients[0];
 	const count = receiptFor ? selectedItems(receiptFor.items, card(receiptFor.id).unchecked).length : 0;
 	return (
-		<Shell pathname="/app/pagar" framed={framed}>
+		<Shell pathname="/app/pagar" search={scoped ? `?grupo=${SCOPE_GROUP_ID}` : undefined} framed={framed}>
 			<PayAllView
 				state={state}
+				scope={scoped ? SCOPE : null}
 				cards={cards}
 				onToggleItem={(id, key) => patch(id, { unchecked: toggleUnchecked(card(id).unchecked, key), qrOpen: false })}
 				onGenerate={(id) => {

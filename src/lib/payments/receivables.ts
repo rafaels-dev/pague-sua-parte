@@ -45,6 +45,8 @@ export type Receivables = {
 	/** Parte do total que vai para pessoas sem celular que você cuida (não entra no "a receber" do início). */
 	managedCents: number;
 	truncated: boolean;
+	/** Só quando o pedido foi restrito a um grupo (`?groupId=`): o nome para a tela dizer "Só do grupo …". */
+	group?: { id: string; name: string };
 };
 
 export const EMPTY_RECEIVABLES: Receivables = { debtors: [], totalCents: 0, nowCents: 0, managedCents: 0, truncated: false };

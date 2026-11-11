@@ -121,12 +121,13 @@ function AccountMenu({ user, onSignOut }: Readonly<{ user: ShellUser; onSignOut:
 /** Casca do app: barra superior, barra inferior (celular) ou trilho lateral (md+) e conteúdo com largura máxima. */
 export function AppShellView({
 	pathname,
+	search = "",
 	user,
 	onSignOut,
 	children,
 	className,
-}: Readonly<{ pathname: string; user: ShellUser; onSignOut: () => void; children: React.ReactNode; className?: string }>) {
-	const info = screenInfo(pathname);
+}: Readonly<{ pathname: string; search?: string; user: ShellUser; onSignOut: () => void; children: React.ReactNode; className?: string }>) {
+	const info = screenInfo(pathname, search);
 	const inner = "mx-auto w-full max-w-5xl md:px-7";
 	return (
 		<div className={cx("min-h-dvh md:pl-20", className)}>

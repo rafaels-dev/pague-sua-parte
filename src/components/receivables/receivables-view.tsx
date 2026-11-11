@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { GroupScopeNote } from "@/components/group-scope-note";
 import { ActionChip, Avatar, Banner, Button, Card, EmptyState, Icon, Skeleton, StatusChip } from "@/components/ui";
 import { formatBRL } from "@/lib/money";
 import { todayISO } from "@/lib/ui/dates";
 import { dueShort, installmentLabel, untilEndOfMonthLine } from "@/lib/ui/due-dates";
+import { receivablesUrl } from "@/lib/ui/group-scope";
 import { debtorCaption, payeeNote, type Debtor, type Receivables, type ReceivableItem } from "@/lib/ui/receivables";
 import { RECURRING_CHIP } from "@/lib/ui/recurrences";
 
@@ -14,8 +16,11 @@ export type ReceivablesPageState =
 	| { kind: "unavailable" }
 	| { kind: "ready"; data: Receivables };
 
-/** Uma conta da lista: leva para a despesa. O que é, de que grupo, vencimento, etiquetas e valor. */
-function ItemRow({ item, today }: Readonly<{ item: ReceivableItem; today: string }>) {
+/** O grupo a que a tela está restrita (`?grupo=`), quando há. */
+export type ReceivablesScope = { id: string; name: string } | null;
+
+/** Uma conta da lista: leva para a despesa. O que é, de que grupo (menos quando a tela é de um grupo só), vencimento, etiquetas e valor. */
+function ItemRow({ item, today, showGroup = true }: Readonly<{ item: ReceivableItem; today: string; showGroup?: boolean }>) {
 	const due = dueShort(item.dueDate, item.overdue, today);
 	const note = payeeNote(item);
 	const chips = [
@@ -31,7 +36,7 @@ function ItemRow({ item, today }: Readonly<{ item: ReceivableItem; today: string
 			>
 				<span className="min-w-0 flex-1">
 					<span className="block break-words text-body-large font-medium text-on-surface">{item.description}</span>
-					{item.groupName && <span className="block break-words text-sm text-on-surface-variant">{item.groupName}</span>}
+					{showGroup && item.groupName && <span className="block break-words text-sm text-on-surface-variant">{item.groupName}</span>}
 					{due && <span className={`block text-sm ${due.overdue ? "font-medium text-error" : "text-on-surface-variant"}`}>{due.text}</span>}
 					{chips.length > 0 && (
 						<span className="mt-1.5 flex flex-wrap gap-1.5">
@@ -51,7 +56,7 @@ function ItemRow({ item, today }: Readonly<{ item: ReceivableItem; today: string
 }
 
 /** Cartão de um devedor: quem é, quanto deve (e quanto já venceu), cobrar no WhatsApp e as contas. */
-export function DebtorCardView({ debtor, onCollect }: Readonly<{ debtor: Debtor; onCollect: () => void }>) {
+export function DebtorCardView({ debtor, onCollect, showGroup = true }: Readonly<{ debtor: Debtor; onCollect: () => void; showGroup?: boolean }>) {
 	const today = todayISO();
 	const headingId = `deve-${debtor.uid}`;
 	const caption = debtorCaption(debtor);
@@ -85,7 +90,7 @@ export function DebtorCardView({ debtor, onCollect }: Readonly<{ debtor: Debtor;
 			</div>
 			<ul className="divide-y divide-outline-variant/60 rounded-shape-md bg-surface-container-low px-3">
 				{debtor.items.map((i) => (
-					<ItemRow key={`${i.groupId}:${i.expenseId}`} item={i} today={today} />
+					<ItemRow key={`${i.groupId}:${i.expenseId}`} item={i} today={today} showGroup={showGroup} />
 				))}
 			</ul>
 		</Card>
@@ -108,7 +113,8 @@ export function ReceivablesView({
 	state,
 	onCollect,
 	onRetry,
-}: Readonly<{ state: ReceivablesPageState; onCollect: (uid: string) => void; onRetry: () => void }>) {
+	scope = null,
+}: Readonly<{ state: ReceivablesPageState; onCollect: (uid: string) => void; onRetry: () => void; scope?: ReceivablesScope }>) {
 	if (state.kind === "loading") return <ReceivablesSkeleton />;
 	if (state.kind === "error") {
 		return (
@@ -140,16 +146,25 @@ export function ReceivablesView({
 		);
 	}
 	const { data } = state;
+	const note = scope && <GroupScopeNote groupName={scope.name} allHref={receivablesUrl()} />;
 	if (data.debtors.length === 0) {
 		return (
-			<EmptyState icon="check" title="Ninguém está te devendo agora." action={<Button href="/app">Voltar para o início</Button>}>
-				Quando alguém ficar devendo, aparece aqui.
-			</EmptyState>
+			<div className="mx-auto max-w-2xl space-y-3">
+				{note}
+				<EmptyState
+					icon="check"
+					title={scope ? "Ninguém está te devendo agora neste grupo." : "Ninguém está te devendo agora."}
+					action={<Button href={scope ? `/app/grupos/${encodeURIComponent(scope.id)}` : "/app"}>{scope ? "Voltar para o grupo" : "Voltar para o início"}</Button>}
+				>
+					Quando alguém ficar devendo, aparece aqui.
+				</EmptyState>
+			</div>
 		);
 	}
 	const until = untilEndOfMonthLine(data.totalCents, data.nowCents, todayISO());
 	return (
 		<div className="mx-auto max-w-2xl space-y-5">
+			{note}
 			<Card as="section" tone="high" aria-label="Total a receber" className="p-5 md:p-6">
 				<p className="text-body-large text-on-surface-variant">Você tem a receber</p>
 				<p className="money mt-1 text-display-small font-bold text-receive">{formatBRL(data.totalCents)}</p>
@@ -164,7 +179,7 @@ export function ReceivablesView({
 				</Banner>
 			)}
 			{data.debtors.map((d) => (
-				<DebtorCardView key={d.uid} debtor={d} onCollect={() => onCollect(d.uid)} />
+				<DebtorCardView key={d.uid} debtor={d} onCollect={() => onCollect(d.uid)} showGroup={!scope} />
 			))}
 		</div>
 	);

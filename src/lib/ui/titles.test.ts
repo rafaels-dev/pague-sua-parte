@@ -23,4 +23,14 @@ describe("screenInfo", () => {
 	it("despesa volta ao grupo", () => {
 		expect(screenInfo("/app/grupos/abc/despesas/e1")).toMatchObject({ title: "Despesa", back: "/app/grupos/abc" });
 	});
+	it("pagar tudo e quem me deve de um grupo voltam para o grupo", () => {
+		const id = "0123456789abcdef01234567";
+		expect(screenInfo("/app/pagar", `?grupo=${id}`)).toEqual({ title: "Pagar tudo", back: `/app/grupos/${id}`, nav: "/app" });
+		expect(screenInfo("/app/receber", `?grupo=${id}`)).toEqual({ title: "Quem me deve", back: `/app/grupos/${id}`, nav: "/app" });
+	});
+	it("?grupo inválido ou em outra tela é ignorado", () => {
+		expect(screenInfo("/app/pagar", "?grupo=../../x").back).toBe("/app");
+		expect(screenInfo("/app/receber", "?grupo=").back).toBe("/app");
+		expect(screenInfo("/app/perfil", "?grupo=0123456789abcdef01234567").back).toBeNull();
+	});
 });

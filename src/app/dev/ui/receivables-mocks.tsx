@@ -9,6 +9,7 @@ import { todayISO } from "@/lib/ui/dates";
 import { nextDayOfMonth } from "@/lib/ui/due-dates";
 import type { Debtor, ReceivableItem, Receivables } from "@/lib/ui/receivables";
 import { Shell } from "./expense-mocks";
+import { SCOPE_GROUP_ID } from "./pay-all-mocks";
 
 const noop = () => {};
 const TODAY = todayISO();
@@ -71,10 +72,20 @@ const dataOf = (debtors: Debtor[]): Receivables => ({
 	truncated: false,
 });
 
-export type ReceivablesScene = "lista" | "whatsapp" | "whatsapp-cuidado" | "vazio" | "carregando" | "erro" | "indisponivel";
+export type ReceivablesScene = "grupo" | "grupo-vazio" | "lista" | "whatsapp" | "whatsapp-cuidado" | "vazio" | "carregando" | "erro" | "indisponivel";
+
+const SCOPE = { id: SCOPE_GROUP_ID, name: "Despesas da vó" };
+const SCOPED_DEBTORS: Debtor[] = DEBTORS.flatMap((d) => {
+	const items = d.items.filter((i) => i.groupId === "1").map((i) => ({ ...i, groupId: SCOPE_GROUP_ID }));
+	return items.length === 0 ? [] : [{ ...d, items, totalCents: items.reduce((s, i) => s + i.dueCents, 0), overdueCents: items.filter((i) => i.overdue).reduce((s, i) => s + i.dueCents, 0) }];
+});
 
 const sceneState = (scene: ReceivablesScene): ReceivablesPageState => {
 	switch (scene) {
+		case "grupo":
+			return { kind: "ready", data: dataOf(SCOPED_DEBTORS) };
+		case "grupo-vazio":
+			return { kind: "ready", data: dataOf([]) };
 		case "carregando":
 			return { kind: "loading" };
 		case "erro":
@@ -92,10 +103,11 @@ const sceneState = (scene: ReceivablesScene): ReceivablesPageState => {
 export function MockReceivables({ scene = "lista", framed = true }: Readonly<{ scene?: ReceivablesScene; framed?: boolean }>) {
 	const [shareFor, setShareFor] = useState<string | null>(scene === "whatsapp" ? "b" : scene === "whatsapp-cuidado" ? "m2" : null);
 	const state = sceneState(scene);
+	const scoped = scene === "grupo" || scene === "grupo-vazio";
 	const debtorToShare = state.kind === "ready" ? state.data.debtors.find((d) => d.uid === shareFor) : undefined;
 	return (
-		<Shell pathname="/app/receber" framed={framed}>
-			<ReceivablesView state={state} onCollect={setShareFor} onRetry={noop} />
+		<Shell pathname="/app/receber" search={scoped ? `?grupo=${SCOPE_GROUP_ID}` : undefined} framed={framed}>
+			<ReceivablesView state={state} scope={scoped ? SCOPE : null} onCollect={setShareFor} onRetry={noop} />
 			<Sheet open={!!debtorToShare} onClose={() => setShareFor(null)} title="Cobrar no WhatsApp">
 				{debtorToShare && (
 					<ShareExpenseContent

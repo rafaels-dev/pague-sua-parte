@@ -35,3 +35,17 @@ describe("GET /api/me/summary: pessoas sem login", () => {
 		expect(getSummary).toHaveBeenCalledWith({ fake: true }, "u1");
 	});
 });
+
+describe("GET /api/me/summary?groupId=", () => {
+	it("repassa o grupo ao repo; o uid vem só da sessão", async () => {
+		getSummary.mockResolvedValue({ toReceiveCents: 1, toPayCents: 2, managed: [] });
+		const res = await GET(new Request("http://x/api/me/summary?groupId=0123456789abcdef01234567"));
+		expect([res.status, await res.json()]).toEqual([200, { toReceiveCents: 1, toPayCents: 2, managed: [] }]);
+		expect(getSummary).toHaveBeenCalledWith({ fake: true }, "u1", undefined, "0123456789abcdef01234567");
+	});
+	it("404 quando não é membro (ou o id é inválido)", async () => {
+		getSummary.mockResolvedValue(null);
+		const res = await GET(new Request("http://x/api/me/summary?groupId=lixo"));
+		expect([res.status, await res.json()]).toEqual([404, { error: "Grupo não encontrado." }]);
+	});
+});

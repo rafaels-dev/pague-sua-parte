@@ -7,6 +7,8 @@ import { ReceiptSheetBody } from "@/components/expenses/receipt-sheet";
 import { Sheet, Snackbar } from "@/components/ui";
 import { ApiError, apiFetch } from "@/lib/api-client";
 import { copyText } from "@/lib/ui/clipboard";
+import { useLocationSearch } from "@/lib/ui/use-location-search";
+import { groupParam, normalizeScopeGroup, scopedApiUrl } from "@/lib/ui/group-scope";
 import {
 	buildPayAllShareText,
 	itemKey,
@@ -47,13 +49,18 @@ export function PayAllPage() {
 	const [copyFailed, setCopyFailed] = useState(false);
 	const [copied, setCopied] = useState(false);
 	const [snack, setSnack] = useState<string | null>(null);
+	// Aberta a partir de um grupo (?grupo=<id>): só as contas dele. undefined = ainda não leu o endereço.
+	const search = useLocationSearch();
+	const groupId = search === null ? undefined : groupParam(search);
+	const [scope, setScope] = useState<{ id: string; name: string } | null>(null);
 
 	useEffect(() => {
-		if (!user) return;
+		if (!user || groupId === undefined) return;
 		let cancelled = false;
-		apiFetch<unknown>("/api/me/payables")
+		apiFetch<unknown>(scopedApiUrl("/api/me/payables", groupId))
 			.then((raw) => {
 				if (cancelled) return;
+				setScope(normalizeScopeGroup(raw));
 				const recipients = normalizePayables(raw);
 				setState((s) => (s.kind === "ready" ? { ...s, recipients } : { kind: "ready", recipients, done: [] }));
 			})
@@ -62,14 +69,14 @@ export function PayAllPage() {
 				// Recarregando por baixo dos panos: mantém o que já está na tela.
 				setState((s) => {
 					if (s.kind === "ready") return s;
-					if (e instanceof ApiError && UNAVAILABLE.has(e.status)) return { kind: "unavailable" };
+					if (e instanceof ApiError && !groupId && UNAVAILABLE.has(e.status)) return { kind: "unavailable" };
 					return { kind: "error", message: e instanceof ApiError ? e.message : "Não foi possível carregar suas contas." };
 				});
 			});
 		return () => {
 			cancelled = true;
 		};
-	}, [user, reloadKey]);
+	}, [user, groupId, reloadKey]);
 
 	const recipients = state.kind === "ready" ? state.recipients : [];
 	const card = (id: string): CardState => cards[id] ?? EMPTY_CARD;
@@ -139,6 +146,7 @@ export function PayAllPage() {
 		<>
 			<PayAllView
 				state={state}
+				scope={scope}
 				cards={cards}
 				onToggleItem={(id, key) => patch(id, { unchecked: toggleUnchecked(card(id).unchecked, key), qrOpen: false, codeFallback: false })}
 				onGenerate={(id) => {

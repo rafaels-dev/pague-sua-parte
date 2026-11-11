@@ -729,4 +729,64 @@ describe.skipIf(!ENABLED)("integração: despesas no MongoDB real", () => {
 		expect(after.report.people.reduce((t, p) => t + p.bornCents, 0)).toBe(after.report.totalCents);
 		expect(after.report.people).toHaveLength(4);
 	}, 120_000);
+
+	it("resumo, a pagar e a receber restritos a um grupo: só o que é dele, somam o total e batem com 'Seus grupos'", async () => {
+		const payments = await import("@/lib/payments/repo");
+		const g1 = await newGroup("esc1", [OWNER, A]);
+		const g2 = await newGroup("esc2", [OWNER, A]);
+		const added = await groupsRepo.addManagedMember(db, g1, OWNER, { name: "Benjamim", managedBy: A });
+		if (added.status !== "ok") throw new Error("addManagedMember: " + added.status);
+		const BEN = added.uid;
+		const mk = async (g: string, by: string, description: string, amountCents: number, participantUids: string[]) =>
+			ok(await repo.createExpense(db, store, { groupId: g, uid: by, input: { description, amountCents, date: "2026-11-10", participantUids }, files: [] })).expense;
+		await mk(g1, OWNER, "Mercado", 3000, [OWNER, A, BEN]); // A e Benjamim devem 1000 ao dono
+		await mk(g1, A, "Gás", 1200, [A, OWNER]); // o dono deve 600 a A
+		await mk(g2, OWNER, "Aluguel", 2000, [OWNER, A]); // A deve 1000 ao dono
+		const FIELDS = ["toReceiveCents", "toPayCents", "toReceiveNowCents", "toPayNowCents", "overdueToPayCents"] as const;
+
+		for (const u of [OWNER, A]) {
+			const mine = await groupsRepo.listGroups(db, u);
+			// 1. o resumo de cada grupo bate com o saldo do grupo em "Seus grupos"
+			for (const g of mine) {
+				const scoped = (await repo.getSummary(db, u, undefined, g.id))!;
+				for (const k of FIELDS) expect(scoped[k], `${k} de ${u.slice(-1)} em ${g.id}`).toBe(g[k]);
+				expect(scoped.managed.every((m) => m.groupId === g.id)).toBe(true);
+			}
+			// 2. a soma dos grupos é o resumo do início, inclusive as pessoas que cuida
+			const global = await repo.getSummary(db, u);
+			const parts = await Promise.all(mine.map(async (g) => (await repo.getSummary(db, u, undefined, g.id))!));
+			for (const k of FIELDS) expect(parts.reduce((t, p) => t + p[k], 0), k).toBe(global[k]);
+			expect(parts.flatMap((p) => p.managed).map((m) => `${m.groupId}:${m.uid}`).sort()).toEqual(global.managed.map((m) => `${m.groupId}:${m.uid}`).sort());
+			// 3. a pagar e a receber: cada grupo só tem itens dele e a união é o total
+			const allPay = await payments.getPayables(db, u);
+			const payKeys = allPay.recipients.flatMap((r) => r.items).map((i) => `${i.groupId}:${i.expenseId}:${i.shareUid}`).sort();
+			const scopedPay = await Promise.all(mine.map(async (g) => ({ g, p: (await payments.getPayables(db, u, undefined, g.id))! })));
+			for (const { g, p } of scopedPay) expect(p.recipients.flatMap((r) => r.items).every((i) => i.groupId === g.id)).toBe(true);
+			expect(scopedPay.flatMap(({ p }) => p.recipients.flatMap((r) => r.items)).map((i) => `${i.groupId}:${i.expenseId}:${i.shareUid}`).sort()).toEqual(payKeys);
+			const allRec = await payments.getReceivables(db, u);
+			const recKeys = allRec.debtors.flatMap((d) => d.items.map((i) => `${i.groupId}:${i.expenseId}:${d.uid}`)).sort();
+			const scopedRec = await Promise.all(mine.map(async (g) => ({ g, r: (await payments.getReceivables(db, u, undefined, g.id))! })));
+			for (const { g, r } of scopedRec) expect(r.debtors.flatMap((d) => d.items).every((i) => i.groupId === g.id)).toBe(true);
+			expect(scopedRec.flatMap(({ r }) => r.debtors.flatMap((d) => d.items.map((i) => `${i.groupId}:${i.expenseId}:${d.uid}`))).sort()).toEqual(recKeys);
+			expect(scopedRec.reduce((t, { r }) => t + r.totalCents, 0)).toBe(allRec.totalCents);
+			expect(scopedRec.reduce((t, { r }) => t + r.nowCents, 0)).toBe(allRec.nowCents);
+		}
+
+		// 4. valores concretos de A: no grupo 1 deve 1000 (e Benjamim 1000) e tem 600 a receber; no grupo 2 deve 1000
+		const a1 = (await repo.getSummary(db, A, undefined, g1))!;
+		expect(a1).toMatchObject({ toPayCents: 1000, toReceiveCents: 600 });
+		expect(a1.managed).toEqual([expect.objectContaining({ uid: BEN, groupId: g1, toPayCents: 1000 })]);
+		expect(await repo.getSummary(db, A, undefined, g2)).toMatchObject({ toPayCents: 1000, toReceiveCents: 0, managed: [] });
+		const p1 = (await payments.getPayables(db, A, undefined, g1))!;
+		expect(p1.recipients.flatMap((r) => r.items).reduce((t, i) => t + i.dueCents, 0)).toBe(2000);
+		expect((await payments.getReceivables(db, A, undefined, g2))!.debtors).toEqual([]);
+
+		// 5. grupo de que a pessoa não faz parte, inexistente ou id inválido: null (a rota responde 404)
+		const outsider = uid("fora");
+		expect(await repo.getSummary(db, outsider, undefined, g1)).toBeNull();
+		expect(await payments.getPayables(db, outsider, undefined, g1)).toBeNull();
+		expect(await payments.getReceivables(db, outsider, undefined, g1)).toBeNull();
+		expect(await repo.getSummary(db, A, undefined, new ObjectId().toHexString())).toBeNull();
+		expect(await payments.getPayables(db, A, undefined, "lixo")).toBeNull();
+	}, 120_000);
 });

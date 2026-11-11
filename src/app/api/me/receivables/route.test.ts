@@ -27,4 +27,12 @@ describe("GET /api/me/receivables", () => {
 		getReceivables.mockRejectedValue(new Error("boom"));
 		expect((await GET(new Request("http://x"))).status).toBe(500);
 	});
+	it("com ?groupId repassa o grupo e responde 404 se não for membro", async () => {
+		getReceivables.mockResolvedValueOnce({ debtors: [], totalCents: 0, nowCents: 0, managedCents: 0, truncated: false });
+		expect((await GET(new Request("http://x/api/me/receivables?groupId=0123456789abcdef01234567"))).status).toBe(200);
+		expect(getReceivables).toHaveBeenCalledWith({ fake: true }, "u1", undefined, "0123456789abcdef01234567");
+		getReceivables.mockResolvedValueOnce(null);
+		const res = await GET(new Request("http://x/api/me/receivables?groupId=outro"));
+		expect([res.status, await res.json()]).toEqual([404, { error: "Grupo não encontrado." }]);
+	});
 });

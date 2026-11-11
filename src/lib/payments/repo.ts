@@ -4,6 +4,7 @@ import {
 	expensesCollection,
 	findExpense,
 	loadPeople,
+	memberGroupsOf,
 	mutateShares,
 	releaseReceipts,
 	type ExpenseDoc,
@@ -22,11 +23,12 @@ export const BATCH_MAX_ITEMS = 50;
 
 // ---------- o que dá para pagar ----------
 
-/** Roda a geração das despesas fixas dos grupos de `uid` (falha não derruba) e devolve o que ele pode pagar agora. */
-export async function getPayables(db: Db, uid: string, now: Date = new Date()): Promise<Payables> {
-	const groups = await groupsCollection(db)
-		.find({ "members.uid": uid }, { projection: { _id: 1, name: 1, members: 1 } })
-		.toArray();
+/** Roda a geração das despesas fixas dos grupos de `uid` (falha não derruba) e devolve o que ele pode pagar agora. Com `groupId`, só desse grupo (`null` se ele não é membro). */
+export async function getPayables(db: Db, uid: string, now?: Date): Promise<Payables>;
+export async function getPayables(db: Db, uid: string, now: Date | undefined, groupId: string): Promise<Payables | null>;
+export async function getPayables(db: Db, uid: string, now: Date = new Date(), groupId?: string): Promise<Payables | null> {
+	const groups = await memberGroupsOf(db, uid, groupId);
+	if (!groups) return null;
 	if (groups.length === 0) return { recipients: [], truncated: false };
 	await materializeSafely(db, groups.map((g) => g._id), now);
 
@@ -47,16 +49,18 @@ export async function getPayables(db: Db, uid: string, now: Date = new Date()): 
 		for (const s of e.shares) uids.add(s.uid);
 	}
 	const people = await loadPeople(db, [...uids]);
-	return buildPayables({ uid, today, groups, expenses, people });
+	const built = buildPayables({ uid, today, groups, expenses, people });
+	return groupId === undefined ? built : { ...built, group: { id: groupId, name: groups[0].name } };
 }
 
 // ---------- o que devem a você ----------
 
-/** Roda a geração das despesas fixas dos grupos de `uid` (falha não derruba) e devolve tudo o que ainda devem a ele. */
-export async function getReceivables(db: Db, uid: string, now: Date = new Date()): Promise<Receivables> {
-	const groups = await groupsCollection(db)
-		.find({ "members.uid": uid }, { projection: { _id: 1, name: 1, members: 1 } })
-		.toArray();
+/** Roda a geração das despesas fixas dos grupos de `uid` (falha não derruba) e devolve tudo o que ainda devem a ele. Com `groupId`, só desse grupo (`null` se ele não é membro). */
+export async function getReceivables(db: Db, uid: string, now?: Date): Promise<Receivables>;
+export async function getReceivables(db: Db, uid: string, now: Date | undefined, groupId: string): Promise<Receivables | null>;
+export async function getReceivables(db: Db, uid: string, now: Date = new Date(), groupId?: string): Promise<Receivables | null> {
+	const groups = await memberGroupsOf(db, uid, groupId);
+	if (!groups) return null;
 	if (groups.length === 0) return EMPTY_RECEIVABLES;
 	await materializeSafely(db, groups.map((g) => g._id), now);
 
@@ -71,7 +75,8 @@ export async function getReceivables(db: Db, uid: string, now: Date = new Date()
 		for (const s of e.shares) uids.add(s.uid);
 	}
 	const people = await loadPeople(db, [...uids]);
-	return buildReceivables({ uid, today: todayInSaoPaulo(now), groups, expenses, people });
+	const built = buildReceivables({ uid, today: todayInSaoPaulo(now), groups, expenses, people });
+	return groupId === undefined ? built : { ...built, group: { id: groupId, name: groups[0].name } };
 }
 
 // ---------- pagar tudo de uma vez ----------

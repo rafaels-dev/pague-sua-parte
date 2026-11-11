@@ -6,6 +6,8 @@ import { ShareExpenseContent } from "@/components/expenses/expense-share";
 import { Sheet, Snackbar } from "@/components/ui";
 import { ApiError, apiFetch } from "@/lib/api-client";
 import { copyText } from "@/lib/ui/clipboard";
+import { useLocationSearch } from "@/lib/ui/use-location-search";
+import { groupParam, normalizeScopeGroup, scopedApiUrl } from "@/lib/ui/group-scope";
 import { buildCollectText, collectLink, firstName, normalizeReceivables, type Debtor } from "@/lib/ui/receivables";
 import { ReceivablesView, type ReceivablesPageState } from "./receivables-view";
 
@@ -30,23 +32,29 @@ export function ReceivablesPage() {
 	const [shareFor, setShareFor] = useState<string | null>(null);
 	const [copyFailed, setCopyFailed] = useState(false);
 	const [copied, setCopied] = useState(false);
+	// Aberta a partir de um grupo (?grupo=<id>): só o que devem nele. undefined = ainda não leu o endereço.
+	const search = useLocationSearch();
+	const groupId = search === null ? undefined : groupParam(search);
+	const [scope, setScope] = useState<{ id: string; name: string } | null>(null);
 
 	useEffect(() => {
-		if (!user) return;
+		if (!user || groupId === undefined) return;
 		let cancelled = false;
-		apiFetch<unknown>("/api/me/receivables")
+		apiFetch<unknown>(scopedApiUrl("/api/me/receivables", groupId))
 			.then((raw) => {
-				if (!cancelled) setState({ kind: "ready", data: normalizeReceivables(raw) });
+				if (cancelled) return;
+				setScope(normalizeScopeGroup(raw));
+				setState({ kind: "ready", data: normalizeReceivables(raw) });
 			})
 			.catch((e) => {
 				if (cancelled) return;
-				if (e instanceof ApiError && UNAVAILABLE.has(e.status)) setState({ kind: "unavailable" });
+				if (e instanceof ApiError && !groupId && UNAVAILABLE.has(e.status)) setState({ kind: "unavailable" });
 				else setState({ kind: "error", message: e instanceof ApiError ? e.message : "Não foi possível carregar. Tente de novo." });
 			});
 		return () => {
 			cancelled = true;
 		};
-	}, [user, reloadKey]);
+	}, [user, groupId, reloadKey]);
 
 	const debtor = state.kind === "ready" ? state.data.debtors.find((d) => d.uid === shareFor) : undefined;
 	const canNativeShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
@@ -61,6 +69,7 @@ export function ReceivablesPage() {
 		<>
 			<ReceivablesView
 				state={state}
+				scope={scope}
 				onCollect={setShareFor}
 				onRetry={() => {
 					setState({ kind: "loading" });

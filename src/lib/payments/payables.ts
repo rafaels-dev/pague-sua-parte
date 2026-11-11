@@ -31,7 +31,8 @@ export type PayableRecipient = {
 	items: PayableItem[];
 };
 
-export type Payables = { recipients: PayableRecipient[]; truncated: boolean };
+/** `group` só vem quando o pedido foi restrito a um grupo (`?groupId=`): o nome para a tela dizer "Só do grupo …". */
+export type Payables = { recipients: PayableRecipient[]; truncated: boolean; group?: { id: string; name: string } };
 
 /** Um Pix só paga uma chave: o destinatário é quem pagou a despesa + a chave Pix gravada nela. */
 export const recipientKey = (e: { paidBy: string; pix: { type: string; key: string } }): string =>
