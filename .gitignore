@@ -51,3 +51,7 @@ next-env.d.ts
 
 
 !.dev.vars.example
+
+# skills instaladas localmente (reinstale com: npx skills add nutlope/hallmark)
+/.agents/
+/.claude/skills/

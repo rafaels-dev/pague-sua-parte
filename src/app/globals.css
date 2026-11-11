@@ -1,3 +1,8 @@
+/* Hallmark · shape: Stage-and-Bento · genre: playful · theme: Hum (deal 1/3, seed free-open-source-family-expense-2585·f0d15271·2026-11-11·r0) · job: sign up · draw: swapped (the draw's Split Studio and code sample do not fit a family app; the product built from the app's own kit leads)
+ * hero: Stage · nav: edge-aligned · footer: letter close · imagery: the product built from the app's own UI kit (no photographs) · signature: the Pix "Sua parte" screen of the app held in card stock beside the Google button
+ * axes: light/rounded-sans/chromatic-yellow · posture: full-palette · contrast: pass · fold: pass · v2.0.0 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 · weakest: S, the hero first read as a generic app promo; led it with the app's real "Sua parte" Pix screen and the family WhatsApp origin instead */
+/* Hallmark · waive 84 · the real screens sit behind Google sign-in and carry no public data, so the page rebuilds them from the app's own UI kit with sample names, theme-aware in light and dark · the product mock-ups in landing-view */
 @import "tailwindcss";
 
 /*
@@ -35,6 +40,21 @@
 	--google-bg: #ffffff;
 	--google-fg: #1f1f1f;
 	--google-border: #747775;
+	/* Landing (papel recortado, tema Hum): só a página inicial usa. */
+	--lp-paper: oklch(97% 0.014 95);
+	--lp-paper-2: oklch(94% 0.024 95);
+	--lp-card: oklch(98.8% 0.008 95);
+	--lp-ink: oklch(22% 0.03 215);
+	--lp-ink-2: oklch(32% 0.03 215);
+	--lp-muted: oklch(42% 0.025 215);
+	--lp-rule: oklch(86% 0.02 95);
+	--lp-edge: oklch(78% 0.05 88);
+	--lp-accent: oklch(88% 0.175 96);
+	--lp-accent-deep: oklch(72% 0.16 92);
+	--lp-coral: oklch(74% 0.16 28);
+	--lp-mint: oklch(88% 0.1 165);
+	--lp-sugar: oklch(90% 0.05 225);
+	--lp-on-field: oklch(22% 0.03 215);
 	color-scheme: light;
 }
 
@@ -67,6 +87,20 @@
 		--google-bg: #131314;
 		--google-fg: #e3e3e3;
 		--google-border: #8e918f;
+		--lp-paper: oklch(20% 0.022 215);
+		--lp-paper-2: oklch(25% 0.028 215);
+		--lp-card: oklch(28% 0.03 215);
+		--lp-ink: oklch(95% 0.016 95);
+		--lp-ink-2: oklch(87% 0.016 95);
+		--lp-muted: oklch(77% 0.02 215);
+		--lp-rule: oklch(36% 0.03 215);
+		--lp-edge: oklch(13% 0.02 215);
+		--lp-accent: oklch(86% 0.17 96);
+		--lp-accent-deep: oklch(66% 0.15 92);
+		--lp-coral: oklch(72% 0.15 28);
+		--lp-mint: oklch(78% 0.1 165);
+		--lp-sugar: oklch(42% 0.06 225);
+		--lp-on-field: oklch(22% 0.03 215);
 		color-scheme: dark;
 	}
 }
@@ -100,6 +134,20 @@
 	--google-bg: #131314;
 	--google-fg: #e3e3e3;
 	--google-border: #8e918f;
+	--lp-paper: oklch(20% 0.022 215);
+	--lp-paper-2: oklch(25% 0.028 215);
+	--lp-card: oklch(28% 0.03 215);
+	--lp-ink: oklch(95% 0.016 95);
+	--lp-ink-2: oklch(87% 0.016 95);
+	--lp-muted: oklch(77% 0.02 215);
+	--lp-rule: oklch(36% 0.03 215);
+	--lp-edge: oklch(13% 0.02 215);
+	--lp-accent: oklch(86% 0.17 96);
+	--lp-accent-deep: oklch(66% 0.15 92);
+	--lp-coral: oklch(72% 0.15 28);
+	--lp-mint: oklch(78% 0.1 165);
+	--lp-sugar: oklch(42% 0.06 225);
+	--lp-on-field: oklch(22% 0.03 215);
 	color-scheme: dark;
 }
 
@@ -132,6 +180,22 @@
 	--color-google-bg: var(--google-bg);
 	--color-google-fg: var(--google-fg);
 	--color-google-border: var(--google-border);
+
+	--color-lp-paper: var(--lp-paper);
+	--color-lp-paper-2: var(--lp-paper-2);
+	--color-lp-card: var(--lp-card);
+	--color-lp-ink: var(--lp-ink);
+	--color-lp-ink-2: var(--lp-ink-2);
+	--color-lp-muted: var(--lp-muted);
+	--color-lp-rule: var(--lp-rule);
+	--color-lp-edge: var(--lp-edge);
+	--color-lp-accent: var(--lp-accent);
+	--color-lp-accent-deep: var(--lp-accent-deep);
+	--color-lp-coral: var(--lp-coral);
+	--color-lp-mint: var(--lp-mint);
+	--color-lp-sugar: var(--lp-sugar);
+	--color-lp-on-field: var(--lp-on-field);
+	--font-display: var(--font-fredoka), ui-rounded, var(--font-roboto), system-ui, sans-serif;
 
 	--font-sans: var(--font-roboto), Roboto, system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
 
@@ -306,5 +370,105 @@ dialog::backdrop {
 		animation-iteration-count: 1 !important;
 		transition-duration: 0.01ms !important;
 		scroll-behavior: auto !important;
+	}
+}
+
+/* ---------------------------------------------------------------------------
+ * Landing (página inicial): papel recortado, cartolina que afunda ao toque.
+ * ------------------------------------------------------------------------- */
+html:has(.lp-root),
+body:has(.lp-root) {
+	overflow-x: clip;
+}
+
+.lp-root {
+	background: var(--lp-paper);
+	color: var(--lp-ink);
+	--lp-shadow-sheet: 0 1px 2px color-mix(in oklab, var(--lp-ink) 10%, transparent),
+		0 16px 30px -16px color-mix(in oklab, var(--lp-ink) 40%, transparent);
+	--lp-grain: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .5 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Granulado de papel: uma camada fina por cima das faixas, sem pegar nos cliques. */
+.lp-grain {
+	position: relative;
+	isolation: isolate;
+}
+.lp-grain::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	z-index: -1;
+	background-image: var(--lp-grain);
+	opacity: 0.07;
+	pointer-events: none;
+	border-radius: inherit;
+}
+
+/* Folha de papel com sombra caindo para baixo e para a direita. */
+.lp-sheet {
+	box-shadow: var(--lp-shadow-sheet);
+}
+
+/* O botão do Google (e o spinner) viram cartolina: borda grossa embaixo, afunda ao tocar. */
+.lp-cta button {
+	box-shadow: 0 5px 0 0 var(--lp-edge), 0 14px 18px -10px color-mix(in oklab, var(--lp-ink) 35%, transparent);
+	transition: translate 150ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@media (hover: hover) {
+	.lp-cta button:hover:not(:disabled) {
+		translate: 0 -2px;
+		box-shadow: 0 7px 0 0 var(--lp-edge), 0 16px 20px -10px color-mix(in oklab, var(--lp-ink) 35%, transparent);
+	}
+}
+.lp-cta button:active:not(:disabled) {
+	translate: 0 4px;
+	box-shadow: 0 1px 0 0 var(--lp-edge);
+}
+.lp-root :focus-visible {
+	outline-color: var(--lp-ink);
+}
+
+/* Links e botões de texto da landing. */
+.lp-link {
+	display: inline-flex;
+	min-height: 3rem;
+	align-items: center;
+	border-radius: 9999px;
+	padding-inline: 1.25rem;
+	font-family: var(--font-display);
+	font-weight: 600;
+	font-size: 1.125rem;
+	color: var(--lp-ink);
+	box-shadow: inset 0 0 0 2px var(--lp-ink);
+	transition: background-color 150ms cubic-bezier(0.22, 1, 0.36, 1), translate 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@media (hover: hover) {
+	.lp-link:hover {
+		background-color: var(--lp-paper-2);
+	}
+}
+.lp-link:active {
+	translate: 0 2px;
+}
+.lp-link--on-ink {
+	color: var(--lp-paper);
+	box-shadow: inset 0 0 0 2px var(--lp-paper);
+}
+@media (hover: hover) {
+	.lp-link--on-ink:hover {
+		background-color: color-mix(in oklab, var(--lp-paper) 16%, transparent);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.lp-cta button,
+	.lp-link {
+		transition: none;
+	}
+	.lp-cta button:active:not(:disabled),
+	.lp-link:active,
+	.lp-cta button:hover:not(:disabled) {
+		translate: none;
 	}
 }

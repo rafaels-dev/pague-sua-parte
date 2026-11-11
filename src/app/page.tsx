@@ -1,36 +1,19 @@
-"use client";
+import type { Metadata } from "next";
+import { Home } from "@/components/landing/home";
 
-import { useCallback, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { useAuth } from "@/components/auth/auth-provider";
-import { SignInButton } from "@/components/auth/sign-in-button";
-import { LandingView } from "@/components/landing-view";
-import { CircularProgress } from "@/components/ui";
-import { safeReturnPath } from "@/lib/ui/return-to";
+export const metadata: Metadata = {
+	title: { absolute: "PagueSuaParte: divida os gastos da família e pague por Pix" },
+	description:
+		"App grátis e de código aberto para dividir as despesas da família: lance o gasto, veja quanto cada um deve, pague por Pix e anexe o comprovante.",
+	openGraph: {
+		title: "PagueSuaParte: cada um paga a sua parte",
+		description: "Divida os gastos da família e pague tudo por Pix, com comprovante.",
+		locale: "pt_BR",
+		siteName: "PagueSuaParte",
+		type: "website",
+	},
+};
 
-export default function Home() {
-	const router = useRouter();
-	const { user, loading } = useAuth();
-
-	// Depois do login, volta para o endereço que a pessoa tentou abrir (só caminhos do próprio app).
-	const goNext = useCallback(() => {
-		const back = safeReturnPath(new URLSearchParams(window.location.search).get("voltar"));
-		router.replace(back ?? "/app");
-	}, [router]);
-
-	useEffect(() => {
-		if (user) goNext();
-	}, [user, goNext]);
-
-	return (
-		<LandingView footer="Usamos sua conta Google apenas para identificar você.">
-			{loading || user ? (
-				<div className="flex justify-center py-3 text-primary">
-					<CircularProgress />
-				</div>
-			) : (
-				<SignInButton onSignedIn={goNext} />
-			)}
-		</LandingView>
-	);
+export default function Page() {
+	return <Home />;
 }

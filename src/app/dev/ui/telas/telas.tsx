@@ -1,11 +1,19 @@
 "use client";
 
+import { GoogleButtonView } from "@/components/auth/sign-in-button";
+import { LandingView } from "@/components/landing-view";
 import { todayISO } from "@/lib/ui/dates";
 import { nextDayOfMonth } from "@/lib/ui/due-dates";
 import { DUE_GROUPS, MOCK_GROUP, MockExpense, MockGroup, MockHome, MockManagedSheet, MockNewExpense, MockNoPixKey, MockReport } from "../expense-mocks";
 
 export function Telas({ tela }: Readonly<{ tela: string }>) {
 	switch (tela) {
+		case "landing":
+			return (
+				<LandingView footer="Usamos sua conta Google apenas para identificar você.">
+					<GoogleButtonView />
+				</LandingView>
+			);
 		case "grupo-vazio":
 			return <MockGroup empty framed={false} />;
 		case "nova":
