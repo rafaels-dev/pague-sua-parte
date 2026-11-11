@@ -1,6 +1,9 @@
 import type { ShareStatus, YourStatus } from "@/lib/ui/expense-status";
 import type { PixKeyType } from "@/lib/pix/key";
 import type { ManagedShareSummary, OwnerView } from "@/lib/ui/managed";
+import { normalizeRecurrenceRef, type RecurrenceRef } from "@/components/recurrences/types";
+
+export type { RecurrenceRef };
 
 export type ExpenseSummary = {
 	id: string;
@@ -26,6 +29,8 @@ export type ExpenseSummary = {
 	dueDate: string | null;
 	/** Parcela de uma compra parcelada; null = despesa comum. */
 	installment: InstallmentRef | null;
+	/** Criada por uma despesa fixa (todo mês); null = despesa comum. */
+	recurrence: RecurrenceRef | null;
 	/** Venceu e ainda está em aberto. */
 	overdue: boolean;
 	/** Nada mais a pagar nem a devolver (vai para "Quitadas"). */
@@ -98,6 +103,8 @@ export type ExpenseDetailData = {
 	attachments: ExpenseAttachment[];
 	dueDate: string | null;
 	installment: InstallmentRef | null;
+	/** Criada por uma despesa fixa (todo mês); null = despesa comum. */
+	recurrence: RecurrenceRef | null;
 	overdue: boolean;
 	/** Todas as parcelas da compra (só quando é parcelada). */
 	series: ExpenseSeries | null;
@@ -189,6 +196,7 @@ export function normalizeExpense(raw: Loose<Omit<ExpenseDetailData, "shares">> &
 		attachments: raw.attachments ?? [],
 		dueDate: dueOrNull(raw.dueDate),
 		installment: normalizeInstallment(raw.installment),
+		recurrence: normalizeRecurrenceRef(raw.recurrence),
 		overdue: !!raw.overdue,
 		series: normalizeSeries(raw.series),
 		helpAsUids: Array.isArray(raw.helpAsUids) ? (raw.helpAsUids as unknown[]).filter((u): u is string => typeof u === "string") : [],
@@ -223,6 +231,7 @@ export function normalizeSummary(raw: Loose<ExpenseSummary> & Record<string, unk
 		yourStatus,
 		dueDate: dueOrNull(raw.dueDate),
 		installment: normalizeInstallment(raw.installment),
+		recurrence: normalizeRecurrenceRef(raw.recurrence),
 		overdue: !!raw.overdue,
 		canHelp: !!raw.canHelp,
 		ownerAlone: !!raw.ownerAlone,

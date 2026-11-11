@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { installmentSplitLine, splitPreview } from "./split-preview";
+import { installmentSplitLine, monthlySplitLine, splitPreview } from "./split-preview";
 
 describe("splitPreview", () => {
 	it("vazio sem valor ou sem gente", () => {
@@ -35,5 +35,12 @@ describe("installmentSplitLine", () => {
 	it("por pessoa em cada parcela", () => {
 		expect(installmentSplitLine({ baseCents: 3000, people: 4 })).toBe("Fica R$ 30,00 por pessoa em cada parcela");
 		expect(installmentSplitLine({ baseCents: 3000, people: 1 })).toBe("Fica R$ 30,00 para a pessoa escolhida em cada parcela");
+	});
+});
+
+describe("monthlySplitLine", () => {
+	it("por pessoa ou para a pessoa escolhida", () => {
+		expect(monthlySplitLine({ baseCents: 30000, people: 4 })).toBe("Fica R$ 300,00 por pessoa em cada mês");
+		expect(monthlySplitLine({ baseCents: 30000, people: 1 })).toBe("Fica R$ 300,00 para a pessoa escolhida em cada mês");
 	});
 });

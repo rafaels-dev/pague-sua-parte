@@ -33,6 +33,15 @@ try {
 		),
 	);
 	console.log("expenses:", await expenses.createIndex({ "attachments.key": 1 }, { name: "attachment_key" }));
+	console.log(
+		"expenses:",
+		await expenses.createIndex(
+			{ "recurrence.id": 1, "recurrence.period": 1 },
+			{ name: "recurrence_period_unique", unique: true, partialFilterExpression: { "recurrence.id": { $type: "string" } } },
+		),
+	);
+	const recurrences = client.db(dbName).collection("recurrences");
+	console.log("recurrences:", await recurrences.createIndex({ groupId: 1, active: 1, nextPeriod: 1 }, { name: "group_active_next" }));
 } catch (err) {
 	console.error("Falha ao criar índices:", err instanceof Error ? err.name : "erro desconhecido");
 	process.exitCode = 1;

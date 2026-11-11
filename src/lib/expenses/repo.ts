@@ -10,6 +10,7 @@ import {
 	type AttachmentMeta,
 	type AttachmentStore,
 } from "@/lib/storage/attachments";
+import { materializeSafely } from "@/lib/recurrences/materialize";
 import { usersCollection, type UserDoc } from "@/lib/users/repo";
 import { getBalancesForUids, sumBalances, ZERO_BALANCE } from "./balances";
 import { installmentDueDates, isPastDue, todayInSaoPaulo } from "./dates";
@@ -55,10 +56,13 @@ export type ExpenseDoc = {
 	dueDate?: string;
 	/** Presente quando a despesa é uma parcela de uma série. */
 	installment?: InstallmentInfo;
+	/** Presente quando a despesa foi gerada por uma despesa fixa: o mês (YYYY-MM) a que se refere. */
+	recurrence?: RecurrenceRef;
 	createdAt: Date;
 	updatedAt: Date;
 };
 
+export type RecurrenceRef = { id: string; period: string };
 export type InstallmentInfo = { seriesId: string; number: number; count: number };
 
 export function expensesCollection(db: Db) {
@@ -174,6 +178,7 @@ export type ExpenseDetail = {
 	attachments: { id: string; name: string; contentType: string; size: number }[];
 	dueDate: string | null;
 	installment: InstallmentInfo | null;
+	recurrence: RecurrenceRef | null;
 	/** Venceu (antes de hoje, em São Paulo) e ainda há cota de outra pessoa com valor em aberto. */
 	overdue: boolean;
 	/** Todas as parcelas da série que ainda existem, em ordem. */
@@ -290,6 +295,7 @@ async function toDetail(db: Db, e: ExpenseDoc, group: GroupDoc, uid: string, now
 		attachments: e.attachments.map((a) => ({ id: a.id, name: a.name, contentType: a.contentType, size: a.size })),
 		dueDate: e.dueDate ?? null,
 		installment: e.installment ?? null,
+		recurrence: e.recurrence ?? null,
 		overdue: isOverdue(e, todayInSaoPaulo(now)),
 		series: await seriesOf(db, e, known),
 	};
@@ -439,6 +445,7 @@ export type ExpenseListItem = {
 	ownerView: { pendingCount: number; refundCount: number } | null;
 	dueDate: string | null;
 	installment: InstallmentInfo | null;
+	recurrence: RecurrenceRef | null;
 	overdue: boolean;
 	/** Sem valor a receber nem a devolver para ninguém. */
 	settled: boolean;
@@ -482,6 +489,7 @@ const listPipeline = (groupId: ObjectId) => [
 export async function listExpenses(db: Db, groupId: string, uid: string, now: Date = new Date()): Promise<ExpenseListItem[] | null> {
 	const group = await findMemberGroup(db, groupId, uid);
 	if (!group) return null;
+	await materializeSafely(db, [group._id], now);
 	const today = todayInSaoPaulo(now);
 	const docs = await expensesCollection(db).aggregate<ExpenseDoc>(listPipeline(new ObjectId(groupId))).toArray();
 	const people = await loadPeople(db, [...new Set(docs.map((d) => d.paidBy))]);
@@ -516,6 +524,7 @@ export async function listExpenses(db: Db, groupId: string, uid: string, now: Da
 			ownerView: dir.youManage(d.paidBy) ? { pendingCount, refundCount } : null,
 			dueDate: d.dueDate ?? null,
 			installment: d.installment ?? null,
+			recurrence: d.recurrence ?? null,
 			overdue: isOverdue(d, today),
 			settled: fullySettled(d),
 			...(({ canHelp, ownerAlone, helpShareCents }) => ({ canHelp, ownerAlone, helpShareCents }))(helpInfo(d, group.members, uid)),
@@ -939,6 +948,7 @@ export async function getSummary(db: Db, uid: string, now: Date = new Date()): P
 	const groups = await groupsCollection(db)
 		.find({ "members.uid": uid }, { projection: { _id: 1, name: 1, members: 1 } })
 		.toArray();
+	await materializeSafely(db, groups.map((g) => g._id), now);
 	const managedList = groups.flatMap((g) =>
 		g.members
 			.filter((m) => m.kind === "managed" && m.managedBy === uid)

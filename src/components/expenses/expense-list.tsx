@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
-import { Button, EmptyState, Fab, Icon, List, ListItem, Skeleton } from "@/components/ui";
+import { Button, EmptyState, Fab, Icon, List, ListItem, Skeleton, StatusChip } from "@/components/ui";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { formatBRL } from "@/lib/money";
 import { formatDateShort, todayISO } from "@/lib/ui/dates";
 import { dueShort, installmentShort } from "@/lib/ui/due-dates";
 import { listStatus, paidByLabel } from "@/lib/ui/expense-status";
 import { managedLines, ownerViewStatus } from "@/lib/ui/managed";
+import { RECURRING_CHIP } from "@/lib/ui/recurrences";
 import { cx } from "@/lib/ui/cx";
 import { normalizeSummary, type ExpenseSummary } from "./types";
 
@@ -30,7 +31,7 @@ function ExpenseRow({ groupId, e, today }: Readonly<{ groupId: string; e: Expens
 			href={`/app/grupos/${encodeURIComponent(groupId)}/despesas/${encodeURIComponent(e.id)}`}
 			leading={
 				<span className="flex size-12 shrink-0 items-center justify-center rounded-full bg-secondary-container text-on-secondary-container">
-					<Icon name={e.installment ? "calendar_today" : "receipt_long"} />
+					<Icon name={e.installment || e.recurrence ? "calendar_today" : "receipt_long"} />
 				</span>
 			}
 			headline={e.description}
@@ -47,6 +48,11 @@ function ExpenseRow({ groupId, e, today }: Readonly<{ groupId: string; e: Expens
 									<span className="whitespace-nowrap">{t}</span>
 								</span>
 							))}
+						</span>
+					)}
+					{e.recurrence && (
+						<span className="block pt-1">
+							<StatusChip tone="neutral">{RECURRING_CHIP}</StatusChip>
 						</span>
 					)}
 					{e.canHelp && (

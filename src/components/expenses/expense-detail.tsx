@@ -12,6 +12,7 @@ import { buildPixPayload } from "@/lib/pix/brcode";
 import { copyText } from "@/lib/ui/clipboard";
 import { formatDateLong, formatDateShort, todayISO } from "@/lib/ui/dates";
 import { deleteFlashMessage, dueLong, installmentLabel } from "@/lib/ui/due-dates";
+import { RECURRING_CHIP } from "@/lib/ui/recurrences";
 import { isImageType } from "@/lib/ui/attachments";
 import { buildExpenseLink, buildExpenseShareText, buildPaidShareText, shareIntro } from "@/lib/ui/expense-share";
 import { paidByLabel, shareStatusChip } from "@/lib/ui/expense-status";
@@ -316,9 +317,10 @@ export function ExpenseDetailView({
 	return (
 		<div className="mx-auto max-w-2xl space-y-6">
 			<header className="space-y-1">
-				{expense.installment && (
-					<p className="pb-1">
-						<StatusChip tone="neutral">{installmentLabel(expense.installment)}</StatusChip>
+				{(expense.installment || expense.recurrence) && (
+					<p className="flex flex-wrap gap-2 pb-1">
+						{expense.installment && <StatusChip tone="neutral">{installmentLabel(expense.installment)}</StatusChip>}
+						{expense.recurrence && <StatusChip tone="neutral">{RECURRING_CHIP}</StatusChip>}
 					</p>
 				)}
 				<h1 className="break-words text-headline-medium md:text-headline-large">{expense.description}</h1>

@@ -1,5 +1,6 @@
 import { ObjectId, type Db } from "mongodb";
 import { directory, expensesCollection, findMemberGroup, loadPeople } from "@/lib/expenses/repo";
+import { materializeSafely } from "@/lib/recurrences/materialize";
 import { fairnessPercent, reportPipeline, type Facet } from "./compute";
 import { dateFilter, periodKey, type Period } from "./period";
 
@@ -42,6 +43,7 @@ export type ReportResult = { status: "ok"; report: Report } | { status: "no_grou
 export async function getGroupReport(db: Db, groupId: string, uid: string, period: Period): Promise<ReportResult> {
 	const group = await findMemberGroup(db, groupId, uid);
 	if (!group) return { status: "no_group" };
+	await materializeSafely(db, [group._id]);
 	const [facet] = await expensesCollection(db)
 		.aggregate<Facet>(reportPipeline({ groupId: new ObjectId(groupId), ...dateFilter(period) }))
 		.toArray();

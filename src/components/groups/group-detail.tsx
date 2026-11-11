@@ -6,6 +6,17 @@ import { Avatar, Button, EmptyState, Icon, IconButton, List, ListItem, Sheet, Sk
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { ExpenseList } from "@/components/expenses/expense-list";
 import { clearFlash, peekFlash } from "@/components/expenses/types";
+import {
+	RecurrenceEditContent,
+	RecurrenceEndContent,
+	RecurrenceOptionsContent,
+	RecurrencesDetails,
+	type RecurrenceFormErrors,
+	type RecurrencesState,
+} from "@/components/recurrences/recurrence-list";
+import { normalizeRecurrences, type Recurrence } from "@/components/recurrences/types";
+import { todayISO } from "@/lib/ui/dates";
+import { endPeriodProblem, firstDueDate, periodOf } from "@/lib/ui/recurrences";
 import { detectPixKeyType } from "@/lib/pix/key";
 import { managedCaption } from "@/lib/ui/managed";
 import { InvitePanel } from "./invite-panel";
@@ -38,6 +49,7 @@ export function GroupDetailView({
 	group,
 	invite,
 	addManaged,
+	recurrences,
 	expenses,
 	onMemberOptions,
 }: Readonly<{
@@ -45,6 +57,8 @@ export function GroupDetailView({
 	invite: React.ReactNode;
 	/** Ação "Adicionar pessoa sem celular" (só administradores). */
 	addManaged?: React.ReactNode;
+	/** Linha recolhida "Despesas fixas (N)"; some sozinha quando não há nenhuma. */
+	recurrences?: React.ReactNode;
 	expenses: React.ReactNode;
 	onMemberOptions?: (member: Member) => void;
 }>) {
@@ -108,6 +122,8 @@ export function GroupDetailView({
 				</div>
 			</details>
 
+			{recurrences}
+
 			{expenses}
 		</div>
 	);
@@ -131,6 +147,8 @@ type Sheet =
 	| { kind: "add" }
 	| { kind: "options" | "edit" | "carer"; uid: string };
 
+type RecSheet = { kind: "options" | "edit" | "end"; id: string };
+
 export function GroupDetail({ id }: Readonly<{ id: string }>) {
 	const { user } = useAuth();
 	const [group, setGroup] = useState<Group | null>(null);
@@ -148,6 +166,16 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 	// Começa com o recado deixado pela tela anterior (ex.: "Despesa apagada."), se houver.
 	const [snack, setSnack] = useState<string | null>(() => peekFlash());
 	const openedFromLink = useRef(false);
+	// Despesas fixas: lista e o sheet de opções / edição / encerrar.
+	const [recurrences, setRecurrences] = useState<RecurrencesState>({ kind: "loading" });
+	const [recSheet, setRecSheet] = useState<RecSheet | null>(null);
+	const [recDescription, setRecDescription] = useState("");
+	const [recAmount, setRecAmount] = useState(0);
+	const [recDay, setRecDay] = useState(1);
+	const [recEnd, setRecEnd] = useState<string | null>(null);
+	const [recErrors, setRecErrors] = useState<RecurrenceFormErrors>({});
+	const [recBusy, setRecBusy] = useState(false);
+	const [recEndError, setRecEndError] = useState<string | null>(null);
 
 	useEffect(() => {
 		clearFlash(); // o recado já foi lido ao criar o estado
@@ -181,6 +209,90 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 			cancelled = true;
 		};
 	}, [user, id, reloadKey]);
+
+	useEffect(() => {
+		if (!user) return;
+		let cancelled = false;
+		apiFetch<unknown>(`/api/groups/${encodeURIComponent(id)}/recurrences`)
+			.then((r) => {
+				if (!cancelled) setRecurrences({ kind: "ready", items: normalizeRecurrences(r) });
+			})
+			.catch((e) => {
+				if (cancelled) return;
+				// Servidor sem o recurso (404/501) ou qualquer falha: a linha simplesmente não aparece.
+				void e;
+				setRecurrences({ kind: "unavailable" });
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [user, id, reloadKey]);
+
+	const recSelected = recSheet && recurrences.kind === "ready" ? (recurrences.items.find((r) => r.id === recSheet.id) ?? null) : null;
+
+	function openRecSheet(kind: RecSheet["kind"], r: Recurrence) {
+		setRecDescription(r.description);
+		setRecAmount(r.amountCents);
+		setRecDay(r.dayOfMonth);
+		setRecEnd(r.endPeriod);
+		setRecErrors({});
+		setRecEndError(null);
+		setRecSheet({ kind, id: r.id });
+	}
+
+	function closeRecSheet() {
+		if (recBusy) return;
+		setRecSheet(null);
+	}
+
+	async function saveRecurrence(r: Recurrence) {
+		const errors: RecurrenceFormErrors = {};
+		const desc = recDescription.trim();
+		if (!desc) errors.description = "Escreva o que é a despesa.";
+		if (recAmount <= 0) errors.amount = "Digite o valor de cada mês.";
+		const endProblem = endPeriodProblem(recEnd, r.nextDueDate || firstDueDate(todayISO(), recDay));
+		if (endProblem) errors.endPeriod = endProblem;
+		setRecErrors(errors);
+		if (Object.keys(errors).length > 0) return;
+		const patch: Record<string, unknown> = {};
+		if (desc !== r.description) patch.description = desc;
+		if (recAmount !== r.amountCents) patch.amountCents = recAmount;
+		if (recDay !== r.dayOfMonth) patch.dayOfMonth = recDay;
+		if (recEnd !== r.endPeriod) patch.endPeriod = recEnd;
+		if (Object.keys(patch).length === 0) return setRecSheet(null);
+		setRecBusy(true);
+		try {
+			await apiFetch(`/api/groups/${encodeURIComponent(id)}/recurrences/${encodeURIComponent(r.id)}`, { method: "PATCH", body: JSON.stringify(patch) });
+			setRecSheet(null);
+			setSnack("Salvo! Vale para os próximos meses.");
+			setReloadKey((k) => k + 1);
+		} catch (e) {
+			if (e instanceof ApiError) {
+				if (e.status === 404 || e.status === 501) setRecErrors({ form: "Despesas fixas ainda não estão disponíveis. Tente de novo mais tarde." });
+				else {
+					const key = { description: "description", amountCents: "amount", dayOfMonth: "dayOfMonth", endPeriod: "endPeriod" }[e.field ?? ""] as keyof RecurrenceFormErrors | undefined;
+					setRecErrors({ [key ?? "form"]: e.message });
+				}
+			} else setRecErrors({ form: "Não foi possível salvar. Tente de novo." });
+		} finally {
+			setRecBusy(false);
+		}
+	}
+
+	async function endRecurrence(r: Recurrence) {
+		setRecBusy(true);
+		setRecEndError(null);
+		try {
+			await apiFetch(`/api/groups/${encodeURIComponent(id)}/recurrences/${encodeURIComponent(r.id)}`, { method: "DELETE" });
+			setRecSheet(null);
+			setSnack("Despesa fixa encerrada.");
+			setReloadKey((k) => k + 1);
+		} catch (e) {
+			setRecEndError(e instanceof ApiError && e.status !== 404 && e.status !== 501 ? e.message : "Não foi possível encerrar agora. Tente de novo mais tarde.");
+		} finally {
+			setRecBusy(false);
+		}
+	}
 
 	const selected = sheet && sheet.kind !== "add" ? (group?.members.find((m) => m.uid === sheet.uid) ?? null) : null;
 
@@ -304,9 +416,57 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 				group={group}
 				invite={<InvitePanel groupId={group.id} groupName={group.name} isAdmin={isAdmin} />}
 				addManaged={isAdmin ? <AddManagedButton onClick={() => openSheet({ kind: "add" })} /> : undefined}
+				recurrences={<RecurrencesDetails state={recurrences} onOptions={(r) => openRecSheet("options", r)} />}
 				expenses={<ExpenseList groupId={group.id} />}
 				onMemberOptions={(m) => openSheet({ kind: "options", uid: m.uid }, m)}
 			/>
+			<Sheet
+				open={!!recSelected}
+				onClose={closeRecSheet}
+				title={recSheet?.kind === "edit" ? "Mudar despesa fixa" : recSheet?.kind === "end" ? "Encerrar despesa fixa?" : (recSelected?.description ?? "")}
+			>
+				{recSelected && recSheet?.kind === "options" && (
+					<RecurrenceOptionsContent recurrence={recSelected} onEdit={() => openRecSheet("edit", recSelected)} onEnd={() => openRecSheet("end", recSelected)} />
+				)}
+				{recSelected && recSheet?.kind === "edit" && (
+					<RecurrenceEditContent
+						description={recDescription}
+						amountCents={recAmount}
+						dayOfMonth={recDay}
+						endPeriod={recEnd}
+						minEnd={periodOf(recSelected.nextDueDate || firstDueDate(todayISO(), recDay))}
+						errors={recErrors}
+						busy={recBusy}
+						onDescription={(v) => {
+							setRecDescription(v);
+							setRecErrors((e) => ({ ...e, description: undefined }));
+						}}
+						onAmount={(c) => {
+							setRecAmount(c);
+							setRecErrors((e) => ({ ...e, amount: undefined }));
+						}}
+						onDay={(n) => {
+							setRecDay(n);
+							setRecErrors((e) => ({ ...e, dayOfMonth: undefined }));
+						}}
+						onEndPeriod={(v) => {
+							setRecEnd(v);
+							setRecErrors((e) => ({ ...e, endPeriod: undefined }));
+						}}
+						onSubmit={() => void saveRecurrence(recSelected)}
+						onCancel={() => openRecSheet("options", recSelected)}
+					/>
+				)}
+				{recSelected && recSheet?.kind === "end" && (
+					<RecurrenceEndContent
+						recurrence={recSelected}
+						busy={recBusy}
+						error={recEndError}
+						onConfirm={() => void endRecurrence(recSelected)}
+						onCancel={() => openRecSheet("options", recSelected)}
+					/>
+				)}
+			</Sheet>
 			<Sheet
 				open={sheet !== null && (sheet.kind === "add" || !!selected)}
 				onClose={closeSheet}

@@ -313,7 +313,8 @@ body {
 	 * Campo de data no iPhone: o Safari dá ao campo uma largura mínima própria e ele passa da tela,
 	 * criando rolagem para o lado. Sem a aparência nativa ele respeita a largura do formulário.
 	 */
-	input[type="date"] {
+	input[type="date"],
+	input[type="month"] {
 		-webkit-appearance: none;
 		appearance: none;
 		/* flex (e não block): é o que mantém o texto da data centralizado na altura do campo no Safari. */
@@ -322,7 +323,8 @@ body {
 		min-width: 0;
 		max-width: 100%;
 	}
-	input[type="date"]::-webkit-date-and-time-value {
+	input[type="date"]::-webkit-date-and-time-value,
+	input[type="month"]::-webkit-date-and-time-value {
 		text-align: left;
 	}
 

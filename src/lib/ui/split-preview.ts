@@ -41,3 +41,8 @@ export function splitPreview(amountCents: number, participantUids: string[], pay
 export function installmentSplitLine(p: { baseCents: number; people: number }): string {
 	return p.people === 1 ? `Fica ${formatBRL(p.baseCents)} para a pessoa escolhida em cada parcela` : `Fica ${formatBRL(p.baseCents)} por pessoa em cada parcela`;
 }
+
+/** "Fica R$ 300,00 por pessoa em cada mês" (despesa fixa). */
+export function monthlySplitLine(p: { baseCents: number; people: number }): string {
+	return p.people === 1 ? `Fica ${formatBRL(p.baseCents)} para a pessoa escolhida em cada mês` : `Fica ${formatBRL(p.baseCents)} por pessoa em cada mês`;
+}

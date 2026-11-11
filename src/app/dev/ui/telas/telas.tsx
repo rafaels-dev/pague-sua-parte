@@ -4,7 +4,7 @@ import { GoogleButtonView } from "@/components/auth/sign-in-button";
 import { LandingView } from "@/components/landing-view";
 import { todayISO } from "@/lib/ui/dates";
 import { nextDayOfMonth } from "@/lib/ui/due-dates";
-import { DUE_GROUPS, MOCK_GROUP, MockExpense, MockGroup, MockHome, MockManagedSheet, MockNewExpense, MockNoPixKey, MockReport } from "../expense-mocks";
+import { DUE_GROUPS, MOCK_GROUP, MockExpense, MockGroup, MockHome, MockManagedSheet, MockNewExpense, MockNoPixKey, MockRecurrenceSheet, MockReport } from "../expense-mocks";
 
 export function Telas({ tela }: Readonly<{ tela: string }>) {
 	switch (tela) {
@@ -189,6 +189,40 @@ export function Telas({ tela }: Readonly<{ tela: string }>) {
 					]}
 				/>
 			);
+		case "fixa-nova":
+			return <MockNewExpense framed={false} initial={{ amountCents: 120000, description: "Aluguel da casa da vó" }} pay={{ payment: "monthly", dayOfMonth: 25 }} />;
+		case "fixa-nova-fim":
+			return <MockNewExpense framed={false} initial={{ amountCents: 32000, description: "Cuidadora de sábado" }} pay={{ payment: "monthly", dayOfMonth: 31, endPeriod: "" }} errors={{ endPeriod: "Escolha o mês em que termina." }} />;
+		case "fixa-nova-erro-dia":
+			return (
+				<MockNewExpense
+					framed={false}
+					initial={{ amountCents: 120000, description: "Aluguel da casa da vó" }}
+					pay={{ payment: "monthly", dayOfMonth: 25 }}
+					errors={{ dayOfMonth: "O dia precisa ser de 1 a 31." }}
+				/>
+			);
+		case "fixa-nova-indisponivel":
+			return (
+				<MockNewExpense
+					framed={false}
+					initial={{ amountCents: 120000, description: "Aluguel da casa da vó" }}
+					pay={{ payment: "monthly", dayOfMonth: 25 }}
+					errors={{ form: "Despesas fixas ainda não estão disponíveis. Tente de novo mais tarde." }}
+				/>
+			);
+		case "grupo-fixas-fechado":
+			return <MockGroup framed={false} fixed="closed" />;
+		case "grupo-fixas-aberto":
+			return <MockGroup framed={false} fixed="open" />;
+		case "fixa-opcoes":
+			return <MockRecurrenceSheet framed={false} view="options" />;
+		case "fixa-editar":
+			return <MockRecurrenceSheet framed={false} view="edit" />;
+		case "fixa-encerrar":
+			return <MockRecurrenceSheet framed={false} view="end" />;
+		case "despesa-todo-mes":
+			return <MockExpense mode="monthly" framed={false} />;
 		default:
 			return <MockGroup framed={false} />;
 	}

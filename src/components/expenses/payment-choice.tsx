@@ -1,10 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { Card, Icon, SegmentedButton, TextField } from "@/components/ui";
-import { cx } from "@/lib/ui/cx";
+import { Card, SegmentedButton, TextField } from "@/components/ui";
+import { DayStepper, EndPeriodField, firstMonthOf, MonthlySummary, NumberStepper } from "@/components/recurrences/fields";
 import {
-	clampInstallments,
 	dueMonthsShort,
 	installmentSchedule,
 	installmentTotalLine,
@@ -12,12 +10,13 @@ import {
 	MIN_INSTALLMENTS,
 } from "@/lib/ui/due-dates";
 
-/** Como a compra foi paga: à vista em dinheiro, cartão (pede a data da próxima fatura) ou Pix; ou parcelado (uma despesa por mês). */
-export type PaymentKind = "cash" | "card" | "pix" | "installments";
+/** Como a compra foi paga: à vista em dinheiro, cartão (pede a data da próxima fatura) ou Pix; parcelado (uma despesa por mês); ou "todo mês" (despesa fixa que o servidor lança sozinho a cada mês). */
+export type PaymentKind = "cash" | "card" | "pix" | "installments" | "monthly";
 
 const MODES = [
 	{ value: "once", label: "À vista" },
 	{ value: "installments", label: "Parcelado" },
+	{ value: "monthly", label: "Todo mês" },
 ] as const;
 
 const METHODS = [
@@ -39,75 +38,22 @@ function DueDateField({
 	return <TextField id={id} type="date" floatLabel label={label} value={value} min={min} onChange={(e) => onChange(e.target.value)} error={error} supportingText={helper} />;
 }
 
-const STEP_BUTTON =
-	"state-layer flex size-14 shrink-0 select-none items-center justify-center rounded-full bg-secondary-container text-on-secondary-container disabled:opacity-40";
-
 /** "Quantas parcelas?": botões grandes de − e + e o número no meio, que também aceita digitação. */
 export function InstallmentStepper({ id = "campo-parcelas", value, error, onChange }: Readonly<{ id?: string; value: number; error?: string; onChange: (n: number) => void }>) {
-	// Enquanto a pessoa digita, o texto pode estar incompleto ("" ou "1"); o valor oficial só muda quando é válido.
-	const [draft, setDraft] = useState<string | null>(null);
-	const helpId = `${id}-ajuda`;
 	return (
-		<div>
-			<label htmlFor={id} className="mb-2 block text-title-medium text-on-surface-variant">
-				Quantas parcelas?
-			</label>
-			<div className="flex items-center gap-3">
-				<button
-					type="button"
-					aria-label="Menos uma parcela"
-					disabled={value <= MIN_INSTALLMENTS}
-					onClick={() => {
-						setDraft(null);
-						onChange(clampInstallments(value - 1));
-					}}
-					className={STEP_BUTTON}
-				>
-					<Icon name="remove" size={28} />
-				</button>
-				<input
-					id={id}
-					type="text"
-					inputMode="numeric"
-					autoComplete="off"
-					enterKeyHint="done"
-					maxLength={2}
-					value={draft ?? String(value)}
-					aria-invalid={error ? true : undefined}
-					aria-describedby={error ? helpId : undefined}
-					onFocus={(e) => e.currentTarget.select()}
-					onChange={(e) => {
-						const digits = e.target.value.replace(/\D/g, "").slice(0, 2);
-						setDraft(digits);
-						const n = Number(digits);
-						if (digits && n >= MIN_INSTALLMENTS && n <= MAX_INSTALLMENTS) onChange(n);
-					}}
-					onBlur={() => {
-						if (draft !== null && draft !== "") onChange(clampInstallments(Number(draft)));
-						setDraft(null);
-					}}
-					className={cx(
-						"money h-14 w-0 min-w-0 flex-1 rounded-shape-sm border bg-transparent px-2 text-center text-headline-small font-bold text-on-surface outline-none transition-[border-color,box-shadow] duration-150",
-						error ? "border-error" : "border-outline hover:border-on-surface focus:border-primary focus:shadow-[inset_0_0_0_1px_var(--md-primary)]",
-					)}
-				/>
-				<button
-					type="button"
-					aria-label="Mais uma parcela"
-					disabled={value >= MAX_INSTALLMENTS}
-					onClick={() => {
-						setDraft(null);
-						onChange(clampInstallments(value + 1));
-					}}
-					className={STEP_BUTTON}
-				>
-					<Icon name="add" size={28} />
-				</button>
-			</div>
-			<p id={helpId} role={error ? "alert" : undefined} className={cx("px-1 pt-1 text-body-large", error ? "text-error" : "text-on-surface-variant")}>
-				{error ?? `De ${MIN_INSTALLMENTS} a ${MAX_INSTALLMENTS} parcelas, uma por mês`}
-			</p>
-		</div>
+		<NumberStepper
+			id={id}
+			label="Quantas parcelas?"
+			value={value}
+			min={MIN_INSTALLMENTS}
+			max={MAX_INSTALLMENTS}
+			fallback={MIN_INSTALLMENTS}
+			help={`De ${MIN_INSTALLMENTS} a ${MAX_INSTALLMENTS} parcelas, uma por mês`}
+			error={error}
+			lessLabel="Menos uma parcela"
+			moreLabel="Mais uma parcela"
+			onChange={onChange}
+		/>
 	);
 }
 
@@ -140,6 +86,10 @@ export function PaymentChoice({
 	onInstallments,
 	amountCents,
 	purchaseDate,
+	dayOfMonth,
+	onDayOfMonth,
+	endPeriod,
+	onEndPeriod,
 	errors,
 }: Readonly<{
 	payment: PaymentKind;
@@ -151,21 +101,27 @@ export function PaymentChoice({
 	amountCents: number;
 	/** Dia da compra: a fatura ou a primeira parcela não podem vencer antes dele. */
 	purchaseDate: string;
-	errors: { dueDate?: string; installments?: string };
+	/** Despesa fixa: dia do mês (1 a 31). */
+	dayOfMonth: number;
+	onDayOfMonth: (n: number) => void;
+	/** Despesa fixa: null = sem fim; "" = quer escolher o mês e ainda não escolheu; "2027-03" = mês final. */
+	endPeriod: string | null;
+	onEndPeriod: (v: string | null) => void;
+	errors: { dueDate?: string; installments?: string; dayOfMonth?: string; endPeriod?: string };
 }>) {
 	return (
 		<fieldset className="min-w-0 space-y-3">
-			<legend className="mb-2 text-title-medium text-on-surface-variant">Como foi pago?</legend>
+			<legend className="mb-2 text-title-medium text-on-surface-variant">{payment === "monthly" ? "Como é pago?" : "Como foi pago?"}</legend>
 			<SegmentedButton
 				label="Como foi pago?"
-				value={payment === "installments" ? "installments" : "once"}
+				value={payment === "installments" || payment === "monthly" ? payment : "once"}
 				options={MODES}
 				onChange={(m) => {
-					if (m === "installments") onPayment("installments");
-					else if (payment === "installments") onPayment("cash");
+					if (m === "installments" || m === "monthly") onPayment(m);
+					else if (payment === "installments" || payment === "monthly") onPayment("cash");
 				}}
 			/>
-			{payment !== "installments" && (
+			{payment !== "installments" && payment !== "monthly" && (
 				<div className="space-y-3 pt-1">
 					<p className="text-title-medium text-on-surface-variant">Forma de pagamento</p>
 					<SegmentedButton label="Forma de pagamento" value={payment} options={METHODS} onChange={onPayment} />
@@ -195,6 +151,13 @@ export function PaymentChoice({
 						onChange={onDueDate}
 					/>
 					<InstallmentSummary amountCents={amountCents} count={installments} firstDue={dueDate} />
+				</div>
+			)}
+			{payment === "monthly" && (
+				<div className="space-y-5 pt-1">
+					<DayStepper value={dayOfMonth} error={errors.dayOfMonth} onChange={onDayOfMonth} />
+					<MonthlySummary amountCents={amountCents} day={dayOfMonth} />
+					<EndPeriodField value={endPeriod} min={firstMonthOf(dayOfMonth)} error={errors.endPeriod} onChange={onEndPeriod} />
 				</div>
 			)}
 		</fieldset>

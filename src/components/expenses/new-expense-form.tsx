@@ -12,7 +12,8 @@ import { formatBRL } from "@/lib/money";
 import { profileUrlFor } from "@/lib/ui/return-to";
 import { formatDateShort, isValidISODate, todayISO } from "@/lib/ui/dates";
 import { isValidDueDate } from "@/lib/ui/due-dates";
-import { installmentSplitLine, splitPreview } from "@/lib/ui/split-preview";
+import { clampDay, createdFlash, DEFAULT_DAY, endPeriodProblem, firstDueDate } from "@/lib/ui/recurrences";
+import { installmentSplitLine, monthlySplitLine, splitPreview } from "@/lib/ui/split-preview";
 import { cx } from "@/lib/ui/cx";
 import { AttachmentPicker } from "./attachment-picker";
 import { PaymentChoice, type PaymentKind } from "./payment-choice";
@@ -20,7 +21,7 @@ import { setFlash } from "./types";
 import { useAttachments } from "./use-attachments";
 import { WhoSplits, type SplitMode } from "./who-splits";
 
-export type FormErrors = Partial<Record<"amount" | "description" | "date" | "dueDate" | "installments" | "participants" | "files" | "form", string>>;
+export type FormErrors = Partial<Record<"amount" | "description" | "date" | "dueDate" | "installments" | "dayOfMonth" | "endPeriod" | "participants" | "files" | "form", string>>;
 
 /** Aviso exibido no lugar do formulário quando a pessoa ainda não cadastrou a chave Pix. */
 export function NoPixKeyBlock({ returnTo }: Readonly<{ returnTo?: string }> = {}) {
@@ -77,6 +78,10 @@ export type NewExpenseFormViewProps = {
 	/** Data da próxima fatura (cartão) ou vencimento da primeira parcela (parcelado). */
 	dueDate: string;
 	installments: number;
+	/** Despesa fixa ("Todo mês"): dia do mês. */
+	dayOfMonth: number;
+	/** Despesa fixa: null = sem fim; "" = vai escolher o mês; "2027-03" = mês final. */
+	endPeriod: string | null;
 	selected: string[];
 	splitMode: SplitMode;
 	errors: FormErrors;
@@ -91,6 +96,8 @@ export type NewExpenseFormViewProps = {
 	onPayment: (p: PaymentKind) => void;
 	onDueDate: (v: string) => void;
 	onInstallments: (n: number) => void;
+	onDayOfMonth: (n: number) => void;
+	onEndPeriod: (v: string | null) => void;
 	onToggle: (uid: string) => void;
 	onSplitMode: (m: SplitMode) => void;
 	onSubmit: () => void;
@@ -106,21 +113,23 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 	const onlyPayer = p.selected.length === 1 && p.selected[0] === payer?.uid;
 	const payerUid = payer?.uid ?? "";
 	const payerName = payerIsManaged ? payer?.name : undefined;
-	const total = p.payment === "installments" ? "em cada parcela" : "no total";
+	const monthly = p.payment === "monthly";
+	const total = p.payment === "installments" ? "em cada parcela" : monthly ? "em cada mês" : "no total";
+	const payerQuestion = monthly ? "Quem paga?" : "Quem pagou?";
 	const preview = splitPreview(p.amountCents, p.selected, payerUid, payerName);
 	const payerChoice =
 		payerOptions.length > 1 ? (
 			<fieldset className="space-y-2">
-				<legend className="text-title-large">Quem pagou?</legend>
+				<legend className="text-title-large">{payerQuestion}</legend>
 				{payerOptions.length <= 3 ? (
 					<SegmentedButton
-						label="Quem pagou?"
+						label={payerQuestion}
 						value={payer?.uid ?? ""}
 						options={payerOptions.map((m) => ({ value: m.uid, label: m.isYou ? "Eu" : m.name }))}
 						onChange={p.onPayer}
 					/>
 				) : (
-					<CarerPicker label="Quem pagou?" carers={payerOptions} value={payer?.uid ?? ""} onChange={p.onPayer} />
+					<CarerPicker label={payerQuestion} carers={payerOptions} value={payer?.uid ?? ""} onChange={p.onPayer} />
 				)}
 				{payerIsManaged && payer.hasPixKey !== false && <p className="text-body-large text-on-surface-variant">Você lança no nome de {payer.name}. O dinheiro vai para a chave Pix de {payer.name}.</p>}
 			</fieldset>
@@ -149,7 +158,7 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 			className="mx-auto max-w-xl space-y-6 max-md:pb-2"
 		>
 			{payerChoice}
-			<MoneyField id="campo-valor" label={p.payment === "installments" ? "Valor de cada parcela" : "Quanto custou?"} cents={p.amountCents} onChange={p.onAmount} error={p.errors.amount} autoFocus={payerOptions.length <= 1} />
+			<MoneyField id="campo-valor" label={p.payment === "installments" ? "Valor de cada parcela" : monthly ? "Valor de cada mês" : "Quanto custou?"} cents={p.amountCents} onChange={p.onAmount} error={p.errors.amount} autoFocus={payerOptions.length <= 1} />
 
 			<PaymentChoice
 				payment={p.payment}
@@ -160,6 +169,10 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 				onInstallments={p.onInstallments}
 				amountCents={p.amountCents}
 				purchaseDate={p.date}
+				dayOfMonth={p.dayOfMonth}
+				onDayOfMonth={p.onDayOfMonth}
+				endPeriod={p.endPeriod}
+				onEndPeriod={p.onEndPeriod}
 				errors={p.errors}
 			/>
 
@@ -175,6 +188,7 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 				supportingText={p.description ? undefined : "Por exemplo: Remédios da farmácia"}
 			/>
 
+			{!monthly && (
 			<div>
 				{p.dateOpen ? (
 					<div>
@@ -205,6 +219,7 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 					</Button>
 				)}
 			</div>
+			)}
 
 			<fieldset id="campo-participantes" tabIndex={-1} className="space-y-3 outline-none">
 				<legend className="text-title-large">Dividir entre</legend>
@@ -220,7 +235,7 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 				/>
 				{preview.kind === "ok" && !onlyPayer && (
 					<Card tone="high" className="space-y-1 p-4" aria-live="polite">
-						<p className="money text-title-large">{p.payment === "installments" ? installmentSplitLine(preview) : preview.line}</p>
+						<p className="money text-title-large">{p.payment === "installments" ? installmentSplitLine(preview) : monthly ? monthlySplitLine(preview) : preview.line}</p>
 						{preview.note && <p className="text-body-large text-on-surface-variant">{preview.note}</p>}
 						{preview.othersCents > 0 && (
 							<p className="text-body-large text-on-surface-variant">
@@ -238,7 +253,7 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 				)}
 			</fieldset>
 
-			{p.attachments}
+			{!monthly && p.attachments}
 
 			{p.errors.form && (
 				<Banner tone="error" icon="error" role="alert">
@@ -248,7 +263,7 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 
 			{/* No fim do formulário, de propósito: a pessoa passa por tudo antes de lançar. */}
 			<Button type="submit" fullWidth loading={p.busy} icon={p.busy ? undefined : "check"}>
-				{p.busy ? (p.busyLabel ?? "Lançando...") : "Lançar despesa"}
+				{p.busy ? (p.busyLabel ?? (monthly ? "Criando..." : "Lançando...")) : monthly ? "Criar despesa fixa" : "Lançar despesa"}
 			</Button>
 		</form>
 	);
@@ -272,6 +287,8 @@ const FIELD_ID: Record<string, string> = {
 	date: "campo-data",
 	dueDate: "campo-vencimento",
 	installments: "campo-parcelas",
+	dayOfMonth: "campo-dia",
+	endPeriod: "campo-ate",
 	participants: "campo-participantes",
 };
 const SERVER_FIELD: Record<string, keyof FormErrors> = {
@@ -280,6 +297,9 @@ const SERVER_FIELD: Record<string, keyof FormErrors> = {
 	date: "date",
 	dueDate: "dueDate",
 	installments: "installments",
+	dayOfMonth: "dayOfMonth",
+	endPeriod: "endPeriod",
+	startPeriod: "endPeriod",
 	participantUids: "participants",
 	files: "files",
 };
@@ -300,6 +320,8 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 	const [payment, setPayment] = useState<PaymentKind>("cash");
 	const [dueDate, setDueDate] = useState("");
 	const [installments, setInstallments] = useState(6);
+	const [dayOfMonth, setDayOfMonth] = useState(DEFAULT_DAY);
+	const [endPeriod, setEndPeriod] = useState<string | null>(null);
 	const [selected, setSelected] = useState<string[] | null>(null);
 	const [splitMode, setSplitMode] = useState<SplitMode>("all");
 	const [errors, setErrors] = useState<FormErrors>({});
@@ -388,6 +410,14 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 		const desc = description.trim();
 		if (!desc) e.description = "Escreva o que foi a despesa.";
 		else if (desc.length > 80) e.description = "Use até 80 letras.";
+		if (payment === "monthly") {
+			const first = firstDueDate(todayISO(), dayOfMonth);
+			const endProblem = endPeriodProblem(endPeriod, first);
+			if (endProblem) e.endPeriod = endProblem;
+			if (selected!.length === 0) e.participants = "Escolha pelo menos uma pessoa.";
+			else if (amountCents > 0 && amountCents < selected!.length) e.participants = "O valor é pequeno demais para dividir entre tantas pessoas.";
+			return e;
+		}
 		if (!isValidISODate(date) || date > todayISO()) e.date = "Escolha uma data válida, que não seja no futuro.";
 		const needsDue = payment === "card" || payment === "installments";
 		if (needsDue && !isValidDueDate(dueDate, date, todayISO())) {
@@ -400,17 +430,57 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 
 	function showErrors(e: FormErrors) {
 		setErrors(e);
-		const first = (["amount", "description", "date", "dueDate", "installments", "participants"] as const).find((k) => e[k]);
+		const first = (["amount", "description", "date", "dueDate", "installments", "dayOfMonth", "endPeriod", "participants"] as const).find((k) => e[k]);
 		if (first === "date") setDateOpen(true);
 		focusTarget.current = first ? FIELD_ID[first] : null;
 		// o campo de data pode acabar de ser aberto; dá tempo de ele existir
 		if (first === "date") setTimeout(() => document.getElementById("campo-data")?.focus(), 0);
 	}
 
+	/** Despesa fixa: o servidor guarda o modelo e lança a despesa de cada mês quando o mês chega. */
+	async function submitMonthly() {
+		setErrors({});
+		setBusy(true);
+		try {
+			const body = {
+				description: description.trim(),
+				amountCents,
+				dayOfMonth: clampDay(dayOfMonth),
+				participantMode: splitMode === "choose" ? "selected" : splitMode,
+				...(splitMode === "choose" ? { participantUids: selected } : {}),
+				...(payerIsManaged ? { paidByUid: payer } : {}),
+				...(endPeriod ? { endPeriod } : {}),
+			};
+			const created = await apiFetch<{ firstExpenseId?: string | null }>(`/api/groups/${encodeURIComponent(groupId)}/recurrences`, { method: "POST", body: JSON.stringify(body) });
+			if (created?.firstExpenseId) {
+				setFlash("Despesa lançada!");
+				router.push(`/app/grupos/${encodeURIComponent(groupId)}/despesas/${encodeURIComponent(created.firstExpenseId)}`);
+			} else {
+				setFlash(createdFlash(firstDueDate(todayISO(), dayOfMonth)));
+				router.push(`/app/grupos/${encodeURIComponent(groupId)}`);
+			}
+		} catch (err) {
+			setBusy(false);
+			if (err instanceof ApiError) {
+				// O servidor ainda não tem as despesas fixas: aviso calmo, tudo o que foi digitado continua.
+				if (err.status === 404 || err.status === 501) return showErrors({ form: "Despesas fixas ainda não estão disponíveis. Tente de novo mais tarde." });
+				if (err.status === 409 && err.field === "pixKey") {
+					if (!payerIsManaged) return setNoPixKey(true);
+					return setGroup((g) => (g ? { ...g, members: g.members.map((m) => (m.uid === payer ? { ...m, hasPixKey: false } : m)) } : g));
+				}
+				const key = err.field ? SERVER_FIELD[err.field] : undefined;
+				if (key) return showErrors({ [key]: err.message });
+				return showErrors({ form: err.message });
+			}
+			showErrors({ form: "Não foi possível criar a despesa fixa. Tente de novo." });
+		}
+	}
+
 	async function submit(withoutAttachmentOk = false) {
 		if (busy) return;
 		const e = validate();
 		if (Object.keys(e).length > 0) return showErrors(e);
+		if (payment === "monthly") return submitMonthly();
 		// Sem anexo, pergunta antes: o comprovante ajuda os outros a confiar na despesa.
 		if (att.items.length === 0 && !withoutAttachmentOk) return setConfirmNoAttachment(true);
 		setErrors({});
@@ -469,9 +539,19 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 				payment={payment}
 				dueDate={dueDate}
 				installments={installments}
+				dayOfMonth={dayOfMonth}
+				endPeriod={endPeriod}
+				onDayOfMonth={(n) => {
+					setDayOfMonth(n);
+					if (errors.dayOfMonth || errors.endPeriod) setErrors((x) => ({ ...x, dayOfMonth: undefined, endPeriod: undefined }));
+				}}
+				onEndPeriod={(v) => {
+					setEndPeriod(v);
+					if (errors.endPeriod) setErrors((x) => ({ ...x, endPeriod: undefined }));
+				}}
 				onPayment={(m) => {
 					setPayment(m);
-					setErrors((x) => ({ ...x, dueDate: undefined, installments: undefined }));
+					setErrors((x) => ({ ...x, dueDate: undefined, installments: undefined, dayOfMonth: undefined, endPeriod: undefined }));
 				}}
 				onDueDate={(v) => {
 					setDueDate(v);

@@ -26,6 +26,13 @@ import { ManagedSummaryCards } from "@/components/home-summary";
 import { ReportView, type ReportState } from "@/components/reports/group-report";
 import type { ReportData } from "@/lib/ui/report";
 import { Button, Sheet } from "@/components/ui";
+import {
+	RecurrenceEditContent,
+	RecurrenceEndContent,
+	RecurrenceOptionsContent,
+	RecurrencesDetails,
+} from "@/components/recurrences/recurrence-list";
+import type { Recurrence } from "@/components/recurrences/types";
 import { todayISO } from "@/lib/ui/dates";
 import { addMonthsClamped, nextDayOfMonth } from "@/lib/ui/due-dates";
 import type { PaymentKind } from "@/components/expenses/payment-choice";
@@ -75,8 +82,8 @@ const daysAgo = (n: number) => {
 	d.setUTCDate(d.getUTCDate() - n);
 	return d.toISOString().slice(0, 10);
 };
-type SumInput = Omit<ExpenseSummary, "canHelp" | "ownerAlone" | "helpShareCents" | "yourDueCents" | "yourRefundCents" | "refundCount" | "managed" | "ownerView" | "paidBy" | "dueDate" | "installment" | "overdue" | "settled" | "attachmentCount"> &
-	Partial<Pick<ExpenseSummary, "canHelp" | "ownerAlone" | "helpShareCents" | "attachmentCount" | "yourDueCents" | "yourRefundCents" | "refundCount" | "managed" | "ownerView" | "dueDate" | "installment" | "overdue" | "settled">> & {
+type SumInput = Omit<ExpenseSummary, "canHelp" | "ownerAlone" | "helpShareCents" | "yourDueCents" | "yourRefundCents" | "refundCount" | "managed" | "ownerView" | "paidBy" | "dueDate" | "installment" | "recurrence" | "overdue" | "settled" | "attachmentCount"> &
+	Partial<Pick<ExpenseSummary, "canHelp" | "ownerAlone" | "helpShareCents" | "attachmentCount" | "yourDueCents" | "yourRefundCents" | "refundCount" | "managed" | "ownerView" | "dueDate" | "installment" | "recurrence" | "overdue" | "settled">> & {
 		paidBy: { uid: string; name: string; isYou: boolean; youManage?: boolean };
 	};
 const sum = (o: SumInput): ExpenseSummary => ({
@@ -91,10 +98,25 @@ const sum = (o: SumInput): ExpenseSummary => ({
 	helpShareCents: null,
 	dueDate: null,
 	installment: null,
+	recurrence: null,
 	overdue: false,
 	settled: o.pendingCount === 0 && (o.refundCount ?? 0) === 0 && o.yourStatus !== "pending" && o.yourStatus !== "refund",
 	...o,
 	paidBy: { ...o.paidBy, youManage: o.paidBy.youManage ?? false },
+});
+
+/** Despesa do mês criada por uma despesa fixa (mostra o selo "Todo mês"). */
+const MONTHLY_EXPENSE = sum({
+	id: "r1-m",
+	description: "Aluguel da casa da vó",
+	amountCents: 120000,
+	date: TODAY.slice(0, 7) + "-10",
+	paidBy: { uid: "b", name: "Maria das Dores Silva", isYou: false },
+	yourShareCents: 30000,
+	yourStatus: "pending",
+	pendingCount: 3,
+	dueDate: TODAY.slice(0, 7) + "-10",
+	recurrence: { id: "r1", period: TODAY.slice(0, 7) },
 });
 
 const EXPENSES: ExpenseSummary[] = [
@@ -189,7 +211,8 @@ export function MockGroup({
 	care = false,
 	due = false,
 	help = false,
-}: Readonly<{ empty?: boolean; framed?: boolean; care?: boolean; due?: boolean; help?: boolean }>) {
+	fixed,
+}: Readonly<{ empty?: boolean; framed?: boolean; care?: boolean; due?: boolean; help?: boolean; fixed?: "closed" | "open" }>) {
 	const group = care ? CARE_GROUP : MOCK_GROUP;
 	return (
 		<Shell pathname="/app/grupos/1" framed={framed} user={care ? CARE_USER : USER}>
@@ -202,8 +225,88 @@ export function MockGroup({
 					</Button>
 				}
 				addManaged={care ? <AddManagedButton onClick={noop} /> : undefined}
-				expenses={<ExpenseListView groupId="1" state={{ kind: "ready", expenses: empty ? [] : care ? CARE_EXPENSES : due ? DUE_EXPENSES : help ? HELP_EXPENSES : EXPENSES }} />}
+				recurrences={fixed ? <RecurrencesDetails state={{ kind: "ready", items: MOCK_RECURRENCES }} today={TODAY} defaultOpen={fixed === "open"} /> : undefined}
+				expenses={<ExpenseListView groupId="1" state={{ kind: "ready", expenses: empty ? [] : fixed ? [MONTHLY_EXPENSE, ...EXPENSES] : care ? CARE_EXPENSES : due ? DUE_EXPENSES : help ? HELP_EXPENSES : EXPENSES }} />}
 			/>
+		</Shell>
+	);
+}
+
+const nextMonth = (day: number) => addMonthsClamped(nextDayOfMonth(TODAY, 1).slice(0, 8) + "01", 1).slice(0, 8) + String(day).padStart(2, "0");
+
+/** Duas despesas fixas: o aluguel (sem fim, paga a Maria) e a cuidadora (até março, paga você). */
+export const MOCK_RECURRENCES: Recurrence[] = [
+	{
+		id: "r1",
+		description: "Aluguel da casa da vó",
+		amountCents: 120000,
+		dayOfMonth: 25,
+		participantMode: "all",
+		participantUids: ["a", "b", "c", "d"],
+		paidBy: { uid: "b", name: "Maria das Dores Silva", picture: null, isYou: false, kind: "user", youManage: false },
+		startPeriod: TODAY.slice(0, 7),
+		endPeriod: null,
+		nextDueDate: nextDayOfMonth(TODAY, 25),
+		canEdit: true,
+	},
+	{
+		id: "r2",
+		description: "Cuidadora de sábado",
+		amountCents: 32000,
+		dayOfMonth: 5,
+		participantMode: "selected",
+		participantUids: ["a", "b"],
+		paidBy: { uid: "a", name: "Rafael Schettino", picture: null, isYou: true, kind: "user", youManage: false },
+		startPeriod: TODAY.slice(0, 7),
+		endPeriod: `${Number(TODAY.slice(0, 4)) + 1}-03`,
+		nextDueDate: nextMonth(5),
+		canEdit: true,
+	},
+];
+
+/** Tela do grupo com o sheet de uma despesa fixa: opções, mudar ou encerrar. */
+export function MockRecurrenceSheet({ view = "edit", framed = true }: Readonly<{ view?: "options" | "edit" | "end"; framed?: boolean }>) {
+	const [open, setOpen] = useState(true);
+	const r = MOCK_RECURRENCES[0];
+	const [description, setDescription] = useState(r.description);
+	const [amount, setAmount] = useState(r.amountCents);
+	const [day, setDay] = useState(r.dayOfMonth);
+	const [end, setEnd] = useState<string | null>(null);
+	const close = () => setOpen(false);
+	const title = { options: r.description, edit: "Mudar despesa fixa", end: "Encerrar despesa fixa?" }[view];
+	return (
+		<Shell pathname="/app/grupos/1" framed={framed}>
+			<GroupDetailView
+				group={MOCK_GROUP}
+				onMemberOptions={noop}
+				invite={
+					<Button icon="share" fullWidth className="md:w-auto">
+						Convidar pessoas
+					</Button>
+				}
+				recurrences={<RecurrencesDetails state={{ kind: "ready", items: MOCK_RECURRENCES }} today={TODAY} defaultOpen onOptions={() => setOpen(true)} />}
+				expenses={<ExpenseListView groupId="1" state={{ kind: "ready", expenses: [MONTHLY_EXPENSE, ...EXPENSES] }} />}
+			/>
+			<Sheet open={open} onClose={close} title={title}>
+				{view === "options" && <RecurrenceOptionsContent recurrence={r} onEdit={noop} onEnd={noop} />}
+				{view === "edit" && (
+					<RecurrenceEditContent
+						description={description}
+						amountCents={amount}
+						dayOfMonth={day}
+						endPeriod={end}
+						errors={{}}
+						busy={false}
+						onDescription={setDescription}
+						onAmount={setAmount}
+						onDay={setDay}
+						onEndPeriod={setEnd}
+						onSubmit={close}
+						onCancel={close}
+					/>
+				)}
+				{view === "end" && <RecurrenceEndContent recurrence={r} busy={false} error={null} onConfirm={close} onCancel={close} />}
+			</Sheet>
 		</Shell>
 	);
 }
@@ -290,7 +393,7 @@ export function MockNewExpense({
 	/** Começa em "Só eu". */
 	alone?: boolean;
 	/** Como foi pago ao abrir (à vista por padrão). */
-	pay?: { payment: PaymentKind; dueDate?: string; installments?: number };
+	pay?: { payment: PaymentKind; dueDate?: string; installments?: number; dayOfMonth?: number; endPeriod?: string | null };
 	/** Cenário da Renata, que cuida de Benjamim e do tio Carlos. */
 	care?: boolean;
 	/** Quem pagou ao abrir (uid); sem isso, "Eu". */
@@ -309,6 +412,8 @@ export function MockNewExpense({
 	const [payment, setPayment] = useState<PaymentKind>(pay?.payment ?? "cash");
 	const [dueDate, setDueDate] = useState(pay?.dueDate ?? "");
 	const [installments, setInstallments] = useState(pay?.installments ?? 6);
+	const [dayOfMonth, setDayOfMonth] = useState(pay?.dayOfMonth ?? 10);
+	const [endPeriod, setEndPeriod] = useState<string | null>(pay?.endPeriod ?? null);
 	const list = care ? CARE_GROUP.members : members;
 	const [payerUid, setPayerUid] = useState(payer ?? list.find((m) => m.isYou)?.uid ?? "");
 	const who = useWhoSplits(list.map((m) => m.uid), undefined, payerUid);
@@ -337,6 +442,10 @@ export function MockNewExpense({
 				payment={payment}
 				dueDate={dueDate}
 				installments={installments}
+				dayOfMonth={dayOfMonth}
+				endPeriod={endPeriod}
+				onDayOfMonth={setDayOfMonth}
+				onEndPeriod={setEndPeriod}
 				onPayment={setPayment}
 				onDueDate={setDueDate}
 				onInstallments={setInstallments}
@@ -390,7 +499,7 @@ const ATTACHMENTS: AttachmentView[] = [
 ];
 
 type RawDetail = Omit<ExpenseDetailData, "canHelp" | "helpAsUids" | "helpShareCents" | "ownerAlone">;
-export type MockMode = "help-alone" | "help-split" | "helped" | "help-care" | "installment" | "overdue" | "owner-installment" | "debtor" | "payer" | "partial" | "refund" | "owner-return" | "recalc" | "two-parts" | "care-paid" | "self-owner" | "self-debtor";
+export type MockMode = "help-alone" | "help-split" | "helped" | "help-care" | "installment" | "overdue" | "owner-installment" | "monthly" | "debtor" | "payer" | "partial" | "refund" | "owner-return" | "recalc" | "two-parts" | "care-paid" | "self-owner" | "self-debtor";
 const isCare = (mode: MockMode) => mode === "two-parts" || mode === "care-paid" || mode === "help-care";
 
 type MS = Partial<ExpenseShare> & Pick<ExpenseShare, "uid" | "name" | "amountCents" | "status">;
@@ -416,7 +525,7 @@ const PAID_AT = daysAgo(1) + "T15:00:00.000Z";
 const A = { uid: "a", name: "Rafael Schettino" };
 const B = { uid: "b", name: "Maria das Dores Silva" };
 
-const NO_DUE = { dueDate: null, installment: null, overdue: false, series: null };
+const NO_DUE = { dueDate: null, installment: null, recurrence: null, overdue: false, series: null };
 
 /** Série mensal de `count` parcelas a partir do vencimento da primeira; as `paid` primeiras já estão quitadas. */
 function seriesMock(count: number, firstDue: string, paid: number): ExpenseSeries {
@@ -507,8 +616,40 @@ function installmentDetail(mode: "installment" | "overdue"): RawDetail {
 		participantUids: shares.map((x) => x.uid),
 		dueDate: due2,
 		installment: { seriesId: "s1", number: 2, count },
+		recurrence: null,
 		overdue,
 		series,
+	};
+}
+
+/** Despesa de um mês criada por uma despesa fixa (aluguel, dia 10), vista por quem deve. */
+function monthlyDetail(): RawDetail {
+	const shares = [
+		share({ ...B, amountCents: 30000, status: "payer" }),
+		share({ ...A, amountCents: 30000, status: "pending", isYou: true }),
+		share({ uid: "c", name: "José", amountCents: 30000, status: "paid", paidAt: PAID_AT, method: "manual" }),
+		share({ uid: "d", name: "Ana Paula", amountCents: 30000, status: "pending" }),
+	];
+	return {
+		id: "r1-2026-11",
+		groupId: "1",
+		description: "Aluguel da casa da vó",
+		amountCents: 120000,
+		date: TODAY.slice(0, 7) + "-10",
+		createdAt: new Date().toISOString(),
+		canDelete: false,
+		canMarkPaid: false,
+		canEditParticipants: false,
+		paidBy: { ...B, picture: null, isYou: false, kind: "user", youManage: false },
+		pix: { type: "cpf", key: "52998224725", payeeName: B.name },
+		attachments: [],
+		shares,
+		participantUids: shares.map((x) => x.uid),
+		dueDate: TODAY.slice(0, 7) + "-10",
+		installment: null,
+		recurrence: { id: "r1", period: TODAY.slice(0, 7) },
+		overdue: false,
+		series: null,
 	};
 }
 
@@ -600,6 +741,7 @@ function detail(mode: MockMode): ExpenseDetailData {
 function rawDetail(mode: MockMode): RawDetail {
 	if (mode === "installment" || mode === "overdue") return installmentDetail(mode);
 	if (mode === "owner-installment") return ownerInstallmentDetail();
+	if (mode === "monthly") return monthlyDetail();
 	if (isCare(mode)) return careDetail(mode as "two-parts" | "care-paid");
 	const youOwner = mode === "payer" || mode === "owner-return" || mode === "recalc" || mode === "self-owner";
 	const owner = youOwner ? { ...A, picture: null, isYou: true, kind: "user" as const, youManage: false } : { ...B, picture: null, isYou: false, kind: "user" as const, youManage: false };
@@ -739,7 +881,7 @@ export function MockExpense({
 		<Shell pathname="/app/grupos/1/despesas/e1" framed={framed} user={isCare(mode) ? CARE_USER : USER}>
 			<ExpenseDetailView
 				expense={expense}
-				attachments={isCare(mode) ? [] : ATTACHMENTS}
+				attachments={isCare(mode) || mode === "monthly" ? [] : ATTACHMENTS}
 				qrOpen={qrOpen}
 				codeFallback={codeFallback ? "a" : null}
 				onToggleQr={(uid) => setQrOpen((o) => (o === uid ? null : uid))}
