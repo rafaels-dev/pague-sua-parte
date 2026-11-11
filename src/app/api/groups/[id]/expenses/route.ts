@@ -68,7 +68,13 @@ export async function POST(request: Request, { params }: Ctx) {
 			case "no_group":
 				return jsonError(NOT_FOUND, 404);
 			case "no_pix":
-				return jsonError("Cadastre sua chave Pix antes de lançar uma despesa.", 409, "pixKey");
+				return jsonError(
+					result.name
+						? `Cadastre a chave Pix de ${result.name} antes de lançar uma despesa paga por ele(a).`
+						: "Cadastre sua chave Pix antes de lançar uma despesa.",
+					409,
+					"pixKey",
+				);
 			case "invalid":
 				return jsonError(result.error, 422, result.field);
 			case "ok":

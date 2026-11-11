@@ -1,12 +1,14 @@
 import type { ShareStatus, YourStatus } from "@/lib/ui/expense-status";
 import type { PixKeyType } from "@/lib/pix/key";
+import type { ManagedShareSummary, OwnerView } from "@/lib/ui/managed";
 
 export type ExpenseSummary = {
 	id: string;
 	description: string;
 	amountCents: number;
 	date: string;
-	paidBy: { uid: string; name: string; isYou: boolean };
+	/** `youManage`: quem pagou é uma pessoa sem celular que você cuida. */
+	paidBy: { uid: string; name: string; isYou: boolean; youManage: boolean };
 	yourShareCents: number;
 	yourStatus: YourStatus;
 	/** Quanto falta a pessoa pagar (pode ser menos que a parte, se já pagou algo). */
@@ -16,6 +18,10 @@ export type ExpenseSummary = {
 	pendingCount: number;
 	refundCount: number;
 	attachmentCount: number;
+	/** Partes das pessoas sem celular que você cuida (só as que participam). */
+	managed: ManagedShareSummary[];
+	/** Quando você age por quem pagou (pessoa sem celular): o que falta receber e devolver. */
+	ownerView: OwnerView | null;
 };
 
 export type ExpenseShare = {
@@ -34,6 +40,11 @@ export type ExpenseShare = {
 	participates: boolean;
 	status: ShareStatus;
 	isYou: boolean;
+	/** "managed" = pessoa sem celular. */
+	kind: "user" | "managed";
+	/** Você é o responsável por esta pessoa. */
+	youManage: boolean;
+	managedByName: string | null;
 	paidAt: string | null;
 	method: "manual" | null;
 };
@@ -51,7 +62,7 @@ export type ExpenseDetailData = {
 	canMarkPaid: boolean;
 	canEditParticipants: boolean;
 	participantUids: string[];
-	paidBy: { uid: string; name: string; picture: string | null; isYou: boolean };
+	paidBy: { uid: string; name: string; picture: string | null; isYou: boolean; kind: "user" | "managed"; youManage: boolean };
 	pix: { type: PixKeyType; key: string; payeeName: string };
 	shares: ExpenseShare[];
 	attachments: ExpenseAttachment[];
@@ -70,6 +81,9 @@ export function normalizeExpense(raw: Loose<Omit<ExpenseDetailData, "shares">> &
 			name: s.name ?? "",
 			picture: s.picture ?? null,
 			isYou: !!s.isYou,
+			kind: s.kind === "managed" ? "managed" : "user",
+			youManage: s.kind === "managed" && !!s.youManage,
+			managedByName: s.managedByName ?? null,
 			amountCents,
 			paidCents,
 			dueCents: s.dueCents ?? (status === "pending" ? Math.max(0, amountCents - paidCents) : 0),
@@ -80,8 +94,17 @@ export function normalizeExpense(raw: Loose<Omit<ExpenseDetailData, "shares">> &
 			method: s.method ?? null,
 		};
 	});
+	const paidBy = (raw.paidBy ?? { uid: "", name: "", picture: null, isYou: false }) as Loose<ExpenseDetailData["paidBy"]>;
 	return {
 		...(raw as unknown as ExpenseDetailData),
+		paidBy: {
+			uid: paidBy.uid ?? "",
+			name: paidBy.name ?? "",
+			picture: paidBy.picture ?? null,
+			isYou: !!paidBy.isYou,
+			kind: paidBy.kind === "managed" ? "managed" : "user",
+			youManage: paidBy.kind === "managed" && !!paidBy.youManage,
+		},
 		shares,
 		attachments: raw.attachments ?? [],
 		canDelete: !!raw.canDelete,
@@ -93,8 +116,13 @@ export function normalizeExpense(raw: Loose<Omit<ExpenseDetailData, "shares">> &
 
 /** Completa os campos novos de um item da lista de despesas quando o servidor ainda manda o formato antigo. */
 export function normalizeSummary(raw: Loose<ExpenseSummary> & Record<string, unknown>): ExpenseSummary {
+	const paidBy = (raw.paidBy ?? { uid: "", name: "", isYou: false }) as Loose<ExpenseSummary["paidBy"]>;
+	const ownerView = raw.ownerView && typeof raw.ownerView === "object" ? raw.ownerView : null;
 	return {
 		...(raw as unknown as ExpenseSummary),
+		paidBy: { uid: paidBy.uid ?? "", name: paidBy.name ?? "", isYou: !!paidBy.isYou, youManage: !!paidBy.youManage },
+		managed: Array.isArray(raw.managed) ? raw.managed : [],
+		ownerView: ownerView ? { pendingCount: ownerView.pendingCount ?? 0, refundCount: ownerView.refundCount ?? 0 } : null,
 		yourShareCents: raw.yourShareCents ?? 0,
 		yourDueCents: raw.yourDueCents ?? (raw.yourStatus === "pending" ? (raw.yourShareCents ?? 0) : 0),
 		yourRefundCents: raw.yourRefundCents ?? 0,

@@ -23,6 +23,9 @@ describe("splitPreview", () => {
 	  expect(r).toMatchObject({ kind: "ok", note: "Uma pessoa fica com 1 centavo a mais", othersCents: 1000 });
 	  expect(splitPreview(1001, ["b", "c", "d"], "a")).toMatchObject({ note: "2 pessoas ficam com 1 centavo a mais" });
 	});
+	it("quem pagou é uma pessoa sem celular: usa o nome dela", () => {
+	  expect(splitPreview(1000, ["b", "c", "d"], "b", "Benjamim")).toMatchObject({ note: "Benjamim fica com 1 centavo a mais" });
+	});
 	it("valor pequeno demais", () => {
 	  expect(splitPreview(2, ["a", "b", "c"], "a").kind).toBe("error");
 	});

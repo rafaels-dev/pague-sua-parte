@@ -25,3 +25,13 @@ describe("GET /api/me/summary", () => {
 		expect((await GET(new Request("http://x"))).status).toBe(401);
 	});
 });
+
+describe("GET /api/me/summary: pessoas sem login", () => {
+	it("repassa managed do repo; o uid vem só da sessão", async () => {
+		const managed = [{ uid: "m_ben", name: "Benjamim", groupId: "g", groupName: "Família", toReceiveCents: 1, toPayCents: 2 }];
+		getSummary.mockResolvedValue({ toReceiveCents: 5, toPayCents: 7, managed });
+		const res = await GET(new Request("http://x/api/me/summary?uid=m_ben", { headers: { "x-uid": "m_ben" } }));
+		expect(await res.json()).toEqual({ toReceiveCents: 5, toPayCents: 7, managed });
+		expect(getSummary).toHaveBeenCalledWith({ fake: true }, "u1");
+	});
+});

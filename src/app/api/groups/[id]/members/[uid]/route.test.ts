@@ -100,3 +100,26 @@ describe("DELETE /api/groups/:id/members/:uid", () => {
 		expect(await res.json()).toEqual({ error: "Essa pessoa não faz mais parte do grupo." });
 	});
 });
+
+describe("pessoas sem login nas rotas de membro", () => {
+	it("PATCH papel de pessoa sem login: 409", async () => {
+		setMemberRole.mockResolvedValue({ status: "managed_target" });
+		const res = await patch({ role: "admin" }, GID, "m_ben");
+		expect(res.status).toBe(409);
+		expect(await res.json()).toEqual({ error: "Pessoas sem celular não podem administrar o grupo." });
+	});
+	it("DELETE responsável por alguém: 409 com os nomes", async () => {
+		removeMember.mockResolvedValue({ status: "responsible", name: "Renata", managed: ["Benjamim", "Vó", "Tio Zé"] });
+		const res = await del(GID, "u2");
+		expect(res.status).toBe(409);
+		expect(await res.json()).toEqual({ error: "Renata cuida de Benjamim, Vó e Tio Zé. Troque o responsável antes de remover." });
+		removeMember.mockResolvedValue({ status: "responsible", name: "Renata", managed: ["Benjamim"] });
+		expect(await (await del(GID, "u2")).json()).toEqual({ error: "Renata cuida de Benjamim. Troque o responsável antes de remover." });
+	});
+	it("DELETE de pessoa sem login por admin: 200; por não admin: 403", async () => {
+		removeMember.mockResolvedValue({ status: "ok" });
+		expect((await del(GID, "m_ben")).status).toBe(200);
+		removeMember.mockResolvedValue({ status: "forbidden" });
+		expect((await del(GID, "m_ben")).status).toBe(403);
+	});
+});

@@ -6,12 +6,21 @@ import type { Balance } from "./shares";
  * due = max(0, amount - paid), refund = max(0, paid - amount); a cota de quem pagou é ignorada.
  * Não importa repo.ts (o repo de grupos importa este módulo).
  */
+/** paidCents com leitura do modelo antigo: sem número, `status: 'paid'` vale a cota inteira. */
+const PAID = {
+	$cond: [
+		{ $isNumber: "$shares.paidCents" },
+		"$shares.paidCents",
+		{ $cond: [{ $eq: ["$shares.status", "paid"] }, "$shares.amountCents", 0] },
+	],
+};
+
 export async function getBalancesByGroup(db: Db, uid: string, groupIds: ObjectId[]): Promise<Map<string, Balance>> {
 	const out = new Map<string, Balance>();
 	if (groupIds.length === 0) return out;
 
-	const due = { $max: [0, { $subtract: ["$shares.amountCents", "$shares.paidCents"] }] };
-	const refund = { $max: [0, { $subtract: ["$shares.paidCents", "$shares.amountCents"] }] };
+	const due = { $max: [0, { $subtract: ["$shares.amountCents", PAID] }] };
+	const refund = { $max: [0, { $subtract: [PAID, "$shares.amountCents"] }] };
 	const isOwner = { $eq: ["$paidBy", uid] };
 	const isMine = { $eq: ["$shares.uid", uid] };
 	const otherShare = { $ne: ["$shares.uid", "$paidBy"] };
@@ -40,6 +49,44 @@ export async function getBalancesByGroup(db: Db, uid: string, groupIds: ObjectId
 		])
 		.toArray();
 	for (const r of rows) out.set(r._id.toHexString(), { toPayCents: r.toPay, toReceiveCents: r.toReceive });
+	return out;
+}
+
+/**
+ * Saldos de VÁRIAS pessoas por (grupo, pessoa) em UMA agregação. Cada cota (que não é a de quem pagou)
+ * rende até duas linhas: ao dono (se estiver em `uids`) e a quem deve (se estiver em `uids`).
+ * Chave do mapa: `${groupId}:${uid}`.
+ */
+export async function getBalancesForUids(db: Db, uids: string[], groupIds: ObjectId[]): Promise<Map<string, Balance>> {
+	const out = new Map<string, Balance>();
+	if (groupIds.length === 0 || uids.length === 0) return out;
+	const due = { $max: [0, { $subtract: ["$shares.amountCents", PAID] }] };
+	const refund = { $max: [0, { $subtract: [PAID, "$shares.amountCents"] }] };
+	const rows = await db
+		.collection("expenses")
+		.aggregate<{ _id: { g: ObjectId; u: string }; toPay: number; toReceive: number }>([
+			{ $match: { groupId: { $in: groupIds }, $or: [{ paidBy: { $in: uids } }, { "shares.uid": { $in: uids } }] } },
+			{ $unwind: "$shares" },
+			{ $match: { $expr: { $ne: ["$shares.uid", "$paidBy"] } } },
+			{
+				$set: {
+					c: {
+						$filter: {
+							input: [
+								{ u: "$paidBy", toPay: refund, toReceive: due },
+								{ u: "$shares.uid", toPay: due, toReceive: refund },
+							],
+							as: "c",
+							cond: { $in: ["$$c.u", { $literal: uids }] },
+						},
+					},
+				},
+			},
+			{ $unwind: "$c" },
+			{ $group: { _id: { g: "$groupId", u: "$c.u" }, toPay: { $sum: "$c.toPay" }, toReceive: { $sum: "$c.toReceive" } } },
+		])
+		.toArray();
+	for (const r of rows) out.set(`${r._id.g.toHexString()}:${r._id.u}`, { toPayCents: r.toPay, toReceiveCents: r.toReceive });
 	return out;
 }
 

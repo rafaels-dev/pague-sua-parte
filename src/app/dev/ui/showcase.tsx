@@ -1,5 +1,6 @@
 "use client";
 
+import { normalizeMember } from "@/components/groups/types";
 import { useState } from "react";
 import { AppShellView } from "@/components/app-shell";
 import { GoogleButtonView } from "@/components/auth/sign-in-button";
@@ -51,10 +52,10 @@ const GROUP: Group = {
 	name: "Família Silva",
 	role: "admin",
 	members: [
-		{ uid: "a", name: "Rafael Schettino", picture: null, role: "admin", hasPixKey: true, isYou: true },
-		{ uid: "b", name: "Maria das Dores Silva", picture: null, role: "member", hasPixKey: true, isYou: false },
-		{ uid: "c", name: "José", picture: null, role: "member", hasPixKey: false, isYou: false },
-		{ uid: "d", name: "Ana Paula", picture: null, role: "admin", hasPixKey: false, isYou: false },
+		normalizeMember({ uid: "a", name: "Rafael Schettino", picture: null, role: "admin", hasPixKey: true, isYou: true }),
+		normalizeMember({ uid: "b", name: "Maria das Dores Silva", picture: null, role: "member", hasPixKey: true, isYou: false }),
+		normalizeMember({ uid: "c", name: "José", picture: null, role: "member", hasPixKey: false, isYou: false }),
+		normalizeMember({ uid: "d", name: "Ana Paula", picture: null, role: "admin", hasPixKey: false, isYou: false }),
 	],
 };
 

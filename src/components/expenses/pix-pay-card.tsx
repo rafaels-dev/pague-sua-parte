@@ -1,13 +1,40 @@
 "use client";
 
-import { Banner, Button, Card, QrCode } from "@/components/ui";
+import { Avatar, Banner, Button, Card, QrCode } from "@/components/ui";
 import { formatBRL } from "@/lib/money";
 import { PIX_KEY_LABELS, type PixKeyType } from "@/lib/pix/key";
 
 const STEPS = ["Toque em “Copiar Pix Copia e Cola”.", "Abra o app do seu banco e vá em Pix.", "Escolha “Pix Copia e Cola” e cole o código."];
 
-/** Cartão "Sua parte": copiar o código Pix, ver o QR Code e, como alternativa, copiar a chave. */
+/**
+ * Faixa de cima de um bloco de "conta": de quem é a parte. Sua parte = tom azul; pessoa sem celular que você cuida = tom âmbar,
+ * com o avatar também âmbar, para nunca confundir as duas contas.
+ */
+export function AccountHeader({ id, name, managed }: Readonly<{ id: string; name: string; managed: boolean }>) {
+	return (
+		<div
+			className={`flex items-center gap-3 px-5 py-3 ${
+				managed ? "bg-tertiary-container text-on-tertiary-container" : "bg-secondary-container text-on-secondary-container"
+			}`}
+		>
+			<Avatar name={name} size="sm" managed={managed} className={managed ? "bg-on-tertiary-container! text-tertiary-container!" : "bg-primary! text-on-primary!"} />
+			<h2 id={id} className="min-w-0 break-words text-title-large">
+				{managed ? (
+					<>
+						Parte de {name} <span className="whitespace-nowrap font-normal">(você cuida)</span>
+					</>
+				) : (
+					"Sua parte"
+				)}
+			</h2>
+		</div>
+	);
+}
+
+/** Cartão de pagamento de uma parte: copiar o código Pix, ver o QR Code e, como alternativa, copiar a chave. */
 export function PixPayCard({
+	accountName,
+	managed = false,
 	shareCents,
 	paidSoFarCents = 0,
 	payeeName,
@@ -18,7 +45,14 @@ export function PixPayCard({
 	onToggleQr,
 	onCopyCode,
 	onCopyKey,
+	headingId = "sua-parte",
 }: Readonly<{
+	/** Identificador do título (único quando há mais de um cartão na tela). */
+	headingId?: string;
+	/** Quando a pessoa logada tem mais de uma conta (ou cuida de alguém), cada cartão leva a faixa com o nome de quem deve. */
+	accountName?: string;
+	/** A parte é de uma pessoa sem celular que você cuida. */
+	managed?: boolean;
 	/** Quanto falta pagar (o valor do código Pix). */
 	shareCents: number;
 	/** Se a pessoa já pagou uma parte, avisa quanto e que o código é só do que falta. */
@@ -35,16 +69,22 @@ export function PixPayCard({
 	onCopyKey: () => void;
 }>) {
 	return (
-		<Card as="section" tone="high" aria-labelledby="sua-parte" className="space-y-5 p-5 md:p-6">
+		<Card as="section" tone="high" aria-labelledby={headingId} className="overflow-hidden">
+			{accountName !== undefined && <AccountHeader id={headingId} name={accountName} managed={managed} />}
+			<div className="space-y-5 p-5 md:p-6">
 			<div>
-				<h2 id="sua-parte" className="text-title-large text-on-surface-variant">
-					{paidSoFarCents > 0 ? "Falta pagar" : "Sua parte"}
-				</h2>
+				{accountName === undefined ? (
+					<h2 id={headingId} className="text-title-large text-on-surface-variant">
+						{paidSoFarCents > 0 ? "Falta pagar" : "Sua parte"}
+					</h2>
+				) : (
+					<p className="text-title-large text-on-surface-variant">{paidSoFarCents > 0 ? "Falta pagar" : managed ? `${accountName} deve` : "Você deve"}</p>
+				)}
 				<p className="money text-display-small font-bold text-error">{formatBRL(shareCents)}</p>
 				<p className="text-body-large text-on-surface-variant">para {payeeName}</p>
 				{paidSoFarCents > 0 && (
 					<p className="mt-1 text-body-large text-on-surface">
-						Você já pagou {formatBRL(paidSoFarCents)}; falta {formatBRL(shareCents)}.
+						{managed ? `${accountName} já pagou` : "Você já pagou"} {formatBRL(paidSoFarCents)}; falta {formatBRL(shareCents)}.
 					</p>
 				)}
 			</div>
@@ -127,6 +167,7 @@ export function PixPayCard({
 			>
 				Em breve: enviar comprovante
 			</p>
+			</div>
 		</Card>
 	);
 }

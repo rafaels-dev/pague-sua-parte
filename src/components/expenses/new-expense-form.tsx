@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth/auth-provider";
 import type { Group, Member } from "@/components/groups/group-detail";
-import { Banner, Button, Card, EmptyState, Icon, MoneyField, Skeleton, TextField } from "@/components/ui";
+import { CarerPicker } from "@/components/groups/managed-sheet";
+import { normalizeGroupDetail } from "@/components/groups/types";
+import { Banner, Button, Card, EmptyState, Icon, MoneyField, SegmentedButton, Skeleton, TextField } from "@/components/ui";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { formatBRL } from "@/lib/money";
 import { formatDateShort, isValidISODate, todayISO } from "@/lib/ui/dates";
@@ -35,8 +37,34 @@ export function NoPixKeyBlock() {
 	);
 }
 
+/** Aviso quando quem recebe é uma pessoa sem celular que ainda não tem chave Pix. */
+export function ManagedNoPixKeyBlock({ groupId, uid, name }: Readonly<{ groupId: string; uid: string; name: string }>) {
+	return (
+		<Banner
+			title={`${name} ainda não tem chave Pix`}
+			icon="warning"
+			role="alert"
+			action={
+				<Button href={`/app/grupos/${encodeURIComponent(groupId)}?editar=${encodeURIComponent(uid)}`} size="lg" fullWidth className="md:w-auto">
+					Cadastrar a chave de {name}
+				</Button>
+			}
+		>
+			Quem paga a despesa recebe o dinheiro dos outros. Sem a chave de {name}, ninguém consegue pagar.
+		</Banner>
+	);
+}
+
+type FormMember = Pick<Member, "uid" | "name" | "picture" | "isYou"> & Partial<Pick<Member, "kind" | "youManage" | "hasPixKey">>;
+
 export type NewExpenseFormViewProps = {
-	members: Pick<Member, "uid" | "name" | "picture" | "isYou">[];
+	groupId: string;
+	members: FormMember[];
+	/** Quem pagou: você ou uma pessoa sem celular que você cuida. */
+	payerUid: string;
+	/** Você mesmo ainda não cadastrou a chave Pix. */
+	selfNoPixKey?: boolean;
+	onPayer: (uid: string) => void;
 	amountCents: number;
 	description: string;
 	date: string;
@@ -61,11 +89,43 @@ export type NewExpenseFormViewProps = {
 export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 	const me = p.members.find((m) => m.isYou);
 	const today = todayISO();
-	const onlyMe = p.selected.length === 1 && p.selected[0] === me?.uid;
-	const preview = useMemo(
-		() => splitPreview(p.amountCents, p.selected, me?.uid ?? ""),
-		[p.amountCents, p.selected, me?.uid],
-	);
+	const payerOptions = p.members.filter((m) => m.isYou || (m.kind === "managed" && m.youManage));
+	const payer = payerOptions.find((m) => m.uid === p.payerUid) ?? me;
+	const payerIsManaged = !!payer && !payer.isYou;
+	const onlyPayer = p.selected.length === 1 && p.selected[0] === payer?.uid;
+	const payerUid = payer?.uid ?? "";
+	const payerName = payerIsManaged ? payer?.name : undefined;
+	const preview = splitPreview(p.amountCents, p.selected, payerUid, payerName);
+	const payerChoice =
+		payerOptions.length > 1 ? (
+			<fieldset className="space-y-2">
+				<legend className="text-title-large">Quem pagou?</legend>
+				{payerOptions.length <= 3 ? (
+					<SegmentedButton
+						label="Quem pagou?"
+						value={payer?.uid ?? ""}
+						options={payerOptions.map((m) => ({ value: m.uid, label: m.isYou ? "Eu" : m.name }))}
+						onChange={p.onPayer}
+					/>
+				) : (
+					<CarerPicker label="Quem pagou?" carers={payerOptions} value={payer?.uid ?? ""} onChange={p.onPayer} />
+				)}
+				{payerIsManaged && payer.hasPixKey !== false && <p className="text-body-large text-on-surface-variant">Você lança no nome de {payer.name}. O dinheiro vai para a chave Pix de {payer.name}.</p>}
+			</fieldset>
+		) : null;
+	const blocker = p.selfNoPixKey && !payerIsManaged ? (
+		<NoPixKeyBlock />
+	) : payerIsManaged && payer.hasPixKey === false ? (
+		<ManagedNoPixKeyBlock groupId={p.groupId} uid={payer.uid} name={payer.name} />
+	) : null;
+	if (blocker) {
+		return (
+			<div className="mx-auto max-w-xl space-y-6">
+				{payerChoice}
+				{blocker}
+			</div>
+		);
+	}
 
 	return (
 		<form
@@ -76,7 +136,8 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 			}}
 			className="mx-auto max-w-xl space-y-6 max-md:pb-2"
 		>
-			<MoneyField id="campo-valor" label="Quanto custou?" cents={p.amountCents} onChange={p.onAmount} error={p.errors.amount} autoFocus />
+			{payerChoice}
+			<MoneyField id="campo-valor" label="Quanto custou?" cents={p.amountCents} onChange={p.onAmount} error={p.errors.amount} autoFocus={payerOptions.length <= 1} />
 
 			<TextField
 				id="campo-descricao"
@@ -131,13 +192,15 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 					onToggle={p.onToggle}
 					error={p.errors.participants}
 				/>
-				{preview.kind === "ok" && !onlyMe && (
+				{preview.kind === "ok" && !onlyPayer && (
 					<Card tone="high" className="space-y-1 p-4" aria-live="polite">
 						<p className="money text-title-large">{preview.line}</p>
 						{preview.note && <p className="text-body-large text-on-surface-variant">{preview.note}</p>}
 						{preview.othersCents > 0 && (
 							<p className="text-body-large text-on-surface-variant">
-								Os outros te devem {formatBRL(preview.othersCents)} no total.
+								{payerIsManaged
+									? `${payer.name} recebe ${formatBRL(preview.othersCents)} dos outros no total.`
+									: `Os outros te devem ${formatBRL(preview.othersCents)} no total.`}
 							</p>
 						)}
 					</Card>
@@ -199,6 +262,7 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 	const [group, setGroup] = useState<Group | null>(null);
 	const [loadError, setLoadError] = useState<{ message: string; notFound: boolean } | null>(null);
 	const [noPixKey, setNoPixKey] = useState(false);
+	const [payerUid, setPayerUid] = useState<string | null>(null);
 	const [reloadKey, setReloadKey] = useState(0);
 
 	const [amountCents, setAmountCents] = useState(0);
@@ -218,9 +282,10 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 		Promise.all([apiFetch<Group>(`/api/groups/${encodeURIComponent(groupId)}`), apiFetch<{ pixKey: unknown | null }>("/api/me")])
 			.then(([g, me]) => {
 				if (cancelled) return;
-				setGroup(g);
+				const detail = normalizeGroupDetail(g);
+				setGroup(detail);
 				setNoPixKey(!me.pixKey);
-				setSelected((cur) => cur ?? g.members.map((m) => m.uid));
+				setSelected((cur) => cur ?? detail.members.map((m) => m.uid));
 			})
 			.catch((e) => {
 				if (cancelled) return;
@@ -271,7 +336,12 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 		);
 	}
 	if (!group || !selected) return <NewExpenseSkeleton />;
-	if (noPixKey) {
+	const myUid = group.members.find((m) => m.isYou)?.uid ?? "";
+	const hasManaged = group.members.some((m) => m.kind === "managed" && m.youManage);
+	const payer = payerUid ?? myUid;
+	const payerIsManaged = payer !== myUid && group.members.some((m) => m.uid === payer);
+	// Sem pessoas sem celular para cuidar, a falta da chave Pix troca a tela inteira; com elas, o aviso aparece no formulário.
+	if (noPixKey && !hasManaged) {
 		return (
 			<div className="mx-auto max-w-xl">
 				<NoPixKeyBlock />
@@ -311,7 +381,7 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 			const body = new FormData();
 			body.append(
 				"data",
-				JSON.stringify({ description: description.trim(), amountCents, date, participantUids: selected }),
+				JSON.stringify({ description: description.trim(), amountCents, date, participantUids: selected, ...(payerIsManaged ? { paidByUid: payer } : {}) }),
 			);
 			for (const it of att.items) body.append("files", it.file, it.file.name);
 			const created = await apiFetch<{ id: string }>(`/api/groups/${encodeURIComponent(groupId)}/expenses`, { method: "POST", body });
@@ -321,7 +391,11 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 			// Tudo o que foi digitado continua nos campos; só mostramos o que deu errado.
 			setBusy(false);
 			if (err instanceof ApiError) {
-				if (err.status === 409 && err.field === "pixKey") return setNoPixKey(true);
+				if (err.status === 409 && err.field === "pixKey") {
+					if (!payerIsManaged) return setNoPixKey(true);
+					// Quem recebe é a pessoa sem celular: marca que ela está sem chave para o aviso aparecer com o nome dela.
+					return setGroup((g) => (g ? { ...g, members: g.members.map((m) => (m.uid === payer ? { ...m, hasPixKey: false } : m)) } : g));
+				}
 				const key = err.field ? SERVER_FIELD[err.field] : undefined;
 				if (key) return showErrors({ [key]: err.message });
 				return showErrors({ form: err.message });
@@ -333,7 +407,14 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 	return (
 		<>
 			<NewExpenseFormView
+				groupId={groupId}
 				members={group.members}
+				payerUid={payer}
+				selfNoPixKey={noPixKey}
+				onPayer={(uid) => {
+					setPayerUid(uid);
+					setErrors({});
+				}}
 				amountCents={amountCents}
 				description={description}
 				date={date}

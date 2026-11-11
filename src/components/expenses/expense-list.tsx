@@ -7,6 +7,7 @@ import { apiFetch, ApiError } from "@/lib/api-client";
 import { formatBRL } from "@/lib/money";
 import { formatDateShort } from "@/lib/ui/dates";
 import { listStatus, paidByLabel } from "@/lib/ui/expense-status";
+import { managedLines, ownerViewStatus } from "@/lib/ui/managed";
 import { cx } from "@/lib/ui/cx";
 import { normalizeSummary, type ExpenseSummary } from "./types";
 
@@ -73,6 +74,10 @@ export function ExpenseListView({ groupId, state }: Readonly<{ groupId: string; 
 					<List>
 						{state.expenses.map((e) => {
 							const status = listStatus(e);
+							const extra = [
+								...(e.ownerView ? [ownerViewStatus(e.paidBy.name, e.ownerView)] : []),
+								...managedLines(e.managed),
+							];
 							return (
 								<ListItem
 									key={e.id}
@@ -86,9 +91,14 @@ export function ExpenseListView({ groupId, state }: Readonly<{ groupId: string; 
 									supporting={
 										<>
 											<span className="block text-on-surface-variant">
-												{paidByLabel(e.paidBy)} · {formatDateShort(e.date)}
+												{paidByLabel({ name: e.paidBy.name, isYou: e.paidBy.isYou })} · {formatDateShort(e.date)}
 											</span>
 											{status && <span className={cx("block font-medium", STATUS_COLOR[status.tone])}>{status.text}</span>}
+											{extra.map((l) => (
+												<span key={l.text} className={cx("block font-medium", STATUS_COLOR[l.tone])}>
+													{l.text}
+												</span>
+											))}
 										</>
 									}
 									trailing={

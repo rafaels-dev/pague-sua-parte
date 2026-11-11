@@ -10,8 +10,9 @@ function centavos(n: number): string {
 	return n === 1 ? "1 centavo" : `${n} centavos`;
 }
 
+/** `payerName`: quando quem pagou é outra pessoa (sem celular que você cuida), o texto usa o nome dela em vez de "Você". */
 /** Texto ao vivo de "quanto fica para cada um", com a nota de centavos quando a conta não fecha redonda. */
-export function splitPreview(amountCents: number, participantUids: string[], payerUid: string): SplitPreview {
+export function splitPreview(amountCents: number, participantUids: string[], payerUid: string, payerName?: string): SplitPreview {
 	if (amountCents <= 0 || participantUids.length === 0) return { kind: "empty" };
 	let shares;
 	try {
@@ -28,7 +29,7 @@ export function splitPreview(amountCents: number, participantUids: string[], pay
 	if (extra.length > 0) {
 		const more = Math.max(...extra.map((s) => s.amountCents)) - base;
 		note = extra.length === 1 && extra[0].uid === payerUid
-			? `Você fica com ${centavos(more)} a mais`
+			? `${payerName ?? "Você"} fica com ${centavos(more)} a mais`
 			: extra.length === 1
 				? `Uma pessoa fica com ${centavos(more)} a mais`
 				: `${extra.length} pessoas ficam com ${centavos(more)} a mais`;

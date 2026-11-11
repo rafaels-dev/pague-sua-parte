@@ -65,6 +65,8 @@ export type ExpenseInput = {
 	amountCents: number;
 	date: string;
 	participantUids: string[];
+	/** Quem pagou, se não for quem está lançando (pessoa sem login que o usuário cuida). */
+	paidByUid?: string;
 };
 
 export type Invalid = { ok: false; status: number; error: string; field: string };
@@ -85,6 +87,7 @@ const schema = z.object({
 		.array(z.string().min(1).max(128), { message: "Escolha quem divide a despesa." })
 		.min(1, "Escolha quem divide a despesa.")
 		.max(100, "Participantes demais."),
+	paidByUid: z.string({ message: "Escolha quem pagou." }).min(1, "Escolha quem pagou.").max(128, "Escolha quem pagou.").optional(),
 });
 
 export function parseExpenseInput(raw: unknown, now: Date = new Date()): { ok: true; value: ExpenseInput } | Invalid {
@@ -94,7 +97,7 @@ export function parseExpenseInput(raw: unknown, now: Date = new Date()): { ok: t
 	if (!parsed.success) {
 		const issue = parsed.error.issues[0];
 		const field = String(issue.path[0] ?? "description");
-		return fail(["description", "amountCents", "date", "participantUids"].includes(field) ? field : "description", issue.message);
+		return fail(["description", "amountCents", "date", "participantUids", "paidByUid"].includes(field) ? field : "description", issue.message);
 	}
 	const today = todayInSaoPaulo(now);
 	const date = parsed.data.date ?? today;
@@ -105,7 +108,7 @@ export function parseExpenseInput(raw: unknown, now: Date = new Date()): { ok: t
 	if (new Set(uids).size !== uids.length) return fail("participantUids", "Há participantes repetidos.");
 	return {
 		ok: true,
-		value: { description: parsed.data.description, amountCents: parsed.data.amountCents, date, participantUids: uids },
+		value: { description: parsed.data.description, amountCents: parsed.data.amountCents, date, participantUids: uids, ...(parsed.data.paidByUid ? { paidByUid: parsed.data.paidByUid } : {}) },
 	};
 }
 

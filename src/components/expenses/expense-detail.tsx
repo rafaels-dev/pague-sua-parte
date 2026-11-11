@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth/auth-provider";
 import { ActionChip, Avatar, Banner, Button, Card, EmptyState, Icon, List, Sheet, Skeleton, Snackbar, StatusChip } from "@/components/ui";
 import type { Group } from "@/components/groups/group-detail";
+import { normalizeGroupDetail } from "@/components/groups/types";
 import { apiFetch, apiFetchBlob, ApiError } from "@/lib/api-client";
 import { formatBRL } from "@/lib/money";
 import { buildPixPayload } from "@/lib/pix/brcode";
@@ -13,9 +14,10 @@ import { formatDateLong, formatDateShort, todayISO } from "@/lib/ui/dates";
 import { isImageType } from "@/lib/ui/attachments";
 import { buildExpenseLink, buildExpenseShareText } from "@/lib/ui/expense-share";
 import { paidByLabel, shareStatusChip } from "@/lib/ui/expense-status";
+import { managedCaption } from "@/lib/ui/managed";
 import { ExpenseAttachments, type AttachmentView } from "./expense-attachments";
 import { ShareExpenseContent } from "./expense-share";
-import { PixPayCard } from "./pix-pay-card";
+import { AccountHeader, PixPayCard } from "./pix-pay-card";
 import { ResplitContent } from "./resplit-sheet";
 import { clearFlash, normalizeExpense, peekFlash, setFlash, type ExpenseDetailData, type ExpenseShare } from "./types";
 import { modeFor, type SplitMember, type SplitMode } from "./who-splits";
@@ -55,15 +57,17 @@ function ShareRow({
 	const chip = shareStatusChip(s.status, s);
 	const canAct = canMarkPaid && s.status !== "payer";
 	const when = paidDateLabel(s.paidAt);
+	const caption = managedCaption(s);
 	return (
 		<li className="px-4 py-3 text-on-surface">
 			<div className="flex min-h-12 items-center gap-4">
-				<Avatar name={s.name} src={s.picture} />
+				<Avatar name={s.name} src={s.picture} managed={s.kind === "managed"} />
 				<div className="min-w-0 flex-1">
 					<div className="flex items-baseline justify-between gap-3">
 						<span className="min-w-0 break-words text-body-large font-medium">
 							{s.name}
 							{s.isYou && <span className="font-normal text-on-surface-variant"> (você)</span>}
+							{caption && <span className="block text-sm font-normal text-on-surface-variant">{caption}</span>}
 						</span>
 						{s.participates && <span className="money shrink-0 text-title-medium">{formatBRL(s.amountCents)}</span>}
 					</div>
@@ -93,23 +97,41 @@ function ShareRow({
 	);
 }
 
-/** O que a pessoa vê sobre a própria parte quando já não precisa pagar nada: a receber de volta ou tudo pago. */
-function YourPartCard({ share, ownerName }: Readonly<{ share: ExpenseShare; ownerName: string }>) {
+/**
+ * O que se vê sobre uma parte que não precisa mais de pagamento: a receber de volta ou tudo pago.
+ * `account` (nome) liga a faixa "Sua parte" / "Parte de <nome> (você cuida)"; `managed` = parte de pessoa sem celular.
+ */
+function PartStatusCard({
+	share,
+	ownerName,
+	labeled,
+	headingId,
+}: Readonly<{ share: ExpenseShare; ownerName: string; labeled: boolean; headingId: string }>) {
 	const refund = share.status === "refund";
+	const managed = share.youManage;
+	const who = managed ? share.name : "Você";
+	const title = refund ? "A receber de volta" : managed ? "Parte paga" : "Sua parte está paga";
 	return (
-		<Card as="section" tone="high" aria-labelledby="sua-parte-situacao" className="flex items-start gap-3 bg-primary-container! p-5 text-on-primary-container">
-			<span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary text-on-primary">
-				<Icon name="check" />
-			</span>
-			<div className="min-w-0">
-				<h2 id="sua-parte-situacao" className="text-title-large">
-					{refund ? "A receber de volta" : "Sua parte está paga"}
-				</h2>
-				{refund && (
-					<p className="text-body-large">
-						Você pagou {formatBRL(share.refundCents)} a mais. {ownerName} vai te devolver.
-					</p>
-				)}
+		<Card as="section" tone="high" aria-labelledby={headingId} className="overflow-hidden">
+			{labeled && <AccountHeader id={headingId} name={share.name} managed={managed} />}
+			<div className="flex items-start gap-3 bg-primary-container p-5 text-on-primary-container">
+				<span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary text-on-primary">
+					<Icon name="check" />
+				</span>
+				<div className="min-w-0">
+					{labeled ? (
+						<p className="text-title-large">{title}</p>
+					) : (
+						<h2 id={headingId} className="text-title-large">
+							{title}
+						</h2>
+					)}
+					{refund && (
+						<p className="text-body-large">
+							{who} pagou {formatBRL(share.refundCents)} a mais. {ownerName} vai devolver.
+						</p>
+					)}
+				</div>
 			</div>
 		</Card>
 	);
@@ -134,10 +156,12 @@ export function ExpenseDetailView({
 }: Readonly<{
 	expense: ExpenseDetailData;
 	attachments: AttachmentView[];
-	qrOpen: boolean;
-	codeFallback: boolean;
-	onToggleQr: () => void;
-	onCopyCode: () => void;
+	/** Parte (uid) cujo QR Code está aberto. */
+	qrOpen: string | null;
+	/** Parte (uid) cujo código não pôde ser copiado sozinho. */
+	codeFallback: string | null;
+	onToggleQr: (uid: string) => void;
+	onCopyCode: (uid: string) => void;
 	onCopyKey: () => void;
 	onOpenImage: (id: string) => void;
 	onOpenPdf: (id: string) => void;
@@ -153,14 +177,17 @@ export function ExpenseDetailView({
 	/** Abre o sheet de avisar o grupo (WhatsApp). */
 	onShare: () => void;
 }>) {
-	const mine = expense.shares.find((s) => s.isYou);
-	const owes = mine?.status === "pending";
-	const youPaid = expense.paidBy.isYou;
+	// Contas que a pessoa controla nesta despesa: a dela e as das pessoas sem celular que ela cuida (a dela primeiro).
+	const accounts = expense.shares
+		.filter((s) => (s.isYou || s.youManage) && s.status !== "payer")
+		.sort((a, b) => Number(b.isYou) - Number(a.isYou));
+	const labeled = expense.shares.some((s) => s.youManage) || expense.paidBy.youManage;
+	const youPaid = expense.paidBy.isYou || expense.paidBy.youManage;
+	const payerManaged = expense.paidBy.youManage;
+	const payerName = expense.paidBy.name;
 	const stillOwe = expense.shares.filter((s) => s.status === "pending");
 	const toReturn = expense.shares.filter((s) => s.status === "refund");
 	const allPaid = stillOwe.length === 0 && toReturn.length === 0;
-	const payDue = mine ? mine.dueCents : 0;
-	const payload = useMemo(() => (owes && mine ? payloadFor(expense, payDue) : null), [owes, mine, expense, payDue]);
 	const inSplit = expense.shares.filter((s) => s.participates);
 	const left = expense.shares.filter((s) => !s.participates);
 	const row = (s: ExpenseShare) => (
@@ -180,24 +207,33 @@ export function ExpenseDetailView({
 				</Button>
 			</header>
 
-			{owes && mine && (
-				<PixPayCard
-					shareCents={payDue}
-					paidSoFarCents={mine.paidCents}
-					payeeName={expense.pix.payeeName}
-					pix={expense.pix}
-					payload={payload}
-					qrOpen={qrOpen}
-					codeFallback={codeFallback}
-					onToggleQr={onToggleQr}
-					onCopyCode={onCopyCode}
-					onCopyKey={onCopyKey}
-				/>
-			)}
-
-			{!youPaid && mine && (mine.status === "refund" || (mine.status === "paid" && mine.participates)) && (
-				<YourPartCard share={mine} ownerName={expense.paidBy.name} />
-			)}
+			{accounts.map((s) => {
+				const headingId = `conta-${s.uid}`;
+				if (s.status === "pending") {
+					return (
+						<PixPayCard
+							key={s.uid}
+							headingId={headingId}
+							accountName={labeled ? s.name : undefined}
+							managed={s.youManage}
+							shareCents={s.dueCents}
+							paidSoFarCents={s.paidCents}
+							payeeName={expense.pix.payeeName}
+							pix={expense.pix}
+							payload={payloadFor(expense, s.dueCents)}
+							qrOpen={qrOpen === s.uid}
+							codeFallback={codeFallback === s.uid}
+							onToggleQr={() => onToggleQr(s.uid)}
+							onCopyCode={() => onCopyCode(s.uid)}
+							onCopyKey={onCopyKey}
+						/>
+					);
+				}
+				if (s.status === "refund" || (s.status === "paid" && s.participates)) {
+					return <PartStatusCard key={s.uid} share={s} ownerName={payerName} labeled={labeled} headingId={headingId} />;
+				}
+				return null;
+			})}
 
 			{youPaid && (
 				<Card
@@ -207,20 +243,32 @@ export function ExpenseDetailView({
 					className={`space-y-3 p-5 ${allPaid ? "bg-primary-container! text-on-primary-container" : ""}`}
 				>
 					<div className="flex items-center gap-3">
-						<span
-							className={`flex size-10 shrink-0 items-center justify-center rounded-full ${
-								allPaid ? "bg-primary text-on-primary" : "bg-primary-container text-on-primary-container"
-							}`}
-						>
-							<Icon name="check" />
-						</span>
+						{payerManaged ? (
+							<Avatar name={payerName} managed />
+						) : (
+							<span
+								className={`flex size-10 shrink-0 items-center justify-center rounded-full ${
+									allPaid ? "bg-primary text-on-primary" : "bg-primary-container text-on-primary-container"
+								}`}
+							>
+								<Icon name="check" />
+							</span>
+						)}
 						<h2 id="voce-pagou" className="text-title-large">
-							{allPaid ? "Tudo certo" : "Você pagou esta despesa"}
+							{payerManaged ? (
+								<>
+									{payerName} pagou esta despesa <span className="whitespace-nowrap font-normal">· você cuida</span>
+								</>
+							) : allPaid ? (
+								"Tudo certo"
+							) : (
+								"Você pagou esta despesa"
+							)}
 						</h2>
 					</div>
 					{stillOwe.length > 0 && (
 						<div>
-							<p className="mb-1 text-body-large text-on-surface-variant">Ainda falta receber de:</p>
+							<p className="mb-1 text-body-large text-on-surface-variant">{payerManaged ? `${payerName} ainda tem a receber de:` : "Ainda falta receber de:"}</p>
 							<ul className="space-y-1">
 								{stillOwe.map((s) => (
 									<li key={s.uid} className="flex items-baseline justify-between gap-3 text-body-large">
@@ -233,7 +281,7 @@ export function ExpenseDetailView({
 					)}
 					{toReturn.length > 0 && (
 						<div>
-							<p className="mb-1 text-body-large text-on-surface-variant">Você precisa devolver para:</p>
+							<p className="mb-1 text-body-large text-on-surface-variant">{payerManaged ? `${payerName} precisa devolver para:` : "Você precisa devolver para:"}</p>
 							<ul className="space-y-1">
 								{toReturn.map((s) => (
 									<li key={s.uid} className="flex items-baseline justify-between gap-3 text-body-large">
@@ -244,7 +292,7 @@ export function ExpenseDetailView({
 							</ul>
 						</div>
 					)}
-					{allPaid && <p className="text-body-large">Todo mundo pagou a sua parte e não há nada a devolver.</p>}
+					{allPaid && <p className="text-body-large">Todo mundo pagou e não há nada a devolver.</p>}
 				</Card>
 			)}
 
@@ -394,8 +442,8 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 	const [expense, setExpense] = useState<ExpenseDetailData | null>(null);
 	const [error, setError] = useState<{ message: string; notFound: boolean } | null>(null);
 	const [reloadKey, setReloadKey] = useState(0);
-	const [qrOpen, setQrOpen] = useState(false);
-	const [codeFallback, setCodeFallback] = useState(false);
+	const [qrOpen, setQrOpen] = useState<string | null>(null);
+	const [codeFallback, setCodeFallback] = useState<string | null>(null);
 	// Recém lançada: em vez do recadinho, abrimos o sheet "Avisar o grupo".
 	const [shareOpen, setShareOpen] = useState<"launched" | "manual" | null>(() => (peekFlash() === LAUNCHED_FLASH ? "launched" : null));
 	const [snack, setSnack] = useState<string | null>(() => {
@@ -551,7 +599,7 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 		if (!groupMembers) {
 			apiFetch<Group>(`/api/groups/${encodeURIComponent(groupId)}`)
 				.then((g) => {
-					const list = g.members.map((m) => ({ uid: m.uid, name: m.name, picture: m.picture, isYou: m.isYou }));
+					const list = normalizeGroupDetail(g).members.map((m) => ({ uid: m.uid, name: m.name, picture: m.picture, isYou: m.isYou, kind: m.kind }));
 					setGroupMembers(list);
 					setResplitMode(modeFor(expense.participantUids, list.map((m) => m.uid)));
 				})
@@ -612,7 +660,6 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 	}
 	if (!expense) return <ExpenseDetailSkeleton />;
 
-	const mine = expense.shares.find((s) => s.isYou);
 	const viewed = attachments.find((a) => a.id === viewing);
 	const shareTarget = shareAction ? expense.shares.find((s) => s.uid === shareAction.uid) : undefined;
 	const shareLink = buildExpenseLink(window.location.origin, groupId, expenseId);
@@ -635,13 +682,14 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 				attachments={attachments}
 				qrOpen={qrOpen}
 				codeFallback={codeFallback}
-				onToggleQr={() => setQrOpen((o) => !o)}
-				onCopyCode={() => {
-					const code = mine ? payloadFor(expense, mine.dueCents) : null;
-					if (!code) return;
+				onToggleQr={(uid) => setQrOpen((o) => (o === uid ? null : uid))}
+				onCopyCode={(uid) => {
+					const target = expense.shares.find((s) => s.uid === uid);
+					const code = target ? payloadFor(expense, target.dueCents) : null;
+					if (!code || !target) return;
 					void copyText(code).then((ok) => {
-						setCodeFallback(!ok);
-						if (ok) setSnack("Código Pix copiado! Agora cole no app do seu banco.");
+						setCodeFallback(ok ? null : uid);
+						if (ok) setSnack(target.youManage ? `Código Pix da parte de ${target.name} copiado! Agora cole no app do banco.` : "Código Pix copiado! Agora cole no app do seu banco.");
 					});
 				}}
 				onCopyKey={() => {

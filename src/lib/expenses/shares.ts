@@ -16,6 +16,20 @@ export type ExpenseShare = {
 	method?: ShareMethod;
 };
 
+/**
+ * Lê uma cota gravada no modelo antigo (`status`, sem `paidCents`): 'paid' vale paidCents = amountCents,
+ * qualquer outro vale 0, e `status` some. Cotas já no modelo novo passam sem mudança.
+ */
+export function normalizeShare(s: ExpenseShare): ExpenseShare {
+	const legacy = s as ExpenseShare & { status?: unknown };
+	if (typeof legacy.paidCents === "number") return s;
+	const { status, ...rest } = legacy;
+	return { ...rest, paidCents: status === "paid" ? legacy.amountCents : 0 };
+}
+
+export const normalizeShares = (shares: ExpenseShare[]): ExpenseShare[] =>
+	shares.some((s) => typeof s.paidCents !== "number") ? shares.map(normalizeShare) : shares;
+
 /** Quanto a pessoa ainda deve a quem pagou. A cota de quem pagou nunca deve nada. */
 export function dueCents(s: ExpenseShare, paidBy: string): number {
 	return s.uid === paidBy ? 0 : Math.max(0, s.amountCents - s.paidCents);
@@ -42,7 +56,7 @@ export function participantUidsOf(shares: ExpenseShare[]): string[] {
 
 /** Alguém além de quem pagou já registrou pagamento? Então a despesa não pode ser apagada. */
 export function hasPayments(e: { paidBy: string; shares: ExpenseShare[] }): boolean {
-	return e.shares.some((s) => s.uid !== e.paidBy && s.paidCents > 0);
+	return normalizeShares(e.shares).some((s) => s.uid !== e.paidBy && s.paidCents > 0);
 }
 
 /**
@@ -126,7 +140,7 @@ export function balanceOf(expenses: { paidBy: string; shares: ExpenseShare[] }[]
 	let toReceiveCents = 0;
 	let toPayCents = 0;
 	for (const e of expenses) {
-		for (const s of e.shares) {
+		for (const s of normalizeShares(e.shares)) {
 			if (s.uid === e.paidBy) continue;
 			if (e.paidBy === uid) {
 				toReceiveCents += dueCents(s, e.paidBy);

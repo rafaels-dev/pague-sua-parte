@@ -11,8 +11,9 @@ export function Avatar({
 	name,
 	src,
 	size = "md",
+	managed = false,
 	className,
-}: Readonly<{ name: string; src?: string | null; size?: keyof typeof SIZES; className?: string }>) {
+}: Readonly<{ name: string; src?: string | null; size?: keyof typeof SIZES; className?: string; managed?: boolean }>) {
 	const [broken, setBroken] = useState(false);
 	if (src && !broken) {
 		return (
@@ -30,7 +31,9 @@ export function Avatar({
 		<span
 			aria-hidden="true"
 			className={cx(
-				"flex shrink-0 items-center justify-center rounded-full bg-primary-container font-medium text-on-primary-container",
+				"flex shrink-0 items-center justify-center rounded-full font-medium",
+				// Pessoa sem celular: círculo na cor terciária, para nunca se confundir com quem tem conta.
+				managed ? "bg-tertiary-container text-on-tertiary-container" : "bg-primary-container text-on-primary-container",
 				SIZES[size],
 				className,
 			)}

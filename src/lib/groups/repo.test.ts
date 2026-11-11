@@ -111,8 +111,8 @@ describe("getGroupDetail", () => {
 			name: "Viagem",
 			role: "member",
 			members: [
-				{ uid: "u1", name: "Ana", picture: "http://x/a.png", role: "admin", hasPixKey: true, isYou: false },
-				{ uid: "u2", name: "Bia", picture: null, role: "member", hasPixKey: false, isYou: true },
+				{ uid: "u1", name: "Ana", picture: "http://x/a.png", role: "admin", hasPixKey: true, isYou: false, kind: "user", managedBy: null, youManage: false, canEdit: false },
+				{ uid: "u2", name: "Bia", picture: null, role: "member", hasPixKey: false, isYou: true, kind: "user", managedBy: null, youManage: false, canEdit: false },
 			],
 		});
 		const json = JSON.stringify(res);

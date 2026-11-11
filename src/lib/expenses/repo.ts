@@ -1,6 +1,6 @@
 import { ObjectId, type Db } from "mongodb";
 import { groupsCollection, type GroupDoc } from "@/lib/groups/repo";
-import { isObjectIdHex } from "@/lib/groups/helpers";
+import { actsFor, isManagedMember, isManagedUid, isObjectIdHex } from "@/lib/groups/helpers";
 import type { PixKey } from "@/lib/pix/key";
 import {
 	deleteAttachments,
@@ -9,10 +9,11 @@ import {
 	type AttachmentStore,
 } from "@/lib/storage/attachments";
 import { usersCollection, type UserDoc } from "@/lib/users/repo";
-import { getBalancesByGroup, sumBalances } from "./balances";
+import { getBalancesForUids } from "./balances";
 import {
 	dueCents,
 	hasPayments,
+	normalizeShares,
 	orderShares,
 	participantUidsOf,
 	recalcShares,
@@ -60,12 +61,49 @@ async function findMemberGroup(db: Db, id: string, uid: string): Promise<GroupDo
 
 type PersonDoc = Pick<UserDoc, "_id" | "name" | "displayName" | "picture">;
 
-/** Projeção explícita: e-mail e chave Pix de ninguém saem do banco aqui. */
+/** Projeção explícita: e-mail e chave Pix de ninguém saem do banco aqui. Pessoas sem login não têm documento. */
 async function loadPeople(db: Db, uids: string[]): Promise<Map<string, PersonDoc>> {
+	const real = uids.filter((u) => !isManagedUid(u));
+	if (real.length === 0) return new Map();
 	const users = await usersCollection(db)
-		.find<PersonDoc>({ _id: { $in: uids } }, { projection: { name: 1, displayName: 1, picture: 1 } })
+		.find<PersonDoc>({ _id: { $in: real } }, { projection: { name: 1, displayName: 1, picture: 1 } })
 		.toArray();
 	return new Map(users.map((u) => [u._id, u]));
+}
+
+/** Nomes, tipos e responsáveis, sempre pelo grupo ATUAL (quem saiu vira "Participante"). */
+type Directory = {
+	name: (uid: string) => string;
+	picture: (uid: string) => string | null;
+	kind: (uid: string) => "user" | "managed";
+	youManage: (uid: string) => boolean;
+	managedByName: (uid: string) => string | null;
+};
+
+function directory(group: GroupDoc, people: Map<string, PersonDoc>, caller: string): Directory {
+	const entry = (uid: string) => group.members.find((m) => m.uid === uid);
+	const kind = (uid: string): "user" | "managed" => (entry(uid)?.kind === "managed" || (!entry(uid) && isManagedUid(uid)) ? "managed" : "user");
+	const name = (uid: string) => (kind(uid) === "managed" ? entry(uid)?.name?.trim() || "Participante" : personName(people.get(uid)));
+	return {
+		name,
+		picture: (uid) => (kind(uid) === "managed" ? null : (people.get(uid)?.picture ?? null)),
+		kind,
+		youManage: (uid) => uid !== caller && actsFor(group.members, caller, uid),
+		managedByName: (uid) => {
+			const by = entry(uid)?.managedBy;
+			return by && entry(uid)?.kind === "managed" ? name(by) : null;
+		},
+	};
+}
+
+/** Todos os uids cujos nomes a tela pode precisar (inclui responsáveis). */
+function uidsToLoad(group: GroupDoc, uids: string[]): string[] {
+	const out = new Set(uids);
+	for (const u of uids) {
+		const by = group.members.find((m) => m.uid === u && m.kind === "managed")?.managedBy;
+		if (by) out.add(by);
+	}
+	return [...out];
 }
 
 // ---------- detalhe ----------
@@ -84,7 +122,7 @@ export type ExpenseDetail = {
 	canEditParticipants: boolean;
 	/** Quem divide agora (cotas com valor > 0). */
 	participantUids: string[];
-	paidBy: { uid: string; name: string; picture: string | null; isYou: boolean };
+	paidBy: { uid: string; name: string; picture: string | null; isYou: boolean; kind: "user" | "managed"; youManage: boolean };
 	pix: { type: string; key: string; payeeName: string };
 	shares: {
 		uid: string;
@@ -97,25 +135,26 @@ export type ExpenseDetail = {
 		participates: boolean;
 		status: ShareStatus;
 		isYou: boolean;
+		kind: "user" | "managed";
+		youManage: boolean;
+		managedByName: string | null;
 		paidAt: string | null;
 		method: ShareMethod | null;
 	}[];
 	attachments: { id: string; name: string; contentType: string; size: number }[];
 };
 
+/** Quem age pelo dono (ele mesmo ou o responsável por ele, no grupo de agora) ou administra o grupo. */
 function canDeleteExpense(e: ExpenseDoc, group: GroupDoc, uid: string) {
 	const isAdmin = group.members.some((m) => m.uid === uid && m.role === "admin");
-	return (e.createdBy === uid || isAdmin) && !hasPayments(e);
+	return (actsFor(group.members, uid, e.paidBy) || isAdmin) && !hasPayments(e);
 }
 
 async function toDetail(db: Db, e: ExpenseDoc, group: GroupDoc, uid: string): Promise<ExpenseDetail> {
-	const people = await loadPeople(db, [...new Set([e.paidBy, ...e.shares.map((s) => s.uid)])]);
-	const view = (u: string) => ({
-		uid: u,
-		name: personName(people.get(u)),
-		picture: people.get(u)?.picture ?? null,
-		isYou: u === uid,
-	});
+	const people = await loadPeople(db, uidsToLoad(group, [...new Set([e.paidBy, ...e.shares.map((s) => s.uid)])]));
+	const dir = directory(group, people, uid);
+	const view = (u: string) => ({ uid: u, name: dir.name(u), picture: dir.picture(u), isYou: u === uid });
+	const owns = actsFor(group.members, uid, e.paidBy);
 	return {
 		id: e._id.toHexString(),
 		groupId: e.groupId.toHexString(),
@@ -124,13 +163,16 @@ async function toDetail(db: Db, e: ExpenseDoc, group: GroupDoc, uid: string): Pr
 		date: e.date,
 		createdAt: e.createdAt.toISOString(),
 		canDelete: canDeleteExpense(e, group, uid),
-		canMarkPaid: e.paidBy === uid,
-		canEditParticipants: e.paidBy === uid,
+		canMarkPaid: owns,
+		canEditParticipants: owns,
 		participantUids: participantUidsOf(e.shares),
-		paidBy: view(e.paidBy),
+		paidBy: { ...view(e.paidBy), kind: dir.kind(e.paidBy), youManage: dir.youManage(e.paidBy) },
 		pix: { type: e.pix.type, key: e.pix.key, payeeName: e.pix.payeeName },
-		shares: orderShares(e.shares, e.paidBy, (u) => personName(people.get(u))).map((s) => ({
+		shares: orderShares(e.shares, e.paidBy, dir.name).map((s) => ({
 			...view(s.uid),
+			kind: dir.kind(s.uid),
+			youManage: dir.youManage(s.uid),
+			managedByName: dir.managedByName(s.uid),
 			amountCents: s.amountCents,
 			paidCents: s.paidCents,
 			dueCents: dueCents(s, e.paidBy),
@@ -151,7 +193,9 @@ export type GetExpenseResult =
 
 async function findExpense(db: Db, groupId: string, eid: string) {
 	if (!isObjectIdHex(eid)) return null;
-	return expensesCollection(db).findOne({ _id: new ObjectId(eid), groupId: new ObjectId(groupId) });
+	const e = await expensesCollection(db).findOne({ _id: new ObjectId(eid), groupId: new ObjectId(groupId) });
+	// Lê cotas do modelo antigo (status) como paidCents, num só lugar.
+	return e ? { ...e, shares: normalizeShares(e.shares) } : null;
 }
 
 export async function getExpenseDetail(db: Db, groupId: string, eid: string, uid: string): Promise<GetExpenseResult> {
@@ -167,7 +211,8 @@ export async function getExpenseDetail(db: Db, groupId: string, eid: string, uid
 export type CreateResult =
 	| { status: "ok"; expense: ExpenseDetail }
 	| { status: "no_group" }
-	| { status: "no_pix" }
+	/** `name` presente quando a chave que falta é de uma pessoa sem login. */
+	| { status: "no_pix"; name?: string }
 	| { status: "invalid"; error: string; field: string };
 
 export async function createExpense(
@@ -179,11 +224,22 @@ export async function createExpense(
 	const group = await findMemberGroup(db, groupId, uid);
 	if (!group) return { status: "no_group" };
 
-	const payer = await usersCollection(db).findOne(
-		{ _id: uid },
-		{ projection: { name: 1, displayName: 1, pixKey: 1 } },
-	);
-	if (!payer?.pixKey) return { status: "no_pix" };
+	// Quem pagou: o próprio usuário ou uma pessoa sem login que ele cuida (nunca um uid vindo do cliente sem conferir).
+	const paidBy = input.paidByUid ?? uid;
+	let pix: ExpenseDoc["pix"];
+	if (paidBy === uid) {
+		const payer = await usersCollection(db).findOne({ _id: uid }, { projection: { name: 1, displayName: 1, pixKey: 1 } });
+		if (!payer?.pixKey) return { status: "no_pix" };
+		pix = { type: payer.pixKey.type, key: payer.pixKey.key, payeeName: personName(payer) };
+	} else {
+		if (!isManagedMember(group.members, paidBy) || !actsFor(group.members, uid, paidBy)) {
+			return { status: "invalid", field: "paidByUid", error: "Você só pode lançar despesas pagas por você ou por quem você cuida." };
+		}
+		const managed = group.members.find((m) => m.uid === paidBy)!;
+		const name = managed.name?.trim() || "Participante";
+		if (!managed.pixKey) return { status: "no_pix", name };
+		pix = { type: managed.pixKey.type, key: managed.pixKey.key, payeeName: name };
+	}
 
 	const memberUids = new Set(group.members.map((m) => m.uid));
 	if (!input.participantUids.every((p) => memberUids.has(p))) {
@@ -192,7 +248,7 @@ export async function createExpense(
 
 	let split: { uid: string; amountCents: number }[];
 	try {
-		split = splitEqually(input.amountCents, input.participantUids, uid);
+		split = splitEqually(input.amountCents, input.participantUids, paidBy);
 	} catch {
 		return { status: "invalid", field: "amountCents", error: "Esse valor é pequeno demais para dividir entre tantas pessoas." };
 	}
@@ -216,11 +272,11 @@ export async function createExpense(
 			_id,
 			groupId: new ObjectId(groupId),
 			createdBy: uid,
-			paidBy: uid,
+			paidBy,
 			description: input.description,
 			amountCents: input.amountCents,
 			date: input.date,
-			pix: { type: payer.pixKey.type, key: payer.pixKey.key, payeeName: personName(payer) },
+			pix,
 			shares: split.map((s) => ({ uid: s.uid, amountCents: s.amountCents, paidCents: 0 })),
 			version: 0,
 			attachments: uploaded,
@@ -243,7 +299,7 @@ export type ExpenseListItem = {
 	description: string;
 	amountCents: number;
 	date: string;
-	paidBy: { uid: string; name: string; isYou: boolean };
+	paidBy: { uid: string; name: string; isYou: boolean; youManage: boolean };
 	yourShareCents: number;
 	yourStatus: ShareStatus | "none";
 	yourDueCents: number;
@@ -251,6 +307,10 @@ export type ExpenseListItem = {
 	pendingCount: number;
 	refundCount: number;
 	attachmentCount: number;
+	/** Cotas (que não são do dono) das pessoas sem login que o usuário cuida. */
+	managed: { uid: string; name: string; status: ShareStatus; dueCents: number; refundCents: number }[];
+	/** Só quando o usuário age pelo dono (dono sem login): situação de quem cobra. */
+	ownerView: { pendingCount: number; refundCount: number } | null;
 };
 
 /** null se o grupo não existe ou `uid` não é membro. */
@@ -263,23 +323,37 @@ export async function listExpenses(db: Db, groupId: string, uid: string): Promis
 		.limit(100)
 		.toArray();
 	const people = await loadPeople(db, [...new Set(docs.map((d) => d.paidBy))]);
-	return docs.map((d) => {
+	const dir = directory(group, people, uid);
+	return docs.map((raw) => {
+		const d = { ...raw, shares: normalizeShares(raw.shares) };
 		const mine = d.shares.find((s) => s.uid === uid);
-			return {
-				id: d._id.toHexString(),
-				description: d.description,
-				amountCents: d.amountCents,
-				date: d.date,
-				paidBy: { uid: d.paidBy, name: personName(people.get(d.paidBy)), isYou: d.paidBy === uid },
-				yourShareCents: mine?.amountCents ?? 0,
-				yourStatus: mine ? shareStatus(mine, d.paidBy) : d.paidBy === uid ? "payer" : "none",
-				yourDueCents: mine ? dueCents(mine, d.paidBy) : 0,
-				yourRefundCents: mine ? refundCents(mine, d.paidBy) : 0,
-				pendingCount: d.shares.filter((s) => dueCents(s, d.paidBy) > 0).length,
-				refundCount: d.shares.filter((s) => refundCents(s, d.paidBy) > 0).length,
-				attachmentCount: d.attachments.length,
-			};
-		});
+		const pendingCount = d.shares.filter((s) => dueCents(s, d.paidBy) > 0).length;
+		const refundCount = d.shares.filter((s) => refundCents(s, d.paidBy) > 0).length;
+		return {
+			id: d._id.toHexString(),
+			description: d.description,
+			amountCents: d.amountCents,
+			date: d.date,
+			paidBy: { uid: d.paidBy, name: dir.name(d.paidBy), isYou: d.paidBy === uid, youManage: dir.youManage(d.paidBy) },
+			yourShareCents: mine?.amountCents ?? 0,
+			yourStatus: mine ? shareStatus(mine, d.paidBy) : d.paidBy === uid ? "payer" : "none",
+			yourDueCents: mine ? dueCents(mine, d.paidBy) : 0,
+			yourRefundCents: mine ? refundCents(mine, d.paidBy) : 0,
+			pendingCount,
+			refundCount,
+			attachmentCount: d.attachments.length,
+			managed: d.shares
+				.filter((s) => s.uid !== d.paidBy && dir.youManage(s.uid))
+				.map((s) => ({
+					uid: s.uid,
+					name: dir.name(s.uid),
+					status: shareStatus(s, d.paidBy),
+					dueCents: dueCents(s, d.paidBy),
+					refundCents: refundCents(s, d.paidBy),
+				})),
+			ownerView: dir.youManage(d.paidBy) ? { pendingCount, refundCount } : null,
+		};
+	});
 }
 
 // ---------- anexo ----------
@@ -313,7 +387,7 @@ export async function deleteExpense(db: Db, store: AttachmentStore, groupId: str
 	const e = await findExpense(db, groupId, eid);
 	if (!e) return { status: "no_expense" };
 	const isAdmin = group.members.some((m) => m.uid === uid && m.role === "admin");
-	if (e.createdBy !== uid && !isAdmin) return { status: "forbidden" };
+	if (!actsFor(group.members, uid, e.paidBy) && !isAdmin) return { status: "forbidden" };
 	if (hasPayments(e)) return { status: "has_payment" };
 
 	// Condicional: se um pagamento entrar no meio do caminho, não apaga.
@@ -321,7 +395,8 @@ export async function deleteExpense(db: Db, store: AttachmentStore, groupId: str
 		_id: e._id,
 		groupId: e.groupId,
 		// Quem pagou tem sempre paidCents 0, então qualquer paidCents > 0 é pagamento de outra pessoa.
-		shares: { $not: { $elemMatch: { paidCents: { $gt: 0 } } } },
+		// Também o modelo antigo (status 'paid', sem paidCents) conta como pagamento.
+		shares: { $not: { $elemMatch: { $or: [{ paidCents: { $gt: 0 } }, { status: "paid" }] } } },
 	});
 	if (res.deletedCount === 0) {
 		return (await findExpense(db, groupId, eid)) ? { status: "has_payment" } : { status: "no_expense" };
@@ -389,7 +464,7 @@ export async function setSharePaid(
 	const group = await findMemberGroup(db, groupId, uid);
 	if (!group) return { status: "no_group" };
 	const r = await mutateShares(db, groupId, eid, (e) => {
-		if (e.paidBy !== uid) return { error: "forbidden" };
+		if (!actsFor(group.members, uid, e.paidBy)) return { error: "forbidden" };
 		const change = status === "paid" ? settleShare(e.shares, e.paidBy, targetUid, new Date(), uid) : undoShare(e.shares, e.paidBy, targetUid);
 		return change ?? { error: "no_share" };
 	});
@@ -422,7 +497,7 @@ export async function updateParticipants(
 
 	const memberUids = new Set(group.members.map((m) => m.uid));
 	const r = await mutateShares(db, groupId, eid, (e) => {
-		if (e.paidBy !== uid) return { error: { status: "forbidden" } };
+		if (!actsFor(group.members, uid, e.paidBy)) return { error: { status: "forbidden" } };
 		if (participantUids.length === 0 || new Set(participantUids).size !== participantUids.length) {
 			return { error: { status: "invalid", field: "participantUids", error: "Escolha quem divide a despesa." } };
 		}
@@ -445,11 +520,43 @@ export async function updateParticipants(
 
 // ---------- resumo ----------
 
-/** Só grupos em que `uid` é membro AGORA. Soma dos saldos por grupo (a mesma conta de GET /api/groups). */
-export async function getSummary(db: Db, uid: string): Promise<{ toReceiveCents: number; toPayCents: number }> {
+export type Summary = {
+	toReceiveCents: number;
+	toPayCents: number;
+	managed: { uid: string; name: string; groupId: string; groupName: string; toReceiveCents: number; toPayCents: number }[];
+};
+
+/**
+ * Só grupos em que `uid` é membro AGORA. Os totais são estritamente os de `uid` (a mesma conta de GET /api/groups);
+ * `managed` traz o saldo de cada pessoa sem login pela qual `uid` é responsável AGORA. Uma única agregação.
+ */
+export async function getSummary(db: Db, uid: string): Promise<Summary> {
 	const groups = await groupsCollection(db)
-		.find({ "members.uid": uid }, { projection: { _id: 1 } })
+		.find({ "members.uid": uid }, { projection: { _id: 1, name: 1, members: 1 } })
 		.toArray();
-	const byGroup = await getBalancesByGroup(db, uid, groups.map((g) => g._id));
-	return sumBalances(byGroup.values());
+	const managedList = groups.flatMap((g) =>
+		g.members
+			.filter((m) => m.kind === "managed" && m.managedBy === uid)
+			.map((m) => ({ uid: m.uid, name: m.name?.trim() || "Participante", groupId: g._id.toHexString(), groupName: g.name })),
+	);
+	const balances = await getBalancesForUids(
+		db,
+		[uid, ...new Set(managedList.map((m) => m.uid))],
+		groups.map((g) => g._id),
+	);
+	let toReceiveCents = 0;
+	let toPayCents = 0;
+	for (const g of groups) {
+		const b = balances.get(`${g._id.toHexString()}:${uid}`);
+		toReceiveCents += b?.toReceiveCents ?? 0;
+		toPayCents += b?.toPayCents ?? 0;
+	}
+	return {
+		toReceiveCents,
+		toPayCents,
+		managed: managedList.map((m) => {
+			const b = balances.get(`${m.groupId}:${m.uid}`);
+			return { ...m, toReceiveCents: b?.toReceiveCents ?? 0, toPayCents: b?.toPayCents ?? 0 };
+		}),
+	};
 }

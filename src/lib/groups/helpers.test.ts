@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateInviteToken, isObjectIdHex, isPlausibleToken, newInviteExpiry, sortMembers, type MemberView } from "./helpers";
+import { actsFor, generateInviteToken, generateManagedUid, isManagedMember, isManagedUid, isObjectIdHex, isPlausibleToken, newInviteExpiry, sortMembers, type MemberView } from "./helpers";
 
 const m = (name: string, role: "admin" | "member"): MemberView => ({
 	uid: name,
@@ -8,6 +8,10 @@ const m = (name: string, role: "admin" | "member"): MemberView => ({
 	role,
 	hasPixKey: false,
 	isYou: false,
+	kind: "user",
+	managedBy: null,
+	youManage: false,
+	canEdit: false,
 });
 
 describe("generateInviteToken", () => {
@@ -42,5 +46,37 @@ describe("sortMembers", () => {
 	it("admins primeiro, depois por nome", () => {
 		const out = sortMembers([m("Zé", "member"), m("Ana", "member"), m("Wilson", "admin"), m("Bia", "admin")]);
 		expect(out.map((x) => x.name)).toEqual(["Bia", "Wilson", "Ana", "Zé"]);
+	});
+});
+
+describe("pessoas sem login", () => {
+	const members = [
+		{ uid: "renata", role: "admin" as const },
+		{ uid: "ana", role: "member" as const },
+		{ uid: "m_ben", role: "member" as const, kind: "managed" as const, managedBy: "renata" },
+	];
+	it("actsFor: a si mesmo ou a quem cuida; nunca a outro membro real nem a pessoa de outro responsável", () => {
+		expect(actsFor(members, "renata", "renata")).toBe(true);
+		expect(actsFor(members, "renata", "m_ben")).toBe(true);
+		expect(actsFor(members, "ana", "m_ben")).toBe(false);
+		expect(actsFor(members, "renata", "ana")).toBe(false);
+		expect(actsFor(members, "renata", "m_outro")).toBe(false);
+		expect(actsFor(members, "m_ben", "m_ben")).toBe(true); // identidade; ninguém autentica como m_*
+	});
+	it("um membro real com uid parecido não é pessoa sem login (vale o cadastro, não o formato)", () => {
+		const real = [{ uid: "renata" }, { uid: "m_fake", role: "member" as const }];
+		expect(isManagedMember(real, "m_fake")).toBe(false);
+		expect(actsFor(real, "renata", "m_fake")).toBe(false);
+	});
+	it("generateManagedUid: m_ + base64url, único", () => {
+		const a = generateManagedUid();
+		expect(a).toMatch(/^m_[A-Za-z0-9_-]{22}$/);
+		expect(isManagedUid(a)).toBe(true);
+		expect(generateManagedUid()).not.toBe(a);
+	});
+	it("sortMembers: admins, usuários reais por nome, depois pessoas sem login por nome", () => {
+		const managed = (name: string): MemberView => ({ ...m(name, "member"), kind: "managed" });
+		const out = sortMembers([managed("Ana Avó"), m("Zé", "member"), managed("Benjamim"), m("Wilson", "admin"), m("Bia", "member")]);
+		expect(out.map((x) => x.name)).toEqual(["Wilson", "Bia", "Zé", "Ana Avó", "Benjamim"]);
 	});
 });

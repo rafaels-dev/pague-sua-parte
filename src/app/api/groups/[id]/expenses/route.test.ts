@@ -116,3 +116,33 @@ describe("GET /api/groups/:id/expenses", () => {
 		expect(await res.json()).toEqual({ error: "Grupo não encontrado." });
 	});
 });
+
+describe("POST /api/groups/:id/expenses: paidByUid", () => {
+	it("repassa paidByUid ao repo; o uid do chamador vem sempre da sessão", async () => {
+		await post({ ...data, paidByUid: "m_ben", uid: "invasor" });
+		expect(createExpense.mock.calls[0][2]).toMatchObject({ uid: "u1", input: { paidByUid: "m_ben" } });
+		expect(createExpense.mock.calls[0][2].input).not.toHaveProperty("uid");
+	});
+	it("422 paidByUid inválido do repo", async () => {
+		createExpense.mockResolvedValue({ status: "invalid", field: "paidByUid", error: "Você só pode lançar despesas pagas por você ou por quem você cuida." });
+		const res = await post({ ...data, paidByUid: "m_alheio" });
+		expect(res.status).toBe(422);
+		expect(((await res.json()) as { field: string }).field).toBe("paidByUid");
+	});
+	it("422 paidByUid com tipo errado", async () => {
+		const res = await post({ ...data, paidByUid: 5 });
+		expect(res.status).toBe(422);
+		expect(((await res.json()) as { field: string }).field).toBe("paidByUid");
+		expect(createExpense).not.toHaveBeenCalled();
+	});
+	it("409 sem Pix da pessoa sem login traz o nome", async () => {
+		createExpense.mockResolvedValue({ status: "no_pix", name: "Benjamim" });
+		const res = await post({ ...data, paidByUid: "m_ben" });
+		expect(res.status).toBe(409);
+		expect(await res.json()).toEqual({ error: "Cadastre a chave Pix de Benjamim antes de lançar uma despesa paga por ele(a).", field: "pixKey" });
+	});
+	it("409 sem Pix próprio mantém a mensagem de sempre", async () => {
+		createExpense.mockResolvedValue({ status: "no_pix" });
+		expect(await (await post(data)).json()).toEqual({ error: "Cadastre sua chave Pix antes de lançar uma despesa.", field: "pixKey" });
+	});
+});

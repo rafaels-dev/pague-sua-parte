@@ -1,8 +1,11 @@
 import { ObjectId, type Db } from "mongodb";
 import { getBalancesByGroup, ZERO_BALANCE } from "@/lib/expenses/balances";
 import { usersCollection, type UserDoc } from "@/lib/users/repo";
+import type { PixKey } from "@/lib/pix/key";
 import {
 	generateInviteToken,
+	generateManagedUid,
+	isManagedUid,
 	isObjectIdHex,
 	isPlausibleToken,
 	MAX_MEMBERS,
@@ -12,7 +15,16 @@ import {
 } from "./helpers";
 
 export type Role = "admin" | "member";
-export type GroupMember = { uid: string; role: Role; joinedAt: Date };
+export type GroupMember = {
+	uid: string;
+	role: Role;
+	joinedAt: Date;
+	/** Pessoa sem login, cuidada por `managedBy` (um membro real). Sempre `role: 'member'`. */
+	kind?: "managed";
+	name?: string;
+	managedBy?: string;
+	pixKey?: PixKey;
+};
 export type GroupDoc = {
 	_id: ObjectId;
 	name: string;
@@ -76,23 +88,50 @@ export async function getGroupDetail(db: Db, id: string, uid: string): Promise<G
 	if (!role) return null;
 
 	// Projeção explícita: e-mail e chave Pix nunca saem do banco para esta resposta (só hasPixKey).
+	// Pessoas sem login não têm documento em `users`: o nome vem da entrada no grupo.
+	const realUids = group.members.filter((m) => m.kind !== "managed").map((m) => m.uid);
 	const users = await usersCollection(db)
 		.find<Pick<UserDoc, "_id" | "name" | "displayName" | "picture"> & { hasPixKey?: boolean }>(
-			{ _id: { $in: group.members.map((m) => m.uid) } },
+			{ _id: { $in: realUids } },
 			{ projection: { name: 1, displayName: 1, picture: 1, pixKey: 1 } },
 		)
 		.toArray();
 	const byId = new Map(users.map((u) => [u._id, u as typeof u & { pixKey?: unknown }]));
+	const realName = (id: string) => {
+		const u = byId.get(id);
+		return u?.displayName?.trim() || u?.name || "Participante";
+	};
 
 	const members = group.members.map((m): MemberView => {
+		if (m.kind === "managed") {
+			const canEdit = role === "admin" || m.managedBy === uid;
+			return {
+				uid: m.uid,
+				name: m.name?.trim() || "Participante",
+				picture: null,
+				role: "member",
+				hasPixKey: Boolean(m.pixKey),
+				isYou: false,
+				kind: "managed",
+				managedBy: m.managedBy ? { uid: m.managedBy, name: realName(m.managedBy), isYou: m.managedBy === uid } : null,
+				youManage: m.managedBy === uid,
+				canEdit,
+				// A chave de quem não tem login só aparece para quem pode editá-la.
+				...(canEdit ? { pixKey: m.pixKey ? { type: m.pixKey.type, key: m.pixKey.key } : null } : {}),
+			};
+		}
 		const u = byId.get(m.uid);
 		return {
 			uid: m.uid,
-			name: u?.displayName?.trim() || u?.name || "Participante",
+			name: realName(m.uid),
 			picture: u?.picture ?? null,
 			role: m.role,
 			hasPixKey: Boolean(u?.pixKey),
 			isYou: m.uid === uid,
+			kind: "user",
+			managedBy: null,
+			youManage: false,
+			canEdit: false,
 		};
 	});
 	return { id: group._id.toHexString(), name: group.name, role, members: sortMembers(members) };
@@ -170,7 +209,8 @@ export async function previewInvite(db: Db, token: string, uid: string): Promise
 export type AcceptResult = { status: "ok"; groupId: string } | { status: "invalid" } | { status: "full" };
 
 export async function acceptInvite(db: Db, token: string, uid: string): Promise<AcceptResult> {
-	if (!isPlausibleToken(token)) return { status: "invalid" };
+	// Pessoas sem login nunca entram (nem agem) por convite: o uid vem sempre do token verificado.
+	if (!isPlausibleToken(token) || isManagedUid(uid)) return { status: "invalid" };
 	const groups = groupsCollection(db);
 	const now = new Date();
 
@@ -198,20 +238,38 @@ export type MemberActionResult =
 	| { status: "not_found" }
 	| { status: "forbidden" }
 	| { status: "self" }
-	| { status: "target_missing" };
+	| { status: "target_missing" }
+	| { status: "managed_target" }
+	| { status: "responsible"; name: string; managed: string[] };
+
+async function realName(db: Db, uid: string): Promise<string> {
+	const users = await usersCollection(db)
+		.find<Pick<UserDoc, "_id" | "name" | "displayName">>({ _id: { $in: [uid] } }, { projection: { name: 1, displayName: 1 } })
+		.toArray();
+	return users[0]?.displayName?.trim() || users[0]?.name || "Participante";
+}
 
 /** Explica por que o update atômico não casou. A ordem importa: não vazar a existência do grupo. */
 async function explainNoMatch(
-	groups: ReturnType<typeof groupsCollection>,
+	db: Db,
 	_id: ObjectId,
 	actorUid: string,
 	targetUid: string,
+	opts: { removing?: boolean; roleChange?: boolean } = {},
 ): Promise<MemberActionResult> {
-	const group = await groups.findOne({ _id, "members.uid": actorUid });
+	const group = await groupsCollection(db).findOne({ _id, "members.uid": actorUid });
 	if (!group) return { status: "not_found" };
 	if (roleOf(group, actorUid) !== "admin") return { status: "forbidden" };
 	if (actorUid === targetUid) return { status: "self" };
-	if (!group.members.some((m) => m.uid === targetUid)) return { status: "target_missing" };
+	const target = group.members.find((m) => m.uid === targetUid);
+	if (!target) return { status: "target_missing" };
+	if (opts.roleChange && target.kind === "managed") return { status: "managed_target" };
+	if (opts.removing && target.kind !== "managed") {
+		const cared = group.members.filter((m) => m.kind === "managed" && m.managedBy === targetUid);
+		if (cared.length > 0) {
+			return { status: "responsible", name: await realName(db, targetUid), managed: cared.map((m) => m.name ?? "Participante") };
+		}
+	}
 	// Casou na releitura: perdeu a corrida por pouco; o chamador pode tentar de novo.
 	throw new Error("Falha ao atualizar o membro.");
 }
@@ -235,27 +293,146 @@ export async function setMemberRole(
 	if (!isObjectIdHex(id)) return { status: "not_found" };
 	const groups = groupsCollection(db);
 	const _id = new ObjectId(id);
-	if (actorUid === targetUid) return explainNoMatch(groups, _id, actorUid, targetUid);
+	const opts = { roleChange: true };
+	if (actorUid === targetUid) return explainNoMatch(db, _id, actorUid, targetUid, opts);
 
-	const res = await groups.updateOne(adminActsOnMember(_id, actorUid, targetUid), {
-		$set: { "members.$[t].role": role, updatedAt: new Date() },
-	}, { arrayFilters: [{ "t.uid": targetUid }] });
+	const res = await groups.updateOne(
+		{
+			...adminActsOnMember(_id, actorUid, targetUid),
+			// Pessoas sem login nunca viram administradoras.
+			$nor: [{ members: { $elemMatch: { uid: targetUid, kind: "managed" } } }],
+		},
+		{ $set: { "members.$[t].role": role, updatedAt: new Date() } },
+		{ arrayFilters: [{ "t.uid": targetUid }] },
+	);
 	// matchedCount (e não modifiedCount): trocar para o papel que já existe é sucesso (idempotente).
 	if (res.matchedCount > 0) return { status: "ok" };
-	return explainNoMatch(groups, _id, actorUid, targetUid);
+	return explainNoMatch(db, _id, actorUid, targetUid, opts);
 }
 
+/** Remove um membro real (sem ninguém sob seus cuidados) ou uma pessoa sem login. Só administradores. */
 export async function removeMember(db: Db, id: string, actorUid: string, targetUid: string): Promise<MemberActionResult> {
 	if (!isObjectIdHex(id)) return { status: "not_found" };
 	const groups = groupsCollection(db);
 	const _id = new ObjectId(id);
-	if (actorUid === targetUid) return explainNoMatch(groups, _id, actorUid, targetUid);
+	const opts = { removing: true };
+	if (actorUid === targetUid) return explainNoMatch(db, _id, actorUid, targetUid, opts);
 
-	const res = await groups.updateOne(adminActsOnMember(_id, actorUid, targetUid), {
-		$pull: { members: { uid: targetUid } },
-		// Invalida o convite atual na mesma operação: quem foi removido não volta com o link antigo.
-		$set: { invite: null, updatedAt: new Date() },
-	});
+	const res = await groups.updateOne(
+		{
+			...adminActsOnMember(_id, actorUid, targetUid),
+			// Quem é responsável por alguém não sai antes de passar a responsabilidade adiante.
+			$nor: [{ members: { $elemMatch: { managedBy: targetUid } } }],
+		},
+		{
+			$pull: { members: { uid: targetUid } },
+			// Invalida o convite atual na mesma operação: quem foi removido não volta com o link antigo.
+			$set: { invite: null, updatedAt: new Date() },
+		},
+	);
 	if (res.matchedCount > 0) return { status: "ok" };
-	return explainNoMatch(groups, _id, actorUid, targetUid);
+	return explainNoMatch(db, _id, actorUid, targetUid, opts);
+}
+
+// ---------- pessoas sem login ----------
+
+export type ManagedResult =
+	| { status: "ok"; uid: string }
+	| { status: "not_found" }
+	| { status: "forbidden" }
+	| { status: "target_missing" }
+	| { status: "full" }
+	| { status: "invalid"; field: "managedBy"; error: string };
+
+const BAD_RESPONSIBLE = "Escolha alguém do grupo para cuidar dessa pessoa.";
+const realMember = (uid: string) => ({ members: { $elemMatch: { uid, kind: { $ne: "managed" as const } } } });
+
+export async function addManagedMember(
+	db: Db,
+	id: string,
+	actorUid: string,
+	input: { name: string; managedBy: string; pixKey?: PixKey },
+): Promise<ManagedResult> {
+	if (!isObjectIdHex(id)) return { status: "not_found" };
+	const groups = groupsCollection(db);
+	const _id = new ObjectId(id);
+	const now = new Date();
+	const uid = generateManagedUid();
+	const member: GroupMember = {
+		uid,
+		role: "member",
+		joinedAt: now,
+		kind: "managed",
+		name: input.name,
+		managedBy: input.managedBy,
+		...(input.pixKey ? { pixKey: input.pixKey } : {}),
+	};
+	// Um único update atômico: quem age é admin AGORA, o responsável é membro real AGORA e ainda há vaga.
+	const res = await groups.updateOne(
+		{
+			_id,
+			$and: [{ members: { $elemMatch: { uid: actorUid, role: "admin" } } }, realMember(input.managedBy)],
+			[`members.${MAX_MEMBERS - 1}`]: { $exists: false },
+		},
+		{ $push: { members: member }, $set: { updatedAt: now } },
+	);
+	if (res.matchedCount > 0) return { status: "ok", uid };
+
+	const group = await groups.findOne({ _id, "members.uid": actorUid });
+	if (!group) return { status: "not_found" };
+	if (roleOf(group, actorUid) !== "admin") return { status: "forbidden" };
+	const resp = group.members.find((m) => m.uid === input.managedBy);
+	if (!resp || resp.kind === "managed") return { status: "invalid", field: "managedBy", error: BAD_RESPONSIBLE };
+	if (group.members.length >= MAX_MEMBERS) return { status: "full" };
+	throw new Error("Falha ao adicionar a pessoa.");
+}
+
+/** `pixKey: null` limpa a chave. Admins e o responsável atual podem editar. */
+export async function updateManagedMember(
+	db: Db,
+	id: string,
+	actorUid: string,
+	targetUid: string,
+	patch: { name?: string; managedBy?: string; pixKey?: PixKey | null },
+): Promise<ManagedResult> {
+	if (!isObjectIdHex(id)) return { status: "not_found" };
+	const groups = groupsCollection(db);
+	const _id = new ObjectId(id);
+
+	const $set: Record<string, unknown> = { updatedAt: new Date() };
+	const $unset: Record<string, ""> = {};
+	if (patch.name !== undefined) $set["members.$[t].name"] = patch.name;
+	if (patch.managedBy !== undefined) $set["members.$[t].managedBy"] = patch.managedBy;
+	if (patch.pixKey) $set["members.$[t].pixKey"] = patch.pixKey;
+	else if (patch.pixKey === null) $unset["members.$[t].pixKey"] = "";
+
+	const and: Record<string, unknown>[] = [
+		{ members: { $elemMatch: { uid: targetUid, kind: "managed" } } },
+		{
+			$or: [
+				{ members: { $elemMatch: { uid: actorUid, role: "admin" } } },
+				// Responsável atual (e ainda membro).
+				{ $and: [{ "members.uid": actorUid }, { members: { $elemMatch: { uid: targetUid, managedBy: actorUid } } }] },
+			],
+		},
+	];
+	if (patch.managedBy !== undefined) and.push(realMember(patch.managedBy));
+
+	const res = await groups.updateOne(
+		{ _id, $and: and },
+		{ $set, ...(Object.keys($unset).length ? { $unset } : {}) },
+		{ arrayFilters: [{ "t.uid": targetUid }] },
+	);
+	if (res.matchedCount > 0) return { status: "ok", uid: targetUid };
+
+	const group = await groups.findOne({ _id, "members.uid": actorUid });
+	if (!group) return { status: "not_found" };
+	const target = group.members.find((m) => m.uid === targetUid);
+	if (!target || target.kind !== "managed") return { status: "target_missing" };
+	if (roleOf(group, actorUid) !== "admin" && target.managedBy !== actorUid) return { status: "forbidden" };
+	if (patch.managedBy !== undefined) {
+		const resp = group.members.find((m) => m.uid === patch.managedBy);
+		if (!resp || resp.kind === "managed") return { status: "invalid", field: "managedBy", error: BAD_RESPONSIBLE };
+	}
+	throw new Error("Falha ao atualizar a pessoa.");
 }

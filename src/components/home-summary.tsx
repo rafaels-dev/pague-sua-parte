@@ -2,9 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
-import { Card, Skeleton } from "@/components/ui";
+import Link from "next/link";
+import { Avatar, Card, Icon, Skeleton } from "@/components/ui";
+import { GroupBalance } from "@/components/groups/groups-list";
 import { apiFetch } from "@/lib/api-client";
 import { formatBRL } from "@/lib/money";
+import { normalizeMeSummary, type MeSummary } from "@/lib/ui/managed";
 
 /**
  * Cartão-resumo da tela inicial: quanto a pessoa tem a receber e a pagar (em centavos).
@@ -40,17 +43,43 @@ export function HomeSummary({
 	);
 }
 
-/** Resumo com os valores reais de `/api/me/summary`. */
+/** Um cartão compacto por pessoa sem celular que você cuida: o saldo dela, separado do seu. Toque leva ao grupo. */
+export function ManagedSummaryCards({ managed }: Readonly<{ managed: MeSummary["managed"] }>) {
+	if (managed.length === 0) return null;
+	return (
+		<section aria-label="Pessoas que você cuida" className="space-y-3">
+			{managed.map((m) => (
+				<Link
+					key={`${m.groupId}-${m.uid}`}
+					href={`/app/grupos/${encodeURIComponent(m.groupId)}`}
+					className="state-layer flex min-h-[4.5rem] items-center gap-4 rounded-shape-lg bg-surface-container-low px-4 py-3 text-on-surface"
+				>
+					<Avatar name={m.name} managed />
+					<span className="min-w-0 flex-1">
+						<span className="block break-words text-title-medium">
+							{m.name} <span className="whitespace-nowrap font-normal">· você cuida</span>
+						</span>
+						{m.groupName && <span className="block break-words text-body-large text-on-surface-variant">{m.groupName}</span>}
+						<GroupBalance group={m} />
+					</span>
+					<Icon name="chevron_right" className="text-on-surface-variant" />
+				</Link>
+			))}
+		</section>
+	);
+}
+
+/** Resumo com os valores reais de `/api/me/summary`, mais os cartões de quem você cuida. */
 export function HomeSummaryLive() {
 	const { user } = useAuth();
-	const [state, setState] = useState<{ kind: "loading" } | { kind: "error" } | { kind: "ready"; receive: number; pay: number }>({ kind: "loading" });
+	const [state, setState] = useState<{ kind: "loading" } | { kind: "error" } | { kind: "ready"; summary: MeSummary }>({ kind: "loading" });
 
 	useEffect(() => {
 		if (!user) return;
 		let cancelled = false;
-		apiFetch<{ toReceiveCents: number; toPayCents: number }>("/api/me/summary")
+		apiFetch<unknown>("/api/me/summary")
 			.then((s) => {
-				if (!cancelled) setState({ kind: "ready", receive: s.toReceiveCents, pay: s.toPayCents });
+				if (!cancelled) setState({ kind: "ready", summary: normalizeMeSummary(s) });
 			})
 			.catch(() => {
 				if (!cancelled) setState({ kind: "error" });
@@ -60,11 +89,12 @@ export function HomeSummaryLive() {
 		};
 	}, [user]);
 
+	const ready = state.kind === "ready" ? state.summary : null;
 	return (
-		<HomeSummary
-			loading={state.kind === "loading"}
-			receiveCents={state.kind === "ready" ? state.receive : null}
-			payCents={state.kind === "ready" ? state.pay : null}
-		/>
+		<div className="space-y-3">
+			<HomeSummary loading={state.kind === "loading"} receiveCents={ready?.toReceiveCents ?? null} payCents={ready?.toPayCents ?? null} />
+			{ready && <ManagedSummaryCards managed={ready.managed} />}
+		</div>
 	);
 }
+

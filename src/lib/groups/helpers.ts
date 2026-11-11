@@ -27,6 +27,38 @@ export function newInviteExpiry(now: Date = new Date()): Date {
 	return new Date(now.getTime() + INVITE_TTL_MS);
 }
 
+/** Pessoa sem login (ex.: avô sem celular), cuidada por um membro real do grupo. */
+export const MANAGED_UID_PREFIX = "m_";
+
+export function isManagedUid(uid: string): boolean {
+	return uid.startsWith(MANAGED_UID_PREFIX);
+}
+
+/** `m_` + 16 bytes aleatórios (Web Crypto) em base64url: nunca colide com um uid do Firebase. */
+export function generateManagedUid(): string {
+	const bytes = new Uint8Array(16);
+	crypto.getRandomValues(bytes);
+	let binary = "";
+	for (const b of bytes) binary += String.fromCharCode(b);
+	return MANAGED_UID_PREFIX + btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+export type MemberLike = { uid: string; role?: "admin" | "member"; kind?: "managed"; managedBy?: string };
+
+/** O membro `uid` é uma pessoa sem login? (pelo cadastro no grupo, nunca só pelo formato do uid) */
+export function isManagedMember(members: MemberLike[], uid: string): boolean {
+	return members.some((m) => m.uid === uid && m.kind === "managed");
+}
+
+/**
+ * `caller` age por `uid` quando é ele mesmo, ou quando `uid` é uma pessoa sem login
+ * deste grupo cujo responsável (`managedBy`) é `caller`. Única fonte desta regra.
+ */
+export function actsFor(members: MemberLike[], caller: string, uid: string): boolean {
+	if (uid === caller) return true;
+	return members.some((m) => m.uid === uid && m.kind === "managed" && m.managedBy === caller);
+}
+
 export type MemberView = {
 	uid: string;
 	name: string;
@@ -34,12 +66,19 @@ export type MemberView = {
 	role: "admin" | "member";
 	hasPixKey: boolean;
 	isYou: boolean;
+	kind: "user" | "managed";
+	managedBy: { uid: string; name: string; isYou: boolean } | null;
+	youManage: boolean;
+	canEdit: boolean;
+	/** Só para pessoas sem login, e só para quem pode editá-las. */
+	pixKey?: { type: string; key: string } | null;
 };
 
-/** Administradores primeiro, depois por nome. */
+/** Administradores, depois usuários reais por nome, depois pessoas sem login por nome. */
 export function sortMembers(members: MemberView[]): MemberView[] {
+	const rank = (m: MemberView) => (m.kind === "managed" ? 2 : m.role === "admin" ? 0 : 1);
 	return [...members].sort((a, b) => {
-		if (a.role !== b.role) return a.role === "admin" ? -1 : 1;
+		if (rank(a) !== rank(b)) return rank(a) - rank(b);
 		return a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" });
 	});
 }

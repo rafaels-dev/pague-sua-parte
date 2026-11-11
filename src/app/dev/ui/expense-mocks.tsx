@@ -15,24 +15,47 @@ import { ExpenseListView } from "@/components/expenses/expense-list";
 import { NewExpenseFormView, NoPixKeyBlock, type FormErrors } from "@/components/expenses/new-expense-form";
 import type { ExpenseDetailData, ExpenseShare, ExpenseSummary } from "@/components/expenses/types";
 import { useAttachments } from "@/components/expenses/use-attachments";
-import { GroupDetailView, type Group } from "@/components/groups/group-detail";
+import { AddManagedButton, GroupDetailView, type Group } from "@/components/groups/group-detail";
+import { carersOf, ChangeCarerContent, ManagedFormContent, ManagedOptionsContent } from "@/components/groups/managed-sheet";
+import { normalizeMember, type Member } from "@/components/groups/types";
+import { ManagedSummaryCards } from "@/components/home-summary";
 import { Button, Sheet } from "@/components/ui";
 import { todayISO } from "@/lib/ui/dates";
 
 const noop = () => {};
 const USER = { name: "Rafael Schettino", email: "rafael@example.com", picture: null };
 
+type MemberInit = Partial<Member> & Pick<Member, "uid" | "name">;
+const member = (m: MemberInit): Member => normalizeMember({ picture: null, role: "member", hasPixKey: true, isYou: false, ...m });
+
 export const MOCK_GROUP: Group = {
 	id: "1",
 	name: "Despesas da vó",
 	role: "admin",
 	members: [
-		{ uid: "a", name: "Rafael Schettino", picture: null, role: "admin", hasPixKey: true, isYou: true },
-		{ uid: "b", name: "Maria das Dores Silva", picture: null, role: "member", hasPixKey: true, isYou: false },
-		{ uid: "c", name: "José", picture: null, role: "member", hasPixKey: true, isYou: false },
-		{ uid: "d", name: "Ana Paula", picture: null, role: "member", hasPixKey: false, isYou: false },
+		member({ uid: "a", name: "Rafael Schettino", role: "admin", isYou: true }),
+		member({ uid: "b", name: "Maria das Dores Silva" }),
+		member({ uid: "c", name: "José" }),
+		member({ uid: "d", name: "Ana Paula", hasPixKey: false }),
 	],
 };
+
+/** Cenário "pessoa sem celular": quem usa o app é a Renata, que cuida do avô Benjamim (e do tio Carlos, ainda sem chave Pix). */
+const KEY_BENJAMIM = { type: "cpf" as const, key: "52998224725" };
+export const CARE_GROUP: Group = {
+	id: "1",
+	name: "Despesas da família",
+	role: "admin",
+	members: [
+		member({ uid: "a", name: "Renata Souza", role: "admin", isYou: true }),
+		member({ uid: "b", name: "Maria das Dores Silva" }),
+		member({ uid: "c", name: "José" }),
+		member({ uid: "m1", name: "Benjamim", kind: "managed", managedBy: { uid: "a", name: "Renata Souza", isYou: true }, youManage: true, canEdit: true, pixKey: KEY_BENJAMIM }),
+		member({ uid: "m2", name: "Dona Lourdes", kind: "managed", managedBy: { uid: "b", name: "Maria das Dores Silva", isYou: false }, hasPixKey: false, canEdit: true }),
+		member({ uid: "m3", name: "Tio Carlos", kind: "managed", managedBy: { uid: "a", name: "Renata Souza", isYou: true }, youManage: true, hasPixKey: false, canEdit: true }),
+	],
+};
+const CARE_USER = { name: "Renata Souza", email: "renata@example.com", picture: null };
 
 const TODAY = todayISO();
 const daysAgo = (n: number) => {
@@ -40,12 +63,18 @@ const daysAgo = (n: number) => {
 	d.setUTCDate(d.getUTCDate() - n);
 	return d.toISOString().slice(0, 10);
 };
-
-const sum = (o: Omit<ExpenseSummary, "yourDueCents" | "yourRefundCents" | "refundCount"> & Partial<ExpenseSummary>): ExpenseSummary => ({
+type SumInput = Omit<ExpenseSummary, "yourDueCents" | "yourRefundCents" | "refundCount" | "managed" | "ownerView" | "paidBy"> &
+	Partial<Pick<ExpenseSummary, "yourDueCents" | "yourRefundCents" | "refundCount" | "managed" | "ownerView">> & {
+		paidBy: { uid: string; name: string; isYou: boolean; youManage?: boolean };
+	};
+const sum = (o: SumInput): ExpenseSummary => ({
 	yourDueCents: o.yourStatus === "pending" ? o.yourShareCents : 0,
 	yourRefundCents: 0,
 	refundCount: 0,
+	managed: [],
+	ownerView: null,
 	...o,
+	paidBy: { ...o.paidBy, youManage: o.paidBy.youManage ?? false },
 });
 
 const EXPENSES: ExpenseSummary[] = [
@@ -59,27 +88,138 @@ const EXPENSES: ExpenseSummary[] = [
 	sum({ id: "e5", description: "Cuidadora de sábado", amountCents: 20000, date: "2025-06-14", paidBy: { uid: "d", name: "Ana Paula", isYou: false }, yourShareCents: 0, yourStatus: "none", pendingCount: 2, attachmentCount: 0 }),
 ];
 
-function Shell({ pathname, children, framed }: Readonly<{ pathname: string; children: React.ReactNode; framed: boolean }>) {
+function Shell({ pathname, children, framed, user = USER }: Readonly<{ pathname: string; children: React.ReactNode; framed: boolean; user?: typeof USER }>) {
 	return (
-		<AppShellView pathname={pathname} user={USER} onSignOut={noop} className={framed ? "min-h-0!" : undefined}>
+		<AppShellView pathname={pathname} user={user} onSignOut={noop} className={framed ? "min-h-0!" : undefined}>
 			{children}
 		</AppShellView>
 	);
 }
 
-export function MockGroup({ empty = false, framed = true }: Readonly<{ empty?: boolean; framed?: boolean }>) {
+const CARE_EXPENSES: ExpenseSummary[] = [
+	sum({
+		id: "c1",
+		description: "Remédios do Benjamim",
+		amountCents: 28990,
+		date: daysAgo(0),
+		paidBy: { uid: "m1", name: "Benjamim", isYou: false, youManage: true },
+		yourShareCents: 7248,
+		yourStatus: "pending",
+		pendingCount: 2,
+		attachmentCount: 1,
+		ownerView: { pendingCount: 2, refundCount: 0 },
+		managed: [],
+	}),
+	sum({
+		id: "c2",
+		description: "Mercado do mês",
+		amountCents: 62000,
+		date: daysAgo(2),
+		paidBy: { uid: "b", name: "Maria das Dores Silva", isYou: false },
+		yourShareCents: 10333,
+		yourDueCents: 10333,
+		yourStatus: "pending",
+		pendingCount: 3,
+		attachmentCount: 0,
+		managed: [{ uid: "m1", name: "Benjamim", status: "pending", dueCents: 10333, refundCents: 0 }],
+	}),
+	sum({
+		id: "c3",
+		description: "Ração e areia da gata",
+		amountCents: 18000,
+		date: daysAgo(4),
+		paidBy: { uid: "c", name: "José", isYou: false },
+		yourShareCents: 3000,
+		yourStatus: "paid",
+		pendingCount: 1,
+		attachmentCount: 0,
+		managed: [{ uid: "m1", name: "Benjamim", status: "refund", dueCents: 0, refundCents: 1500 }],
+	}),
+	sum({ id: "c4", description: "Consulta com a cardiologista", amountCents: 45000, date: daysAgo(8), paidBy: { uid: "a", name: "Renata Souza", isYou: true }, yourShareCents: 11250, yourStatus: "payer", pendingCount: 0, attachmentCount: 1 }),
+];
+
+export function MockGroup({ empty = false, framed = true, care = false }: Readonly<{ empty?: boolean; framed?: boolean; care?: boolean }>) {
+	const group = care ? CARE_GROUP : MOCK_GROUP;
 	return (
-		<Shell pathname="/app/grupos/1" framed={framed}>
+		<Shell pathname="/app/grupos/1" framed={framed} user={care ? CARE_USER : USER}>
 			<GroupDetailView
-				group={MOCK_GROUP}
+				group={group}
 				onMemberOptions={noop}
 				invite={
 					<Button icon="share" fullWidth className="md:w-auto">
 						Convidar pessoas
 					</Button>
 				}
-				expenses={<ExpenseListView groupId="1" state={{ kind: "ready", expenses: empty ? [] : EXPENSES }} />}
+				addManaged={care ? <AddManagedButton onClick={noop} /> : undefined}
+				expenses={<ExpenseListView groupId="1" state={{ kind: "ready", expenses: empty ? [] : care ? CARE_EXPENSES : EXPENSES }} />}
 			/>
+		</Shell>
+	);
+}
+
+/** Tela do grupo com o sheet de adicionar pessoa sem celular (ou, com `view`, as opções / editar / trocar responsável). */
+export function MockManagedSheet({
+	framed = true,
+	view = "add",
+	filled = false,
+	errors = {},
+}: Readonly<{ framed?: boolean; view?: "add" | "options" | "edit" | "carer" | "remove"; filled?: boolean; errors?: React.ComponentProps<typeof ManagedFormContent>["errors"] }>) {
+	const [open, setOpen] = useState(true);
+	const [name, setName] = useState(filled ? "Benjamim Souza" : "");
+	const [carer, setCarer] = useState("a");
+	const [pix, setPix] = useState(filled ? "529.982.247-25" : "");
+	const m1 = CARE_GROUP.members.find((m) => m.uid === "m1")!;
+	const carers = carersOf(CARE_GROUP.members);
+	const close = () => setOpen(false);
+	const title = { add: "Adicionar pessoa sem celular", options: m1.name, edit: `Editar ${m1.name}`, carer: "Trocar responsável", remove: m1.name }[view];
+	return (
+		<Shell pathname="/app/grupos/1" framed={framed} user={CARE_USER}>
+			<GroupDetailView
+				group={CARE_GROUP}
+				onMemberOptions={noop}
+				invite={
+					<Button icon="share" fullWidth className="md:w-auto">
+						Convidar pessoas
+					</Button>
+				}
+				addManaged={<AddManagedButton onClick={() => setOpen(true)} />}
+				expenses={<ExpenseListView groupId="1" state={{ kind: "ready", expenses: CARE_EXPENSES }} />}
+			/>
+			<Sheet open={open} onClose={close} title={title}>
+				{(view === "add" || view === "edit") && (
+					<ManagedFormContent
+						mode={view}
+						name={view === "edit" ? name || m1.name : name}
+						carerUid={carer}
+						pixKey={view === "edit" && !pix ? m1.pixKey?.key ?? "" : pix}
+						carers={view === "add" ? carers : []}
+						errors={errors}
+						busy={false}
+						onName={setName}
+						onCarer={setCarer}
+						onPixKey={setPix}
+						onSubmit={close}
+						onCancel={close}
+					/>
+				)}
+				{(view === "options" || view === "remove") && (
+					<ManagedOptionsContent
+						member={m1}
+						isAdmin
+						busy={false}
+						error={null}
+						confirmingRemove={view === "remove"}
+						onEdit={noop}
+						onChangeCarer={noop}
+						onAskRemove={noop}
+						onCancelRemove={close}
+						onConfirmRemove={close}
+					/>
+				)}
+				{view === "carer" && (
+					<ChangeCarerContent name={m1.name} carers={carers} value={carer} busy={false} error={null} unchanged={carer === "a"} onChange={setCarer} onSubmit={close} onCancel={close} />
+				)}
+			</Sheet>
 		</Shell>
 	);
 }
@@ -91,7 +231,13 @@ export function MockNewExpense({
 	initial,
 	members = MOCK_GROUP.members,
 	choose,
+	care = false,
+	payer,
 }: Readonly<{
+	/** Cenário da Renata, que cuida de Benjamim e do tio Carlos. */
+	care?: boolean;
+	/** Quem pagou ao abrir (uid); sem isso, "Eu". */
+	payer?: string;
 	framed?: boolean;
 	errors?: FormErrors;
 	initial?: { amountCents: number; description: string };
@@ -103,18 +249,23 @@ export function MockNewExpense({
 	const [description, setDescription] = useState(initial?.description ?? "");
 	const [date, setDate] = useState(TODAY);
 	const [dateOpen, setDateOpen] = useState(false);
-	const who = useWhoSplits(members.map((m) => m.uid));
+	const list = care ? CARE_GROUP.members : members;
+	const who = useWhoSplits(list.map((m) => m.uid));
+	const [payerUid, setPayerUid] = useState(payer ?? list.find((m) => m.isYou)?.uid ?? "");
 	const [started, setStarted] = useState(false);
 	if (!started && choose) {
 		setStarted(true);
 		who.setMode("choose");
-		for (const uid of members.map((m) => m.uid)) if (!choose.includes(uid)) who.toggle(uid);
+		for (const uid of list.map((m) => m.uid)) if (!choose.includes(uid)) who.toggle(uid);
 	}
 	const att = useAttachments();
 	return (
-		<Shell pathname="/app/grupos/1/despesas/nova" framed={framed}>
+		<Shell pathname="/app/grupos/1/despesas/nova" framed={framed} user={care ? CARE_USER : USER}>
 			<NewExpenseFormView
-				members={members}
+				groupId="1"
+				members={list}
+				payerUid={payerUid}
+				onPayer={setPayerUid}
 				amountCents={amountCents}
 				description={description}
 				date={date}
@@ -168,7 +319,8 @@ const ATTACHMENTS: AttachmentView[] = [
 	{ id: "x3", name: "nota-da-consulta.pdf", contentType: "application/pdf", size: 1_200_000, url: null, state: "ready" },
 ];
 
-export type MockMode = "debtor" | "payer" | "partial" | "refund" | "owner-return" | "recalc";
+export type MockMode = "debtor" | "payer" | "partial" | "refund" | "owner-return" | "recalc" | "two-parts" | "care-paid";
+const isCare = (mode: MockMode) => mode === "two-parts" || mode === "care-paid";
 
 type MS = Partial<ExpenseShare> & Pick<ExpenseShare, "uid" | "name" | "amountCents" | "status">;
 const share = (s: MS): ExpenseShare => ({
@@ -180,15 +332,70 @@ const share = (s: MS): ExpenseShare => ({
 	dueCents: s.status === "pending" ? s.amountCents : 0,
 	refundCents: 0,
 	participates: true,
+	kind: "user",
+	youManage: false,
+	managedByName: null,
 	...s,
 });
 const PAID_AT = daysAgo(1) + "T15:00:00.000Z";
 const A = { uid: "a", name: "Rafael Schettino" };
 const B = { uid: "b", name: "Maria das Dores Silva" };
 
+/** Despesas do cenário da Renata (que cuida do avô Benjamim). */
+function careDetail(mode: "two-parts" | "care-paid"): ExpenseDetailData {
+	const R = { uid: "a", name: "Renata Souza" };
+	const BEN = { uid: "m1", name: "Benjamim", kind: "managed" as const, managedByName: "Renata Souza", youManage: true };
+	const common = { groupId: "1", createdAt: new Date().toISOString(), attachments: [] as ExpenseDetailData["attachments"] };
+	if (mode === "two-parts") {
+		// Mercado de 620,00 pago pela Maria, dividido entre 4: a Renata deve a parte dela (155,00) e a do Benjamim (já pagou 50,00; faltam 105,00).
+		const shares = [
+			share({ ...B, amountCents: 15500, status: "payer" }),
+			share({ ...R, amountCents: 15500, status: "pending", isYou: true }),
+			share({ ...BEN, amountCents: 15500, status: "pending", paidCents: 5000, dueCents: 10500 }),
+			share({ uid: "c", name: "José", amountCents: 15500, status: "paid", paidAt: PAID_AT, method: "manual" }),
+		];
+		return {
+			...common,
+			id: "c2",
+			description: "Mercado do mês",
+			amountCents: 62000,
+			date: daysAgo(2),
+			canDelete: false,
+			canMarkPaid: false,
+			canEditParticipants: false,
+			paidBy: { ...B, picture: null, isYou: false, kind: "user", youManage: false },
+			pix: { type: "cpf", key: "52998224725", payeeName: B.name },
+			shares,
+			participantUids: shares.map((s) => s.uid),
+		};
+	}
+	// Remédios de 289,90 pagos pelo Benjamim (a Renata age por ele), divididos entre 4.
+	const shares = [
+		share({ ...BEN, amountCents: 7247, status: "payer" }),
+		share({ ...R, amountCents: 7248, status: "pending", isYou: true }),
+		share({ ...B, amountCents: 7248, status: "paid", paidAt: PAID_AT, method: "manual" }),
+		share({ uid: "c", name: "José", amountCents: 7247, status: "pending" }),
+	];
+	return {
+		...common,
+		id: "c1",
+		description: "Remédios do Benjamim",
+		amountCents: 28990,
+		date: daysAgo(0),
+		canDelete: true,
+		canMarkPaid: true,
+		canEditParticipants: true,
+		paidBy: { uid: BEN.uid, name: BEN.name, picture: null, isYou: false, kind: "managed", youManage: true },
+		pix: { type: "cpf", key: "52998224725", payeeName: BEN.name },
+		shares,
+		participantUids: shares.map((s) => s.uid),
+	};
+}
+
 function detail(mode: MockMode): ExpenseDetailData {
+	if (isCare(mode)) return careDetail(mode as "two-parts" | "care-paid");
 	const youOwner = mode === "payer" || mode === "owner-return" || mode === "recalc";
-	const owner = youOwner ? { ...A, picture: null, isYou: true } : { ...B, picture: null, isYou: false };
+	const owner = youOwner ? { ...A, picture: null, isYou: true, kind: "user" as const, youManage: false } : { ...B, picture: null, isYou: false, kind: "user" as const, youManage: false };
 	const base = {
 		id: "e1",
 		groupId: "1",
@@ -275,23 +482,23 @@ export function MockExpense({
 	/** Abre o sheet "Despesa lançada!". */
 	shareSheet?: boolean;
 }>) {
-	const [qrOpen, setQrOpen] = useState(qrInitial);
+	const [qrOpen, setQrOpen] = useState<string | null>(qrInitial ? "a" : null);
 	const [action, setAction] = useState(confirm ?? null);
 	const [shareOpen, setShareOpen] = useState(shareSheet);
 	const [resplitOpen, setResplitOpen] = useState(!!resplit);
 	const expense = detail(mode);
-	const members = MOCK_GROUP.members.map(({ uid, name, picture, isYou }) => ({ uid, name, picture, isYou }));
+	const members = (isCare(mode) ? CARE_GROUP : MOCK_GROUP).members.map(({ uid, name, picture, isYou, kind }) => ({ uid, name, picture, isYou, kind }));
 	const who = useWhoSplits(members.map((m) => m.uid), resplit ?? expense.participantUids);
 	const target = action ? expense.shares.find((s) => s.uid === action.uid) : undefined;
 	const text = buildExpenseShareText(expense, "https://pague-sua-parte.app/app/grupos/1/despesas/e1");
 	return (
-		<Shell pathname="/app/grupos/1/despesas/e1" framed={framed}>
+		<Shell pathname="/app/grupos/1/despesas/e1" framed={framed} user={isCare(mode) ? CARE_USER : USER}>
 			<ExpenseDetailView
 				expense={expense}
-				attachments={ATTACHMENTS}
+				attachments={isCare(mode) ? [] : ATTACHMENTS}
 				qrOpen={qrOpen}
-				codeFallback={codeFallback}
-				onToggleQr={() => setQrOpen((o) => !o)}
+				codeFallback={codeFallback ? "a" : null}
+				onToggleQr={(uid) => setQrOpen((o) => (o === uid ? null : uid))}
 				onCopyCode={noop}
 				onCopyKey={noop}
 				onOpenImage={noop}
@@ -343,13 +550,21 @@ export const MOCK_GROUPS: GroupSummary[] = [
 ];
 
 /** Tela inicial com saldos por grupo; `chooser` abre o sheet "Em qual grupo?" (ou o aviso de que falta criar um grupo). */
-export function MockHome({ framed = true, chooser = false, groups = MOCK_GROUPS }: Readonly<{ framed?: boolean; chooser?: boolean; groups?: GroupSummary[] }>) {
+export function MockHome({
+	framed = true,
+	chooser = false,
+	groups = MOCK_GROUPS,
+	managed = [],
+}: Readonly<{ framed?: boolean; chooser?: boolean; groups?: GroupSummary[]; managed?: React.ComponentProps<typeof ManagedSummaryCards>["managed"] }>) {
 	const [open, setOpen] = useState(chooser);
 	return (
-		<Shell pathname="/app" framed={framed}>
+		<Shell pathname="/app" framed={framed} user={managed.length > 0 ? CARE_USER : USER}>
 			<div className="space-y-6">
-				<h1 className="text-headline-medium md:text-headline-large">Olá, Rafael!</h1>
-				<HomeSummary receiveCents={47350} payCents={132590} />
+				<h1 className="text-headline-medium md:text-headline-large">Olá, {managed.length > 0 ? "Renata" : "Rafael"}!</h1>
+				<div className="space-y-3">
+					<HomeSummary receiveCents={47350} payCents={132590} />
+					<ManagedSummaryCards managed={managed} />
+				</div>
 				<GroupsListView state={{ kind: "ready", groups }} onPostExpense={() => setOpen(true)} />
 				<ChooseGroupSheet open={open} onClose={() => setOpen(false)} groups={groups} />
 			</div>

@@ -5,7 +5,7 @@ import { Avatar, FilterChip, SegmentedButton } from "@/components/ui";
 import { peopleLabel } from "@/lib/ui/invite";
 
 export type SplitMode = "all" | "choose";
-export type SplitMember = { uid: string; name: string; picture: string | null; isYou: boolean };
+export type SplitMember = { uid: string; name: string; picture: string | null; isYou: boolean; kind?: "user" | "managed" };
 
 export const ALONE_HINT = "Você pode incluir as outras pessoas depois, quando entrarem no grupo.";
 
@@ -75,10 +75,10 @@ export function WhoSplits({
 								key={m.uid}
 								selected={selected.includes(m.uid)}
 								onToggle={() => onToggle(m.uid)}
-								leading={<Avatar name={m.name} src={m.picture} size="sm" className="size-10" />}
+								leading={<Avatar name={m.name} src={m.picture} size="sm" className="size-10" managed={m.kind === "managed"} />}
 								className="max-w-full sm:max-w-xs"
 							>
-								{m.isYou ? "Você" : m.name}
+								{m.isYou ? "Você" : m.kind === "managed" ? `${m.name} · sem celular` : m.name}
 							</FilterChip>
 						))}
 					</div>

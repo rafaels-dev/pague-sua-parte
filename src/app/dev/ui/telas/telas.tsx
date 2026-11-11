@@ -1,6 +1,6 @@
 "use client";
 
-import { MOCK_GROUP, MockExpense, MockGroup, MockHome, MockNewExpense, MockNoPixKey } from "../expense-mocks";
+import { MOCK_GROUP, MockExpense, MockGroup, MockHome, MockManagedSheet, MockNewExpense, MockNoPixKey } from "../expense-mocks";
 
 export function Telas({ tela }: Readonly<{ tela: string }>) {
 	switch (tela) {
@@ -62,6 +62,44 @@ export function Telas({ tela }: Readonly<{ tela: string }>) {
 			return <MockHome framed={false} chooser />;
 		case "home-sem-grupo":
 			return <MockHome framed={false} chooser groups={[]} />;
+		case "grupo-sem-celular":
+			return <MockGroup care framed={false} />;
+		case "adicionar-sem-celular":
+			return <MockManagedSheet framed={false} />;
+		case "adicionar-sem-celular-preenchido":
+			return <MockManagedSheet framed={false} filled />;
+		case "adicionar-sem-celular-erros":
+			return <MockManagedSheet framed={false} filled errors={{ name: "Escreva o nome da pessoa.", pixKey: "Chave Pix inválida. Confira o número ou e-mail digitado." }} />;
+		case "sem-celular-opcoes":
+			return <MockManagedSheet framed={false} view="options" />;
+		case "sem-celular-remover":
+			return <MockManagedSheet framed={false} view="remove" />;
+		case "sem-celular-editar":
+			return <MockManagedSheet framed={false} view="edit" />;
+		case "sem-celular-responsavel":
+			return <MockManagedSheet framed={false} view="carer" />;
+		case "nova-quem-pagou":
+			return <MockNewExpense framed={false} care payer="m1" initial={{ amountCents: 28990, description: "Remédios do Benjamim" }} />;
+		case "nova-quem-pagou-eu":
+			return <MockNewExpense framed={false} care initial={{ amountCents: 28990, description: "Remédios da farmácia" }} />;
+		case "nova-quem-pagou-sem-pix":
+			return <MockNewExpense framed={false} care payer="m3" initial={{ amountCents: 28990, description: "Remédios do tio" }} />;
+		case "despesa-duas-partes":
+			return <MockExpense mode="two-parts" framed={false} />;
+		case "despesa-duas-partes-qr":
+			return <MockExpense mode="two-parts" qrOpen framed={false} />;
+		case "despesa-cuidado-pagou":
+			return <MockExpense mode="care-paid" framed={false} />;
+		case "home-cuidados":
+			return (
+				<MockHome
+					framed={false}
+					managed={[
+						{ uid: "m1", name: "Benjamim", groupId: "1", groupName: "Despesas da família", toReceiveCents: 14500, toPayCents: 10333 },
+						{ uid: "m3", name: "Tio Carlos", groupId: "1", groupName: "Despesas da família", toReceiveCents: 0, toPayCents: 0 },
+					]}
+				/>
+			);
 		default:
 			return <MockGroup framed={false} />;
 	}

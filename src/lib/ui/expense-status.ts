@@ -46,8 +46,9 @@ export function listStatus(e: ListStatusInput): { text: string; tone: Tone } | n
 	}
 }
 
-export function paidByLabel(paidBy: { name: string; isYou: boolean }): string {
-	return paidBy.isYou ? "Você pagou" : `Pago por ${paidBy.name}`;
+export function paidByLabel(paidBy: { name: string; isYou: boolean; youManage?: boolean }): string {
+	if (paidBy.isYou) return "Você pagou";
+	return paidBy.youManage ? `Pago por ${paidBy.name} (você cuida)` : `Pago por ${paidBy.name}`;
 }
 
 /** Valores da pessoa na despesa, para o selo ser preciso ("Falta pagar R$ X" só quando a dívida é parcial). */

@@ -12,7 +12,7 @@ export function splitMembersFor(expense: ExpenseDetailData, members: SplitMember
 	const known = new Set(members.map((m) => m.uid));
 	const extra = expense.shares
 		.filter((s) => !known.has(s.uid) && s.participates)
-		.map((s) => ({ uid: s.uid, name: s.name, picture: s.picture, isYou: s.isYou }));
+		.map((s) => ({ uid: s.uid, name: s.name, picture: s.picture, isYou: s.isYou, kind: s.kind }));
 	return [...members, ...extra];
 }
 

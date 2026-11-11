@@ -10,6 +10,11 @@ type Ctx = { params: Promise<{ id: string; uid: string }> };
 
 const bodySchema = z.object({ role: z.enum(["admin", "member"]) });
 
+function joinNames(names: string[]): string {
+	if (names.length <= 1) return names.join("");
+	return `${names.slice(0, -1).join(", ")} e ${names[names.length - 1]}`;
+}
+
 /** Respostas de falha comuns às duas ações; null quando deu certo. */
 function failure(result: MemberActionResult, selfMessage: string) {
 	switch (result.status) {
@@ -21,6 +26,10 @@ function failure(result: MemberActionResult, selfMessage: string) {
 			return jsonError(selfMessage, 409);
 		case "target_missing":
 			return jsonError("Essa pessoa não faz mais parte do grupo.", 404);
+		case "managed_target":
+			return jsonError("Pessoas sem celular não podem administrar o grupo.", 409);
+		case "responsible":
+			return jsonError(`${result.name} cuida de ${joinNames(result.managed)}. Troque o responsável antes de remover.`, 409);
 		default:
 			return null;
 	}
