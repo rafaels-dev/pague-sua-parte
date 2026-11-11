@@ -14,7 +14,7 @@ export default function Home() {
 	}, [user, router]);
 
 	return (
-		<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center gap-8 px-5 py-10">
+		<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center gap-8 px-5 py-10 md:max-w-lg md:text-center">
 			<div className="space-y-3">
 				<h1 className="text-4xl font-bold tracking-tight">Racha Pix</h1>
 				<p className="text-xl text-muted">

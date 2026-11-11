@@ -82,7 +82,7 @@ export default function PerfilPage() {
 
 	if (loadError) {
 		return (
-			<div className="space-y-5">
+			<div className="space-y-5 md:max-w-xl">
 				<h1 className="text-3xl font-bold">Meu perfil</h1>
 				<p role="alert" className="text-lg text-red-600">
 					{loadError}
@@ -103,7 +103,7 @@ export default function PerfilPage() {
 
 	if (!profile) {
 		return (
-			<div className="space-y-5">
+			<div className="space-y-5 md:max-w-xl">
 				<h1 className="text-3xl font-bold">Meu perfil</h1>
 				<p className="text-lg text-muted" role="status">
 					Carregando...
@@ -113,7 +113,7 @@ export default function PerfilPage() {
 	}
 
 	return (
-		<div className="space-y-5">
+		<div className="space-y-5 md:max-w-xl">
 			<h1 className="text-3xl font-bold">Meu perfil</h1>
 			<p className="text-base text-muted">{profile.email}</p>
 
