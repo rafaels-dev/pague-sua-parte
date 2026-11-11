@@ -5,10 +5,20 @@ export function jsonError(message: string, status: number, field?: string) {
 	return Response.json({ error: message, ...(field ? { field } : {}) }, { status });
 }
 
+/**
+ * Texto do erro para o log do servidor (nunca vai na resposta): nome e mensagem curta, sem endereços de conexão.
+ * Sem isso o log só dizia "Error" e não dava para saber o que falhou em produção.
+ */
+export function describeError(err: unknown): string {
+	if (!(err instanceof Error)) return "unknown";
+	const message = err.message.replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "<endereço>").slice(0, 300);
+	return message ? `${err.name}: ${message}` : err.name;
+}
+
 /** Mapeia exceções para resposta HTTP sem vazar detalhes internos. */
 export function handleError(err: unknown, label: string) {
 	if (err instanceof UnauthorizedError) return jsonError("Sessão expirada. Entre novamente.", 401);
-	console.error(`${label} error:`, err instanceof Error ? err.name : "unknown");
+	console.error(`${label} error:`, describeError(err));
 	return jsonError("Algo deu errado. Tente novamente em instantes.", 500);
 }
 
