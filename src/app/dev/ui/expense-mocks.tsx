@@ -757,6 +757,7 @@ export function MockExpense({
 				onPaid={() => setReceiptOpen("pay")}
 				onViewReceipt={() => setReceiptView(true)}
 				onAttachReceipt={() => setReceiptOpen("attach")}
+				onTellPaid={() => {}}
 			/>
 			<Sheet open={receiptOpen !== null} onClose={() => setReceiptOpen(null)} title={receiptOpen === "attach" ? "Anexar comprovante" : "Já paguei"}>
 				{receiptOpen && (

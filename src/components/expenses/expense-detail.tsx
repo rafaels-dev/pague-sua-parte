@@ -149,8 +149,21 @@ function PartStatusCard({
 	ownerName,
 	labeled,
 	headingId,
-}: Readonly<{ share: ExpenseShare; ownerName: string; labeled: boolean; headingId: string }>) {
+	onViewReceipt,
+	onAttachReceipt,
+	onTell,
+}: Readonly<{
+	share: ExpenseShare;
+	ownerName: string;
+	labeled: boolean;
+	headingId: string;
+	onViewReceipt: (uid: string) => void;
+	onAttachReceipt: (uid: string) => void;
+	/** Abre o aviso de pagamento para mandar no WhatsApp. */
+	onTell: (uid: string) => void;
+}>) {
 	const refund = share.status === "refund";
+	const act = receiptActions(share);
 	const managed = share.youManage;
 	const who = managed ? share.name : "Você";
 	const told = share.method === "self";
@@ -185,6 +198,34 @@ function PartStatusCard({
 					)}
 				</div>
 			</div>
+			{/* Comprovante da parte paga: anexar, ver ou trocar, e avisar quem recebeu. */}
+			{!refund && (act.view || act.attach || act.replace) && (
+				<div className="space-y-3 p-5">
+					<p className="text-body-large text-on-surface-variant">
+						{act.view ? `${ownerName} consegue ver o comprovante que você enviou.` : `Você ainda não enviou o comprovante. Com ele, ${ownerName} confirma que recebeu.`}
+					</p>
+					<div className="flex flex-col gap-3 md:flex-row md:flex-wrap">
+						{act.attach && (
+							<Button icon="attach_file" onClick={() => onAttachReceipt(share.uid)} fullWidth className="md:w-auto">
+								Anexar comprovante
+							</Button>
+						)}
+						{act.view && (
+							<Button variant="tonal" icon="receipt_long" onClick={() => onViewReceipt(share.uid)} fullWidth className="md:w-auto">
+								Ver comprovante
+							</Button>
+						)}
+						{act.replace && (
+							<Button variant="outlined" icon="attach_file" onClick={() => onAttachReceipt(share.uid)} fullWidth className="md:w-auto">
+								Trocar comprovante
+							</Button>
+						)}
+						<Button variant="text" icon="share" onClick={() => onTell(share.uid)} fullWidth className="md:w-auto">
+							Avisar que paguei no WhatsApp
+						</Button>
+					</div>
+				</div>
+			)}
 		</Card>
 	);
 }
@@ -209,6 +250,7 @@ export function ExpenseDetailView({
 	onPaid,
 	onViewReceipt,
 	onAttachReceipt,
+	onTellPaid,
 }: Readonly<{
 	expense: ExpenseDetailData;
 	attachments: AttachmentView[];
@@ -240,6 +282,8 @@ export function ExpenseDetailView({
 	onViewReceipt: (uid: string) => void;
 	/** Abre o sheet "Anexar comprovante" de uma parte já paga. */
 	onAttachReceipt: (uid: string) => void;
+	/** Abre o aviso "paguei minha parte" para mandar no WhatsApp. */
+	onTellPaid: (uid: string) => void;
 }>) {
 	// Contas que a pessoa controla nesta despesa: a dela e as das pessoas sem celular que ela cuida (a dela primeiro).
 	const accounts = expense.shares
@@ -321,7 +365,18 @@ export function ExpenseDetailView({
 					);
 				}
 				if (s.status === "refund" || (s.status === "paid" && s.participates)) {
-					return <PartStatusCard key={s.uid} share={s} ownerName={payerName} labeled={labeled} headingId={headingId} />;
+					return (
+						<PartStatusCard
+							key={s.uid}
+							share={s}
+							ownerName={payerName}
+							labeled={labeled}
+							headingId={headingId}
+							onViewReceipt={onViewReceipt}
+							onAttachReceipt={onAttachReceipt}
+							onTell={onTellPaid}
+						/>
+					);
 				}
 				return null;
 			})}
@@ -951,6 +1006,12 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 				onPaid={(uid) => openReceiptSheet(uid, "pay")}
 				onViewReceipt={(uid) => void viewReceipt(uid)}
 				onAttachReceipt={(uid) => openReceiptSheet(uid, "attach")}
+				onTellPaid={(uid) => {
+					const mine = expense.shares.find((x) => x.uid === uid);
+					if (!mine) return;
+					setPaidNotice({ amountCents: mine.amountCents, forName: mine.isYou ? null : mine.name, hasReceipt: !!mine.receipt });
+					setShareOpen("paid");
+				}}
 			/>
 
 			<Sheet
