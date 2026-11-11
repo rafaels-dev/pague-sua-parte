@@ -159,7 +159,6 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 				onInstallments={p.onInstallments}
 				amountCents={p.amountCents}
 				purchaseDate={p.date}
-				today={today}
 				errors={p.errors}
 			/>
 

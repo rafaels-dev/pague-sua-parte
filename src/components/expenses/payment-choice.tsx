@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Card, FilterChip, Icon, SegmentedButton, TextField } from "@/components/ui";
+import { Card, Icon, SegmentedButton, TextField } from "@/components/ui";
 import { cx } from "@/lib/ui/cx";
 import {
 	clampInstallments,
@@ -10,8 +10,6 @@ import {
 	installmentTotalLine,
 	MAX_INSTALLMENTS,
 	MIN_INSTALLMENTS,
-	nextDayOfMonth,
-	nextMonthSameDay,
 } from "@/lib/ui/due-dates";
 
 /** Como a compra foi paga: à vista em dinheiro, cartão (pede a data da próxima fatura) ou Pix; ou parcelado (uma despesa por mês). */
@@ -28,34 +26,17 @@ const METHODS = [
 	{ value: "pix", label: "Pix" },
 ] as const;
 
-/** Campo de data no estilo do TextField, com atalhos opcionais ("Dia 10", "Dia 15", "Mês que vem"). */
+/** Campo de data no estilo do TextField: a pessoa informa o dia. */
 function DueDateField({
 	id,
 	label,
 	helper,
 	value,
 	min,
-	today,
 	error,
 	onChange,
-}: Readonly<{ id: string; label: string; helper: string; value: string; min: string; today: string; error?: string; onChange: (v: string) => void }>) {
-	const shortcuts = [
-		{ label: "Dia 10", date: nextDayOfMonth(today, 10) },
-		{ label: "Dia 15", date: nextDayOfMonth(today, 15) },
-		{ label: "Mês que vem", date: nextMonthSameDay(today) },
-	];
-	return (
-		<div className="space-y-2">
-			<TextField id={id} type="date" floatLabel label={label} value={value} min={min} onChange={(e) => onChange(e.target.value)} error={error} supportingText={helper} />
-			<div role="group" aria-label="Atalhos de data" className="flex flex-wrap gap-2">
-				{shortcuts.map((s) => (
-					<FilterChip key={s.label} selected={value === s.date} onToggle={() => onChange(s.date)} leading={<span className="w-2" />}>
-						{s.label}
-					</FilterChip>
-				))}
-			</div>
-		</div>
-	);
+}: Readonly<{ id: string; label: string; helper: string; value: string; min: string; error?: string; onChange: (v: string) => void }>) {
+	return <TextField id={id} type="date" floatLabel label={label} value={value} min={min} onChange={(e) => onChange(e.target.value)} error={error} supportingText={helper} />;
 }
 
 const STEP_BUTTON =
@@ -159,7 +140,6 @@ export function PaymentChoice({
 	onInstallments,
 	amountCents,
 	purchaseDate,
-	today,
 	errors,
 }: Readonly<{
 	payment: PaymentKind;
@@ -171,7 +151,6 @@ export function PaymentChoice({
 	amountCents: number;
 	/** Dia da compra: a fatura ou a primeira parcela não podem vencer antes dele. */
 	purchaseDate: string;
-	today: string;
 	errors: { dueDate?: string; installments?: string };
 }>) {
 	return (
@@ -197,7 +176,6 @@ export function PaymentChoice({
 							helper="Dia em que a fatura do cartão vence"
 							value={dueDate}
 							min={purchaseDate}
-							today={today}
 							error={errors.dueDate}
 							onChange={onDueDate}
 						/>
@@ -213,7 +191,6 @@ export function PaymentChoice({
 						helper="As outras vencem no mesmo dia"
 						value={dueDate}
 						min={purchaseDate}
-						today={today}
 						error={errors.dueDate}
 						onChange={onDueDate}
 					/>
