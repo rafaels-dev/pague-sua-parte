@@ -4,6 +4,7 @@ import { useState } from "react";
 import { AppShellView } from "@/components/app-shell";
 import { GoogleButtonView } from "@/components/auth/sign-in-button";
 import { CreateGroupFormView } from "@/components/groups/create-group-form";
+import { ExpenseListView } from "@/components/expenses/expense-list";
 import { GroupDetailView, GroupDetailSkeleton, type Group } from "@/components/groups/group-detail";
 import { GroupsListView, type GroupSummary } from "@/components/groups/groups-list";
 import { InviteReady, InviteShell } from "@/components/groups/invite-accept";
@@ -26,12 +27,15 @@ import {
 	List,
 	ListItem,
 	NavigationBar,
+	QrCode,
 	Sheet,
 	Skeleton,
 	Snackbar,
 	TextField,
 	TopAppBar,
 } from "@/components/ui";
+import { buildPixPayload } from "@/lib/pix/brcode";
+import { MockExpense, MockGroup, MockNewExpense, MockNoPixKey } from "./expense-mocks";
 
 const noop = () => {};
 const USER = { name: "Rafael Schettino", email: "rafael@example.com", picture: null };
@@ -103,7 +107,7 @@ export function Showcase({
 	return (
 		<main className="mx-auto max-w-6xl space-y-12 px-4 py-8 md:px-8">
 			<header className="space-y-2">
-				<h1 className="text-headline-large">Racha Pix — kit Material 3</h1>
+				<h1 className="text-headline-large">Pague Sua Parte — kit Material 3</h1>
 				<p className="text-body-large text-on-surface-variant">Vitrine de desenvolvimento. Não existe em produção e não usa a API.</p>
 			</header>
 
@@ -264,7 +268,7 @@ export function Showcase({
 			</Section>
 
 			<Section title="Navegação, FAB, Sheet e Snackbar">
-				<TopAppBar title="Racha Pix" leading={<IconButton icon="arrow_back" label="Voltar" />} trailing={<Avatar name="Rafael" size="sm" />} />
+				<TopAppBar title="Pague Sua Parte" leading={<IconButton icon="arrow_back" label="Voltar" />} trailing={<Avatar name="Rafael" size="sm" />} />
 				<div className="flex flex-wrap gap-3">
 					<Button onClick={() => setSheet(true)} icon="share">
 						Abrir Sheet de convite
@@ -279,6 +283,10 @@ export function Showcase({
 						Criar grupo
 					</Fab>
 				</div>
+			</Section>
+
+			<Section title="QR Code (Pix)">
+				<QrCode value={buildPixPayload({ key: "52998224725", payeeName: "Rafael Schettino", amountCents: 4590 })} label="QR Code Pix de exemplo" />
 			</Section>
 
 			<Section title="Telas (composições estáticas)">
@@ -329,8 +337,24 @@ export function Showcase({
 										Convidar pessoas
 									</Button>
 								}
+								expenses={<ExpenseListView groupId="1" state={{ kind: "ready", expenses: [] }} />}
 							/>
 						</Shell>
+					</Frame>
+					<Frame label="Grupo com despesas">
+						<MockGroup />
+					</Frame>
+					<Frame label="Lançar despesa (interativo: cole um print com Ctrl+V, arraste ou escolha arquivos)">
+						<MockNewExpense />
+					</Frame>
+					<Frame label="Lançar despesa sem chave Pix">
+						<MockNoPixKey />
+					</Frame>
+					<Frame label="Despesa: você deve (QR Code aberto)">
+						<MockExpense mode="debtor" qrOpen />
+					</Frame>
+					<Frame label="Despesa: você pagou">
+						<MockExpense mode="payer" />
 					</Frame>
 					<Frame label="Grupo carregando">
 						<Shell pathname="/app/grupos/1">
@@ -370,7 +394,7 @@ export function Showcase({
 						<Card className="max-w-md p-6">
 							<h2 className="mb-4 text-headline-small">Convite pronto!</h2>
 							<InviteSheetContent
-								link="https://racha.example/convite/abc"
+								link="https://paguesuaparte.example/convite/abc"
 								groupName="Família Silva"
 								isAdmin
 								busy={false}
@@ -391,7 +415,7 @@ export function Showcase({
 
 			<Sheet open={sheet} onClose={() => setSheet(false)} title="Convite pronto!">
 				<InviteSheetContent
-					link="https://racha.example/convite/abc"
+					link="https://paguesuaparte.example/convite/abc"
 					groupName="Família Silva"
 					isAdmin
 					busy={false}

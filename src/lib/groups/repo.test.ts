@@ -241,6 +241,8 @@ describe("setMemberRole / removeMember", () => {
 		expect(filter.members).toEqual({ $elemMatch: { uid: "u1", role: "admin" } });
 		expect(filter["members.uid"]).toBe("u2");
 		expect(update.$pull).toEqual({ members: { uid: "u2" } });
+		// O convite vigente é revogado junto com a remoção.
+		expect(update.$set.invite).toBeNull();
 	});
 	it("id malformado: not_found sem consultar o banco", async () => {
 		const { db, groups } = mockDb({});

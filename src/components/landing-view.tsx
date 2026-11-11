@@ -22,7 +22,7 @@ export function LandingView({ children, footer }: Readonly<{ children: React.Rea
 			<div className="flex flex-col gap-8">
 				<div className="space-y-4">
 					<BrandMark size={64} />
-					<h1 className="text-display-small font-bold md:text-headline-large md:font-bold">Racha Pix</h1>
+					<h1 className="text-display-small font-bold md:text-headline-large md:font-bold">Pague Sua Parte</h1>
 					<p className="text-title-large text-on-surface-variant">
 						Registre os gastos da família, veja quanto cada um deve e pague por Pix com comprovante.
 					</p>

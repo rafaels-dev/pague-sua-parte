@@ -1,4 +1,4 @@
-# Racha Pix
+# Pague Sua Parte
 
 Divida despesas em grupo e receba por Pix: lance o gasto, cada um paga a sua parte com Pix Copia e Cola e anexa o comprovante. Site mobile-first, em pt-BR, que roda inteiro em planos gratuitos.
 
@@ -8,7 +8,7 @@ Divida despesas em grupo e receba por Pix: lance o gasto, cada um paga a sua par
 - Cloudflare Workers via `@opennextjs/cloudflare` (flag `nodejs_compat`)
 - MongoDB Atlas (M0) com o driver oficial `mongodb`
 - Firebase Authentication (Google) no cliente; o servidor valida o ID token com `jose`
-- Cloudflare R2 para comprovantes (etapa futura)
+- Cloudflare R2 para os anexos das despesas (binding `ATTACHMENTS`)
 - Vitest para testes
 
 ## Rodando localmente
@@ -19,6 +19,16 @@ cp .env.example .env.local      # preencha os valores
 cp .dev.vars.example .dev.vars  # usado pelo preview no runtime do Workers
 npm run dev                     # http://localhost:3000
 ```
+
+## Anexos (R2)
+
+Os anexos (foto ou PDF, até 3 por despesa, 5 MB cada) ficam num bucket R2. Antes do primeiro deploy, crie o bucket:
+
+```bash
+npx wrangler r2 bucket create paguesuaparte-anexos
+```
+
+No `npm run dev` o OpenNext simula o binding localmente (não precisa de conta Cloudflare); reinicie o servidor ao alterar o `wrangler.jsonc`.
 
 ## Variáveis de ambiente
 

@@ -20,6 +20,10 @@ try {
 			{ name: "invite_token_unique", unique: true, partialFilterExpression: { "invite.token": { $type: "string" } } },
 		),
 	);
+	const expenses = client.db(dbName).collection("expenses");
+	console.log("expenses:", await expenses.createIndex({ groupId: 1, date: -1, createdAt: -1 }, { name: "group_date_created" }));
+	console.log("expenses:", await expenses.createIndex({ "shares.uid": 1 }, { name: "shares_uid" }));
+	console.log("expenses:", await expenses.createIndex({ paidBy: 1 }, { name: "paid_by" }));
 } catch (err) {
 	console.error("Falha ao criar índices:", err instanceof Error ? err.name : "erro desconhecido");
 	process.exitCode = 1;

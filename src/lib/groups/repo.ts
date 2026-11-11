@@ -247,7 +247,8 @@ export async function removeMember(db: Db, id: string, actorUid: string, targetU
 
 	const res = await groups.updateOne(adminActsOnMember(_id, actorUid, targetUid), {
 		$pull: { members: { uid: targetUid } },
-		$set: { updatedAt: new Date() },
+		// Invalida o convite atual na mesma operação: quem foi removido não volta com o link antigo.
+		$set: { invite: null, updatedAt: new Date() },
 	});
 	if (res.matchedCount > 0) return { status: "ok" };
 	return explainNoMatch(groups, _id, actorUid, targetUid);

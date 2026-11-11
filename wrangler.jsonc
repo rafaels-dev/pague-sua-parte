@@ -8,7 +8,7 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "racha-pix",
+	"name": "paguesuaparte",
 	"main": ".open-next/worker.js",
 	"compatibility_date": "2026-11-10",
 	"compatibility_flags": [
@@ -29,7 +29,14 @@
 			// Self-reference service binding, the service name must match the worker name
 			// see https://opennext.js.org/cloudflare/caching
 			"binding": "WORKER_SELF_REFERENCE",
-			"service": "racha-pix"
+			"service": "paguesuaparte"
+		}
+	],
+	"r2_buckets": [
+		{
+			// Anexos das despesas (fotos/PDF). Crie antes do primeiro deploy: npx wrangler r2 bucket create paguesuaparte-anexos
+			"binding": "ATTACHMENTS",
+			"bucket_name": "paguesuaparte-anexos"
 		}
 	],
 	"observability": {

@@ -114,9 +114,9 @@ export function InviteAccept({ token }: Readonly<{ token: string }>) {
 		return (
 			<InviteShell>
 				<GroupBadge />
-				<h1 className="text-headline-small font-bold">Você foi convidado para um grupo no Racha Pix</h1>
+				<h1 className="text-headline-small font-bold">Você foi convidado para um grupo no Pague Sua Parte</h1>
 				<p className="text-body-large text-on-surface-variant">
-					No Racha Pix a família divide as despesas e paga uns aos outros por Pix. Entre com sua conta Google para ver o convite.
+					No Pague Sua Parte a família divide as despesas e paga uns aos outros por Pix. Entre com sua conta Google para ver o convite.
 				</p>
 				<SignInButton />
 			</InviteShell>

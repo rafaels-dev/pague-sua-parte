@@ -2,42 +2,35 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
-import { Avatar, Button, Card, EmptyState, Icon, IconButton, List, ListItem, Sheet, Skeleton, Snackbar } from "@/components/ui";
+import { Avatar, Button, EmptyState, Icon, IconButton, List, ListItem, Sheet, Skeleton, Snackbar } from "@/components/ui";
 import { apiFetch, ApiError } from "@/lib/api-client";
+import { ExpenseList } from "@/components/expenses/expense-list";
+import { clearFlash, peekFlash } from "@/components/expenses/types";
 import { InvitePanel } from "./invite-panel";
 import { MemberSheetContent } from "./member-sheet";
 
 export type Member = { uid: string; name: string; picture: string | null; role: "admin" | "member"; hasPixKey: boolean; isYou: boolean };
 export type Group = { id: string; name: string; role: "admin" | "member"; members: Member[] };
 
-/** Visual da tela do grupo; o painel de convite entra como slot. `onMemberOptions` só é passado para administradores. */
+/** Visual da tela do grupo: despesas em primeiro lugar; convite e pessoas numa seção própria (ao lado em telas largas). `expenses` e `invite` entram como slots. */
 export function GroupDetailView({
 	group,
 	invite,
+	expenses,
 	onMemberOptions,
-}: Readonly<{ group: Group; invite: React.ReactNode; onMemberOptions?: (member: Member) => void }>) {
+}: Readonly<{ group: Group; invite: React.ReactNode; expenses: React.ReactNode; onMemberOptions?: (member: Member) => void }>) {
 	return (
 		<div className="space-y-6">
 			<h1 className="break-words text-headline-medium md:text-headline-large">{group.name}</h1>
 
-			<div className="grid items-start gap-6 md:grid-cols-2">
-				<div className="space-y-6">
-					{invite}
-
-					<section className="space-y-3" aria-labelledby="despesas-titulo">
-						<h2 id="despesas-titulo" className="text-title-large">
-							Despesas
-						</h2>
-						<Card variant="outlined" className="p-6 text-center">
-							<p className="text-body-large text-on-surface-variant">Em breve você poderá registrar as despesas do grupo por aqui.</p>
-						</Card>
-					</section>
-				</div>
+			<div className="grid items-start gap-8 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+				{expenses}
 
 				<section className="space-y-3" aria-labelledby="membros-titulo">
 					<h2 id="membros-titulo" className="text-title-large">
 						Pessoas do grupo
 					</h2>
+					{invite}
 					<List>
 						{group.members.map((m) => {
 							const notes = [m.role === "admin" && "Administra o grupo", !m.hasPixKey && "Sem chave Pix"].filter(Boolean);
@@ -100,7 +93,12 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 	const [confirmingRemove, setConfirmingRemove] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [actionError, setActionError] = useState<string | null>(null);
-	const [snack, setSnack] = useState<string | null>(null);
+	// Começa com o recado deixado pela tela anterior (ex.: "Despesa apagada."), se houver.
+	const [snack, setSnack] = useState<string | null>(() => peekFlash());
+
+	useEffect(() => {
+		clearFlash(); // o recado já foi lido ao criar o estado
+	}, []);
 
 	useEffect(() => {
 		if (!user) return;
@@ -183,6 +181,7 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 			<GroupDetailView
 				group={group}
 				invite={<InvitePanel groupId={group.id} groupName={group.name} isAdmin={isAdmin} />}
+				expenses={<ExpenseList groupId={group.id} />}
 				onMemberOptions={
 					isAdmin
 						? (m) => {
@@ -214,7 +213,7 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 					/>
 				)}
 			</Sheet>
-			<Snackbar open={snack !== null} message={snack ?? ""} onClose={() => setSnack(null)} />
+			<Snackbar open={snack !== null} message={snack ?? ""} onClose={() => setSnack(null)} aboveNav />
 		</>
 	);
 }

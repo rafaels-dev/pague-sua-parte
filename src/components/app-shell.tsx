@@ -107,7 +107,7 @@ export function AppShellView({
 				items={NAV_ITEMS}
 				activeHref={info.nav}
 				header={
-					<Link href="/app" aria-label="Racha Pix, início">
+					<Link href="/app" aria-label="Pague Sua Parte, início">
 						<BrandMark size={48} />
 					</Link>
 				}

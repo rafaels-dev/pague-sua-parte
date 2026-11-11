@@ -27,21 +27,48 @@ const PATHS = {
 		"m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z",
 } as const;
 
-export type IconName = keyof typeof PATHS;
-export const ICON_NAMES = Object.keys(PATHS) as IconName[];
+/**
+ * Ícones desenhados em traço (estilo outlined, 2px em 24px) para as peças que o conjunto acima não cobre.
+ * Mesma grade 0 -960 960 960; contorno arredondado.
+ */
+const STROKES = {
+	attach_file:
+		"M700-460 440-200C380-140 280-140 220-200S160-360 220-420L560-760C600-800 665-800 705-760S745-655 705-615L370-280C350-260 318-260 298-280S278-332 298-352L600-654",
+	content_paste:
+		"M340-780H240Q200-780 200-740V-180Q200-140 240-140H720Q760-140 760-180V-740Q760-780 720-780H620M340-860H620V-700H340ZM320-500H640M320-340H520",
+	receipt_long:
+		"M240-840 300-800 360-840 420-800 480-840 540-800 600-840 660-800 720-840V-120L660-160 600-120 540-160 480-120 420-160 360-120 300-160 240-120ZM340-640H620M340-500H620M340-360H500",
+	qr_code:
+		"M180-780H420V-540H180ZM540-780H780V-540H540ZM180-420H420V-180H180ZM540-420H620M740-420H780M540-180H620V-300M780-300V-180H720M700-340V-260",
+	delete: "M240-720H720M400-720V-800H560V-720M280-720 310-160H650L680-720M420-580V-300M540-580V-300",
+	calendar_today:
+		"M200-800H760Q800-800 800-760V-200Q800-160 760-160H200Q160-160 160-200V-760Q160-800 200-800ZM160-600H800M320-880V-720M640-880V-720",
+	image: "M200-800H760Q800-800 800-760V-200Q800-160 760-160H200Q160-160 160-200V-760Q160-800 200-800ZM180-260 360-440 480-320 580-420 780-240M340-640H380",
+	description: "M260-860H540L740-660V-140H260ZM540-860V-660H740M360-440H640M360-320H640",
+	expand_more: "M300-600 480-420 660-600",
+	expand_less: "M300-420 480-600 660-420",
+} as const;
+
+export type IconName = keyof typeof PATHS | keyof typeof STROKES;
+export const ICON_NAMES = [...Object.keys(PATHS), ...Object.keys(STROKES)] as IconName[];
 
 export function Icon({ name, size = 24, className }: Readonly<{ name: IconName; size?: number; className?: string }>) {
+	const stroke = name in STROKES;
 	return (
 		<svg
 			viewBox="0 -960 960 960"
 			width={size}
 			height={size}
-			fill="currentColor"
+			fill={stroke ? "none" : "currentColor"}
+			stroke={stroke ? "currentColor" : undefined}
+			strokeWidth={stroke ? 80 : undefined}
+			strokeLinecap={stroke ? "round" : undefined}
+			strokeLinejoin={stroke ? "round" : undefined}
 			aria-hidden="true"
 			focusable="false"
 			className={`shrink-0 ${className ?? ""}`}
 		>
-			<path d={PATHS[name]} />
+			<path d={stroke ? STROKES[name as keyof typeof STROKES] : PATHS[name as keyof typeof PATHS]} />
 		</svg>
 	);
 }

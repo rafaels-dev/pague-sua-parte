@@ -11,9 +11,9 @@ const roboto = Roboto({
 });
 
 export const metadata: Metadata = {
-	title: { default: "Racha Pix", template: "%s | Racha Pix" },
+	title: { default: "Pague Sua Parte", template: "%s | Pague Sua Parte" },
 	description: "Divida as despesas da família de forma simples: lance o gasto, pague por Pix e anexe o comprovante.",
-	openGraph: { locale: "pt_BR", siteName: "Racha Pix", type: "website" },
+	openGraph: { locale: "pt_BR", siteName: "Pague Sua Parte", type: "website" },
 	// O conteúdo já está em português: evita que o navegador ofereça tradução.
 	other: { google: "notranslate" },
 };
