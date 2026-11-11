@@ -221,7 +221,7 @@ function PartStatusCard({
 							</Button>
 						)}
 						<Button variant="text" icon="share" onClick={() => onTell(share.uid)} fullWidth className="md:w-auto">
-							Avisar que paguei no WhatsApp
+							Avisar novamente
 						</Button>
 					</div>
 				</div>
@@ -333,7 +333,7 @@ export function ExpenseDetailView({
 					</p>
 				)}
 				<Button variant="text" size="md" icon="share" onClick={onShare} className="-ml-4">
-					Avisar no WhatsApp
+					Cobrar no WhatsApp
 				</Button>
 			</header>
 
@@ -1071,7 +1071,7 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 			<Sheet
 				open={shareOpen !== null}
 				onClose={closeShare}
-				title={shareOpen === "paid" ? "Avisar no WhatsApp" : shareOpen === "manual" ? "Avisar o grupo" : LAUNCHED_FLASH}
+				title={shareOpen === "paid" ? "Avisar no WhatsApp" : shareOpen === "manual" ? "Cobrar no WhatsApp" : LAUNCHED_FLASH}
 			>
 				<ShareExpenseContent
 					text={shareText}
