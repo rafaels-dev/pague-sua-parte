@@ -14,7 +14,7 @@ import {
 	nextMonthSameDay,
 } from "@/lib/ui/due-dates";
 
-/** Como a compra foi paga: à vista (sem data), no cartão (vence numa data) ou parcelado (uma despesa por mês). */
+/** Como a compra foi paga: à vista, no cartão (pede a data da compra) ou parcelado (uma despesa por mês, com vencimento). */
 export type PaymentKind = "cash" | "card" | "installments";
 
 const OPTIONS = [
@@ -144,7 +144,7 @@ export function InstallmentSummary({ amountCents, count, firstDue }: Readonly<{ 
 	);
 }
 
-/** "Como foi pago?": à vista (nada a mais), no cartão (pede o vencimento) ou parcelado (pede parcelas e o primeiro vencimento). */
+/** "Como foi pago?": à vista (nada a mais), no cartão (pede a data da compra) ou parcelado (pede parcelas e o primeiro vencimento). */
 export function PaymentChoice({
 	payment,
 	onPayment,
@@ -154,6 +154,7 @@ export function PaymentChoice({
 	onInstallments,
 	amountCents,
 	purchaseDate,
+	onPurchaseDate,
 	today,
 	errors,
 }: Readonly<{
@@ -164,25 +165,27 @@ export function PaymentChoice({
 	installments: number;
 	onInstallments: (n: number) => void;
 	amountCents: number;
-	/** Dia da compra: o vencimento não pode ser antes dele. */
+	/** Dia da compra: é o que se pede no cartão; no parcelado, o vencimento não pode ser antes dele. */
 	purchaseDate: string;
+	onPurchaseDate: (v: string) => void;
 	today: string;
-	errors: { dueDate?: string; installments?: string };
+	errors: { date?: string; dueDate?: string; installments?: string };
 }>) {
 	return (
 		<fieldset className="min-w-0 space-y-3">
 			<legend className="mb-2 text-title-medium text-on-surface-variant">Como foi pago?</legend>
 			<SegmentedButton label="Como foi pago?" value={payment} options={OPTIONS} onChange={onPayment} />
 			{payment === "card" && (
-				<DueDateField
-					id="campo-vencimento"
-					label="Vence em"
-					helper="Dia do vencimento da fatura"
-					value={dueDate}
-					min={purchaseDate}
-					today={today}
-					error={errors.dueDate}
-					onChange={onDueDate}
+				<TextField
+					id="campo-data"
+					type="date"
+					floatLabel
+					label="Data da compra"
+					value={purchaseDate}
+					max={today}
+					onChange={(e) => onPurchaseDate(e.target.value)}
+					error={errors.date}
+					supportingText="Dia em que você passou o cartão"
 				/>
 			)}
 			{payment === "installments" && (

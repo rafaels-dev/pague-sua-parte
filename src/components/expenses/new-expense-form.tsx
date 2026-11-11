@@ -71,9 +71,9 @@ export type NewExpenseFormViewProps = {
 	description: string;
 	date: string;
 	dateOpen: boolean;
-	/** Como foi pago: à vista, no cartão (vence numa data) ou parcelado. */
+	/** Como foi pago: à vista, no cartão (pede a data da compra) ou parcelado. */
 	payment: PaymentKind;
-	/** Vencimento (no cartão) ou vencimento da primeira parcela (parcelado). */
+	/** Vencimento da primeira parcela (só no parcelado). */
 	dueDate: string;
 	installments: number;
 	selected: string[];
@@ -159,6 +159,7 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 				onInstallments={p.onInstallments}
 				amountCents={p.amountCents}
 				purchaseDate={p.date}
+				onPurchaseDate={p.onDate}
 				today={today}
 				errors={p.errors}
 			/>
@@ -175,7 +176,8 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 				supportingText={p.description ? undefined : "Por exemplo: Remédios da farmácia"}
 			/>
 
-			<div>
+			{/* No cartão, a data da compra já é pedida logo abaixo de "Como foi pago?". */}
+			{p.payment !== "card" && <div>
 				{p.dateOpen ? (
 					<div>
 						<label htmlFor="campo-data" className="mb-1 block text-title-medium text-on-surface-variant">
@@ -204,7 +206,7 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 						{formatDateShort(p.date, today)} — mudar data
 					</Button>
 				)}
-			</div>
+			</div>}
 
 			<fieldset id="campo-participantes" tabIndex={-1} className="space-y-3 outline-none">
 				<legend className="text-title-large">Dividir entre</legend>
@@ -390,12 +392,8 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 		if (!desc) e.description = "Escreva o que foi a despesa.";
 		else if (desc.length > 80) e.description = "Use até 80 letras.";
 		if (!isValidISODate(date) || date > todayISO()) e.date = "Escolha uma data válida, que não seja no futuro.";
-		if (payment !== "cash" && !isValidDueDate(dueDate, date, todayISO())) {
-			e.dueDate = dueDate
-				? "Escolha uma data válida, a partir do dia da compra."
-				: payment === "installments"
-					? "Escolha quando vence a primeira parcela."
-					: "Escolha o dia do vencimento.";
+		if (payment === "installments" && !isValidDueDate(dueDate, date, todayISO())) {
+			e.dueDate = dueDate ? "Escolha uma data válida, a partir do dia da compra." : "Escolha quando vence a primeira parcela.";
 		}
 		if (selected!.length === 0) e.participants = "Escolha pelo menos uma pessoa.";
 		else if (amountCents > 0 && amountCents < selected!.length) e.participants = "O valor é pequeno demais para dividir entre tantas pessoas.";
@@ -427,7 +425,7 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 						date,
 						participantUids: selected,
 						...(payerIsManaged ? { paidByUid: payer } : {}),
-						...(payment !== "cash" ? { dueDate } : {}),
+						...(payment === "installments" ? { dueDate } : {}),
 						...(payment === "installments" ? { installments: { count: installments } } : {}),
 					}),
 			);
