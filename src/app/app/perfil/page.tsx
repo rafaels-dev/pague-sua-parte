@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useAuth } from "@/components/auth/auth-provider";
+import { ProfileFormView, ProfileSkeleton } from "@/components/profile-form";
+import { Button, EmptyState, Snackbar } from "@/components/ui";
 import { onUserChanged } from "@/lib/auth/client";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { detectPixKeyType, PIX_KEY_LABELS } from "@/lib/pix/key";
@@ -13,10 +16,8 @@ type Profile = {
 	pixKey: { type: keyof typeof PIX_KEY_LABELS; key: string } | null;
 };
 
-const inputClass =
-	"min-h-14 w-full rounded-xl border border-border bg-card px-4 text-lg outline-none focus:border-primary focus:ring-2 focus:ring-primary/40";
-
 export default function PerfilPage() {
+	const { user } = useAuth();
 	const [profile, setProfile] = useState<Profile | null>(null);
 	const [loadError, setLoadError] = useState<string | null>(null);
 	const [reloadKey, setReloadKey] = useState(0);
@@ -82,108 +83,54 @@ export default function PerfilPage() {
 
 	if (loadError) {
 		return (
-			<div className="space-y-5 md:max-w-xl">
-				<h1 className="text-3xl font-bold">Meu perfil</h1>
-				<p role="alert" className="text-lg text-red-600">
-					{loadError}
-				</p>
-				<button
-					type="button"
-					onClick={() => {
-						setLoadError(null);
-						setReloadKey((k) => k + 1);
-					}}
-					className="min-h-14 w-full rounded-2xl bg-primary px-6 text-xl font-semibold text-primary-foreground active:opacity-80"
-				>
-					Tentar de novo
-				</button>
-			</div>
+			<EmptyState
+				tone="error"
+				icon="error"
+				role="alert"
+				title="Meu perfil"
+				action={
+					<Button
+						icon="refresh"
+						onClick={() => {
+							setLoadError(null);
+							setReloadKey((k) => k + 1);
+						}}
+					>
+						Tentar de novo
+					</Button>
+				}
+			>
+				{loadError}
+			</EmptyState>
 		);
 	}
 
-	if (!profile) {
-		return (
-			<div className="space-y-5 md:max-w-xl">
-				<h1 className="text-3xl font-bold">Meu perfil</h1>
-				<p className="text-lg text-muted" role="status">
-					Carregando...
-				</p>
-			</div>
-		);
-	}
+	if (!profile) return <ProfileSkeleton />;
 
 	return (
-		<div className="space-y-5 md:max-w-xl">
-			<h1 className="text-3xl font-bold">Meu perfil</h1>
-			<p className="text-base text-muted">{profile.email}</p>
-
-			<form onSubmit={onSubmit} className="space-y-5" noValidate>
-				<label className="block space-y-2">
-					<span className="text-base font-medium">Nome</span>
-					<input
-						name="name"
-						type="text"
-						autoComplete="name"
-						maxLength={60}
-						value={displayName}
-						onChange={(e) => {
-							setDisplayName(e.target.value);
-							setSaved(false);
-						}}
-						className={inputClass}
-					/>
-				</label>
-
-				<label className="block space-y-2">
-					<span className="text-base font-medium">Chave Pix</span>
-					<input
-						name="pixKey"
-						type="text"
-						autoComplete="off"
-						autoCapitalize="none"
-						spellCheck={false}
-						placeholder="CPF, e-mail, celular ou chave aleatória"
-						value={pixKey}
-						aria-invalid={!!pixError || showInvalidHint}
-						onChange={(e) => {
-							setPixKey(e.target.value);
-							setSaved(false);
-							setPixError(null);
-						}}
-						className={inputClass}
-					/>
-					{pixError ? (
-						<span role="alert" className="block text-base text-red-600">
-							{pixError}
-						</span>
-					) : detected ? (
-						<span className="block text-base font-medium text-primary">Tipo da chave: {PIX_KEY_LABELS[detected]}</span>
-					) : (
-						<span className="block text-sm text-muted">
-							{showInvalidHint ? "Ainda não parece uma chave Pix válida." : "É para onde os outros vão pagar você."}
-						</span>
-					)}
-				</label>
-
-				{formError && (
-					<p role="alert" className="text-base text-red-600">
-						{formError}
-					</p>
-				)}
-
-				<button
-					type="submit"
-					disabled={saving}
-					className="min-h-14 w-full rounded-2xl bg-primary px-6 text-xl font-semibold text-primary-foreground active:opacity-80 disabled:opacity-60"
-				>
-					{saving ? "Salvando..." : "Salvar"}
-				</button>
-				{saved && (
-					<p role="status" className="text-center text-lg font-semibold text-primary">
-						Salvo!
-					</p>
-				)}
-			</form>
-		</div>
+		<>
+			<ProfileFormView
+				email={profile.email}
+				picture={user?.picture ?? null}
+				displayName={displayName}
+				pixKey={pixKey}
+				detectedType={detected}
+				showInvalidHint={showInvalidHint}
+				pixError={pixError}
+				formError={formError}
+				saving={saving}
+				onDisplayName={(v) => {
+					setDisplayName(v);
+					setSaved(false);
+				}}
+				onPixKey={(v) => {
+					setPixKey(v);
+					setSaved(false);
+					setPixError(null);
+				}}
+				onSubmit={onSubmit}
+			/>
+			<Snackbar open={saved} message="Salvo!" onClose={() => setSaved(false)} aboveNav />
+		</>
 	);
 }

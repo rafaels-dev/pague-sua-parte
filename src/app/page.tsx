@@ -4,6 +4,8 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth/auth-provider";
 import { SignInButton } from "@/components/auth/sign-in-button";
+import { LandingView } from "@/components/landing-view";
+import { CircularProgress } from "@/components/ui";
 
 export default function Home() {
 	const router = useRouter();
@@ -14,23 +16,14 @@ export default function Home() {
 	}, [user, router]);
 
 	return (
-		<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center gap-8 px-5 py-10 md:max-w-lg md:text-center">
-			<div className="space-y-3">
-				<h1 className="text-4xl font-bold tracking-tight">Racha Pix</h1>
-				<p className="text-xl text-muted">
-					Registre os gastos da família, veja quanto cada um deve e pague por Pix com comprovante.
-				</p>
-			</div>
-
+		<LandingView footer="Usamos sua conta Google apenas para identificar você.">
 			{loading || user ? (
-				<p className="text-center text-xl text-muted" role="status">
-					Carregando...
-				</p>
+				<div className="flex justify-center py-3 text-primary">
+					<CircularProgress />
+				</div>
 			) : (
 				<SignInButton onSignedIn={() => router.replace("/app")} />
 			)}
-
-			<p className="text-center text-base text-muted">Usamos sua conta Google apenas para identificar você.</p>
-		</main>
+		</LandingView>
 	);
 }

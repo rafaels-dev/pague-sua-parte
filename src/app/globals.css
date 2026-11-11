@@ -1,41 +1,115 @@
 @import "tailwindcss";
 
+/*
+ * Material Design 3 — papéis de cor (semente: verde-azulado do Pix).
+ * Claro e escuro seguem prefers-color-scheme.
+ */
 :root {
-	--background: #f7f7f5;
-	--foreground: #171717;
-	--card: #ffffff;
-	--muted: #5f6368;
-	--border: #e3e3df;
-	--primary: #0f766e;
-	--primary-foreground: #ffffff;
-	--receive: #047857;
-	--pay: #b91c1c;
+	--md-primary: #006b5e;
+	--md-on-primary: #ffffff;
+	--md-primary-container: #9ff2e1;
+	--md-on-primary-container: #00201b;
+	--md-secondary-container: #cce8e1;
+	--md-on-secondary-container: #05201b;
+	--md-tertiary-container: #ffdea6;
+	--md-on-tertiary-container: #261900;
+	--md-surface: #f5fbf8;
+	--md-surface-container-low: #eff5f2;
+	--md-surface-container: #e9efec;
+	--md-surface-container-high: #e3eae7;
+	--md-on-surface: #171d1b;
+	--md-on-surface-variant: #3f4946;
+	--md-outline: #6f7976;
+	--md-outline-variant: #bec9c5;
+	--md-error: #ba1a1a;
+	--md-on-error: #ffffff;
+	--md-error-container: #ffdad6;
+	--md-on-error-container: #410002;
+	--md-inverse-surface: #2c3230;
+	--md-inverse-on-surface: #edf2ef;
+	--md-inverse-primary: #83d5c5;
+	/* Dinheiro: "a receber" (verde positivo) e "a pagar" (papel error). */
+	--md-receive: #19692c;
+	--md-pay: var(--md-error);
+	/* Botão do Google (segue as diretrizes de marca do Google). */
+	--google-bg: #ffffff;
+	--google-fg: #1f1f1f;
+	--google-border: #747775;
+	color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
 	:root {
-		--background: #0e0f0f;
-		--foreground: #ededed;
-		--card: #1a1c1c;
-		--muted: #a1a5a8;
-		--border: #2c2f2f;
-		--primary: #2dd4bf;
-		--primary-foreground: #04201d;
-		--receive: #34d399;
-		--pay: #f87171;
+		--md-primary: #83d5c5;
+		--md-on-primary: #003730;
+		--md-primary-container: #005046;
+		--md-on-primary-container: #9ff2e1;
+		--md-secondary-container: #334b46;
+		--md-on-secondary-container: #cce8e1;
+		--md-tertiary-container: #5c4200;
+		--md-on-tertiary-container: #ffdea6;
+		--md-surface: #0e1513;
+		--md-surface-container-low: #171d1b;
+		--md-surface-container: #1b211f;
+		--md-surface-container-high: #252b29;
+		--md-on-surface: #dee4e1;
+		--md-on-surface-variant: #bec9c5;
+		--md-outline: #899390;
+		--md-outline-variant: #3f4946;
+		--md-error: #ffb4ab;
+		--md-on-error: #690005;
+		--md-error-container: #93000a;
+		--md-on-error-container: #ffdad6;
+		--md-inverse-surface: #dee4e1;
+		--md-inverse-on-surface: #2c3230;
+		--md-inverse-primary: #006b5e;
+		--md-receive: #8ad99a;
+		--google-bg: #131314;
+		--google-fg: #e3e3e3;
+		--google-border: #8e918f;
+		color-scheme: dark;
 	}
 }
 
 @theme inline {
-	--color-background: var(--background);
-	--color-foreground: var(--foreground);
-	--color-card: var(--card);
-	--color-muted: var(--muted);
-	--color-border: var(--border);
-	--color-primary: var(--primary);
-	--color-primary-foreground: var(--primary-foreground);
-	--color-receive: var(--receive);
-	--color-pay: var(--pay);
+	--color-primary: var(--md-primary);
+	--color-on-primary: var(--md-on-primary);
+	--color-primary-container: var(--md-primary-container);
+	--color-on-primary-container: var(--md-on-primary-container);
+	--color-secondary-container: var(--md-secondary-container);
+	--color-on-secondary-container: var(--md-on-secondary-container);
+	--color-tertiary-container: var(--md-tertiary-container);
+	--color-on-tertiary-container: var(--md-on-tertiary-container);
+	--color-surface: var(--md-surface);
+	--color-surface-container-low: var(--md-surface-container-low);
+	--color-surface-container: var(--md-surface-container);
+	--color-surface-container-high: var(--md-surface-container-high);
+	--color-on-surface: var(--md-on-surface);
+	--color-on-surface-variant: var(--md-on-surface-variant);
+	--color-outline: var(--md-outline);
+	--color-outline-variant: var(--md-outline-variant);
+	--color-error: var(--md-error);
+	--color-on-error: var(--md-on-error);
+	--color-error-container: var(--md-error-container);
+	--color-on-error-container: var(--md-on-error-container);
+	--color-inverse-surface: var(--md-inverse-surface);
+	--color-inverse-on-surface: var(--md-inverse-on-surface);
+	--color-inverse-primary: var(--md-inverse-primary);
+	--color-receive: var(--md-receive);
+	--color-pay: var(--md-pay);
+	--color-google-bg: var(--google-bg);
+	--color-google-fg: var(--google-fg);
+	--color-google-border: var(--google-border);
+
+	--font-sans: var(--font-roboto), Roboto, system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+
+	/* Escala de formas M3: 12 / 16 / 28 (pílula = rounded-full). */
+	--radius-shape-sm: 12px;
+	--radius-shape-md: 16px;
+	--radius-shape-lg: 28px;
+
+	/* Elevação só para FAB e sheets/diálogos. */
+	--shadow-elevation-3: 0 4px 8px 3px rgb(0 0 0 / 0.15), 0 1px 3px rgb(0 0 0 / 0.3);
 }
 
 html {
@@ -43,9 +117,162 @@ html {
 }
 
 body {
-	background: var(--background);
-	color: var(--foreground);
-	font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-	font-size: 18px;
-	line-height: 1.5;
+	background: var(--md-surface);
+	color: var(--md-on-surface);
+	font-family: var(--font-sans);
+	font-size: 1rem;
+	line-height: 1.5rem;
+	-webkit-tap-highlight-color: transparent;
+}
+
+/* Escala tipográfica M3 (corpo e rótulos nunca abaixo de 16px). */
+@utility text-display-small {
+	font-size: 2.25rem;
+	line-height: 2.75rem;
+	font-weight: 400;
+}
+@utility text-headline-large {
+	font-size: 2rem;
+	line-height: 2.5rem;
+	font-weight: 400;
+}
+@utility text-headline-medium {
+	font-size: 1.75rem;
+	line-height: 2.25rem;
+	font-weight: 400;
+}
+@utility text-headline-small {
+	font-size: 1.5rem;
+	line-height: 2rem;
+	font-weight: 400;
+}
+@utility text-title-large {
+	font-size: 1.375rem;
+	line-height: 1.75rem;
+	font-weight: 400;
+}
+@utility text-title-medium {
+	font-size: 1rem;
+	line-height: 1.5rem;
+	font-weight: 500;
+	letter-spacing: 0.009em;
+}
+@utility text-body-large {
+	font-size: 1rem;
+	line-height: 1.5rem;
+	font-weight: 400;
+	letter-spacing: 0.03em;
+}
+@utility text-label-large {
+	font-size: 1rem;
+	line-height: 1.5rem;
+	font-weight: 500;
+	letter-spacing: 0.006em;
+}
+@utility text-label-medium {
+	/* Rótulos de navegação: 14px (o menor texto do app). */
+	font-size: 0.875rem;
+	line-height: 1rem;
+	font-weight: 500;
+	letter-spacing: 0.03em;
+}
+@utility money {
+	font-variant-numeric: tabular-nums;
+	font-feature-settings: "tnum";
+}
+
+/* Camadas de estado M3: hover 8%, foco e pressionado 10%. */
+@layer components {
+	.state-layer {
+		position: relative;
+		isolation: isolate;
+	}
+	.state-layer::before {
+		content: "";
+		position: absolute;
+		inset: 0;
+		border-radius: inherit;
+		background: currentColor;
+		opacity: 0;
+		pointer-events: none;
+		z-index: -1;
+		transition: opacity 150ms cubic-bezier(0.2, 0, 0, 1);
+	}
+	@media (hover: hover) {
+		.state-layer:hover:not(:disabled, [aria-disabled="true"])::before {
+			opacity: 0.08;
+		}
+	}
+	.state-layer:focus-visible::before {
+		opacity: 0.1;
+	}
+	.state-layer:active:not(:disabled, [aria-disabled="true"])::before {
+		opacity: 0.1;
+	}
+}
+
+/* Foco por teclado sempre bem visível. */
+@layer base {
+	:focus-visible {
+		outline: 3px solid var(--md-primary);
+		outline-offset: 2px;
+	}
+}
+
+body:has(dialog[open]) {
+	overflow: hidden;
+}
+
+dialog::backdrop {
+	background: rgb(0 0 0 / 0.4);
+}
+
+@keyframes sheet-up {
+	from {
+		transform: translateY(24px);
+		opacity: 0;
+	}
+	to {
+		transform: none;
+		opacity: 1;
+	}
+}
+@keyframes dialog-in {
+	from {
+		transform: scale(0.96);
+		opacity: 0;
+	}
+	to {
+		transform: none;
+		opacity: 1;
+	}
+}
+@keyframes fade-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+@keyframes md-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+@keyframes md-pulse {
+	50% {
+		opacity: 0.5;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
 }

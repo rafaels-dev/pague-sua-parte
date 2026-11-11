@@ -8,5 +8,5 @@ export function Greeting() {
 	const name = user?.name ?? "";
 	const firstName = name.includes("@") ? "" : name.trim().split(/\s+/)[0];
 
-	return <h1 className="text-3xl font-bold md:text-4xl">{firstName ? `Olá, ${firstName}!` : "Olá!"}</h1>;
+	return <h1 className="text-headline-medium md:text-headline-large">{firstName ? `Olá, ${firstName}!` : "Olá!"}</h1>;
 }

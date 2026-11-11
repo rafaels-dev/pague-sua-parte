@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { requireUser, UnauthorizedError } from "@/lib/auth/server";
+import { handleError as sharedHandleError, jsonError } from "@/lib/api/http";
+import { requireUser } from "@/lib/auth/server";
 import { getDb } from "@/lib/db/client";
 import { normalizePixKey } from "@/lib/pix/key";
 import { updateProfile, upsertFromAuth, type UserDoc } from "@/lib/users/repo";
@@ -26,13 +27,11 @@ function toProfile(u: UserDoc) {
 }
 
 function error(message: string, status: number, field?: string) {
-	return Response.json({ error: message, ...(field ? { field } : {}) }, { status });
+	return jsonError(message, status, field);
 }
 
 function handleError(err: unknown) {
-	if (err instanceof UnauthorizedError) return error("Sessão expirada. Entre novamente.", 401);
-	console.error("api/me error:", err instanceof Error ? err.name : "unknown");
-	return error("Algo deu errado. Tente novamente em instantes.", 500);
+	return sharedHandleError(err, "api/me");
 }
 
 export async function GET(request: Request) {
