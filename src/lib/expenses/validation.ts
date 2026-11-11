@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { addDays, addMonthsClamped, isRealDate, todayInSaoPaulo } from "./dates";
 
 export const MAX_FILES = 3;
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -38,27 +39,7 @@ export function sanitizeFileName(raw: string, contentType: AllowedContentType): 
 	return name || `anexo.${EXTENSION[contentType]}`;
 }
 
-/** Data de hoje (YYYY-MM-DD) no fuso de São Paulo. */
-export function todayInSaoPaulo(now: Date = new Date()): string {
-	return new Intl.DateTimeFormat("en-CA", {
-		timeZone: "America/Sao_Paulo",
-		year: "numeric",
-		month: "2-digit",
-		day: "2-digit",
-	}).format(now);
-}
-
-function isRealDate(s: string): boolean {
-	if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
-	const d = new Date(`${s}T00:00:00Z`);
-	return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
-}
-
-function addDays(s: string, days: number): string {
-	const d = new Date(`${s}T00:00:00Z`);
-	d.setUTCDate(d.getUTCDate() + days);
-	return d.toISOString().slice(0, 10);
-}
+export { todayInSaoPaulo };
 
 export type ExpenseInput = {
 	description: string;
@@ -67,7 +48,15 @@ export type ExpenseInput = {
 	participantUids: string[];
 	/** Quem pagou, se não for quem está lançando (pessoa sem login que o usuário cuida). */
 	paidByUid?: string;
+	/** Vencimento (compra no cartão); com `installments`, é o da primeira parcela. */
+	dueDate?: string;
+	/** Compra parcelada: `amountCents` vale para CADA parcela. */
+	installments?: { count: number };
 };
+
+export const MIN_INSTALLMENTS = 2;
+export const MAX_INSTALLMENTS = 48;
+export const MAX_DUE_YEARS_AHEAD = 5;
 
 export type Invalid = { ok: false; status: number; error: string; field: string };
 
@@ -87,6 +76,8 @@ const schema = z.object({
 		.array(z.string().min(1).max(128), { message: "Escolha quem divide a despesa." })
 		.min(1, "Escolha quem divide a despesa.")
 		.max(100, "Participantes demais."),
+	dueDate: z.string({ message: "Data de vencimento inválida." }).nullish(),
+	installments: z.unknown().optional(),
 	paidByUid: z.string({ message: "Escolha quem pagou." }).min(1, "Escolha quem pagou.").max(128, "Escolha quem pagou.").optional(),
 });
 
@@ -97,7 +88,7 @@ export function parseExpenseInput(raw: unknown, now: Date = new Date()): { ok: t
 	if (!parsed.success) {
 		const issue = parsed.error.issues[0];
 		const field = String(issue.path[0] ?? "description");
-		return fail(["description", "amountCents", "date", "participantUids", "paidByUid"].includes(field) ? field : "description", issue.message);
+		return fail(["description", "amountCents", "date", "participantUids", "paidByUid", "dueDate"].includes(field) ? field : "description", issue.message);
 	}
 	const today = todayInSaoPaulo(now);
 	const date = parsed.data.date ?? today;
@@ -106,23 +97,58 @@ export function parseExpenseInput(raw: unknown, now: Date = new Date()): { ok: t
 	if (date > addDays(today, 1)) return fail("date", "A data não pode estar no futuro.");
 	const uids = parsed.data.participantUids;
 	if (new Set(uids).size !== uids.length) return fail("participantUids", "Há participantes repetidos.");
+
+	let installments: ExpenseInput["installments"];
+	const rawInst = parsed.data.installments;
+	if (rawInst !== undefined && rawInst !== null) {
+		const count = typeof rawInst === "object" && !Array.isArray(rawInst) ? (rawInst as { count?: unknown }).count : undefined;
+		if (typeof count !== "number" || !Number.isInteger(count) || count < MIN_INSTALLMENTS || count > MAX_INSTALLMENTS) {
+			return fail("installments", `O número de parcelas deve ser um inteiro de ${MIN_INSTALLMENTS} a ${MAX_INSTALLMENTS}.`);
+		}
+		installments = { count };
+	}
+	const dueDate = parsed.data.dueDate ?? undefined;
+	if (dueDate === undefined) {
+		if (installments) return fail("dueDate", "Informe o vencimento da primeira parcela.");
+	} else {
+		if (!isRealDate(dueDate)) return fail("dueDate", "Data de vencimento inválida.");
+		if (dueDate < MIN_DATE) return fail("dueDate", "O vencimento não pode ser anterior a 2000.");
+		if (dueDate > addMonthsClamped(today, MAX_DUE_YEARS_AHEAD * 12)) return fail("dueDate", "O vencimento pode ser no máximo daqui a 5 anos.");
+	}
 	return {
 		ok: true,
-		value: { description: parsed.data.description, amountCents: parsed.data.amountCents, date, participantUids: uids, ...(parsed.data.paidByUid ? { paidByUid: parsed.data.paidByUid } : {}) },
+		value: {
+			description: parsed.data.description,
+			amountCents: parsed.data.amountCents,
+			date,
+			participantUids: uids,
+			...(parsed.data.paidByUid ? { paidByUid: parsed.data.paidByUid } : {}),
+			...(dueDate ? { dueDate } : {}),
+			...(installments ? { installments } : {}),
+		},
 	};
 }
 
-const participantsSchema = z.object({ participantUids: schema.shape.participantUids });
+export type ParticipantsScope = "this" | "following";
+const participantsSchema = z.object({ participantUids: schema.shape.participantUids, scope: z.unknown().optional() });
 
-/** Corpo de `PUT .../participants`: `{ participantUids }` com as mesmas regras do lançamento. */
-export function parseParticipantsInput(raw: unknown): { ok: true; value: string[] } | Invalid {
-	const fail = (error: string): Invalid => ({ ok: false, status: 422, error, field: "participantUids" });
+/** Corpo de `PUT .../participants`: `{ participantUids, scope? }` com as mesmas regras do lançamento. */
+export function parseParticipantsInput(raw: unknown): { ok: true; value: string[]; scope: ParticipantsScope } | Invalid {
+	const fail = (error: string, field = "participantUids"): Invalid => ({ ok: false, status: 422, error, field });
 	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return fail("Escolha quem divide a despesa.");
 	const parsed = participantsSchema.safeParse(raw);
 	if (!parsed.success) return fail(parsed.error.issues[0].message);
 	const uids = parsed.data.participantUids;
 	if (new Set(uids).size !== uids.length) return fail("Há participantes repetidos.");
-	return { ok: true, value: uids };
+	const scope = parseScope(parsed.data.scope);
+	if (!scope) return fail("Escopo inválido.", "scope");
+	return { ok: true, value: uids, scope };
+}
+
+/** `this` (padrão) ou `following`; qualquer outra coisa é null. */
+export function parseScope(raw: unknown): ParticipantsScope | null {
+	if (raw === undefined || raw === null) return "this";
+	return raw === "this" || raw === "following" ? raw : null;
 }
 
 /** Confere quantidade e tamanho ANTES de ler os bytes. */

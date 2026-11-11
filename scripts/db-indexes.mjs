@@ -24,6 +24,15 @@ try {
 	console.log("expenses:", await expenses.createIndex({ groupId: 1, date: -1, createdAt: -1 }, { name: "group_date_created" }));
 	console.log("expenses:", await expenses.createIndex({ "shares.uid": 1 }, { name: "shares_uid" }));
 	console.log("expenses:", await expenses.createIndex({ paidBy: 1 }, { name: "paid_by" }));
+	console.log("expenses:", await expenses.createIndex({ groupId: 1, dueDate: 1 }, { name: "group_due_date" }));
+	console.log(
+		"expenses:",
+		await expenses.createIndex(
+			{ "installment.seriesId": 1, "installment.number": 1 },
+			{ name: "installment_series" },
+		),
+	);
+	console.log("expenses:", await expenses.createIndex({ "attachments.key": 1 }, { name: "attachment_key" }));
 } catch (err) {
 	console.error("Falha ao criar índices:", err instanceof Error ? err.name : "erro desconhecido");
 	process.exitCode = 1;

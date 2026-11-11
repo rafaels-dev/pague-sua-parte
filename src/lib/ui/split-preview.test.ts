@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitPreview } from "./split-preview";
+import { installmentSplitLine, splitPreview } from "./split-preview";
 
 describe("splitPreview", () => {
 	it("vazio sem valor ou sem gente", () => {
@@ -8,7 +8,7 @@ describe("splitPreview", () => {
 	});
 	it("divisão exata", () => {
 	  const r = splitPreview(10000, ["a", "b", "c", "d"], "a");
-	  expect(r).toEqual({ kind: "ok", line: "Fica R$ 25,00 para cada um", note: null, othersCents: 7500 });
+	  expect(r).toEqual({ kind: "ok", line: "Fica R$ 25,00 para cada um", note: null, othersCents: 7500, baseCents: 2500, people: 4 });
 	});
 	it("sobra fica com quem pagou", () => {
 	  const r = splitPreview(1000, ["a", "b", "c"], "a");
@@ -28,5 +28,12 @@ describe("splitPreview", () => {
 	});
 	it("valor pequeno demais", () => {
 	  expect(splitPreview(2, ["a", "b", "c"], "a").kind).toBe("error");
+	});
+});
+
+describe("installmentSplitLine", () => {
+	it("por pessoa em cada parcela", () => {
+		expect(installmentSplitLine({ baseCents: 3000, people: 4 })).toBe("Fica R$ 30,00 por pessoa em cada parcela");
+		expect(installmentSplitLine({ baseCents: 3000, people: 1 })).toBe("Fica R$ 30,00 para a pessoa escolhida em cada parcela");
 	});
 });

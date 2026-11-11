@@ -192,18 +192,63 @@ describe("balanceOf (fixture calculada à mão)", () => {
 	const E3 = { paidBy: "u2", shares: [sh("u2", 600), sh("u1", 600, 100), sh("u3", 600, 600)] }; // u1 deve 500 a u2
 	it("u1", () => {
 		// a receber: E1 u2 1000 | a pagar: E2 300+200, E3 500
-		expect(balanceOf([E1, E2, E3], "u1")).toEqual({ toReceiveCents: 1000, toPayCents: 1000 });
+		expect(balanceOf([E1, E2, E3], "u1")).toEqual({ toReceiveCents: 1000, toPayCents: 1000, toReceiveNowCents: 1000, toPayNowCents: 1000, overdueToPayCents: 0 });
 	});
 	it("u2", () => {
 		// a pagar: E1 1000 | a receber: E2 refund 300, E3 500
-		expect(balanceOf([E1, E2, E3], "u2")).toEqual({ toReceiveCents: 800, toPayCents: 1000 });
+		expect(balanceOf([E1, E2, E3], "u2")).toEqual({ toReceiveCents: 800, toPayCents: 1000, toReceiveNowCents: 800, toPayNowCents: 1000, overdueToPayCents: 0 });
 	});
 	it("u3", () => {
 		// a receber: E2 refund 200
-		expect(balanceOf([E1, E2, E3], "u3")).toEqual({ toReceiveCents: 200, toPayCents: 0 });
+		expect(balanceOf([E1, E2, E3], "u3")).toEqual({ toReceiveCents: 200, toPayCents: 0, toReceiveNowCents: 200, toPayNowCents: 0, overdueToPayCents: 0 });
 	});
 	it("dinheiro se conserva: o que um deve, outro recebe", () => {
 		const all = ["u1", "u2", "u3"].map((u) => balanceOf([E1, E2, E3], u));
 		expect(all.reduce((a, b) => a + b.toReceiveCents, 0)).toBe(all.reduce((a, b) => a + b.toPayCents, 0));
+	});
+});
+
+describe("balanceOf: agora x depois x atrasado (fixture calculada à mão, hoje = 2026-11-11 em São Paulo)", () => {
+	const NOW = new Date("2026-11-11T15:00:00Z"); // fim do mês: 2026-11-30
+	const owned = (paidBy: string, dueDate: string | undefined, ...shares: ReturnType<typeof sh>[]) => ({ paidBy, dueDate, shares });
+	const ex = [
+		owned("u1", undefined, sh("u1", 0), sh("u2", 100, 0)), // sem vencimento: agora
+		owned("u1", "2026-11-05", sh("u2", 200, 0)), // atrasada
+		owned("u1", "2026-11-30", sh("u2", 300, 0)), // último dia do mês: agora, não atrasada
+		owned("u1", "2026-12-01", sh("u2", 400, 0)), // depois
+		owned("u1", "2027-06-01", sh("u2", 300, 500), sh("u3", 50, 0)), // u2 pagou a mais: reembolso 200 conta agora; 50 de u3 é depois
+		owned("u2", "2026-12-15", sh("u1", 700, 0)), // u1 deve, depois
+		owned("u2", "2026-11-01", sh("u1", 60, 0)), // u1 deve, atrasada
+	];
+	it("u1", () => {
+		expect(balanceOf(ex, "u1", NOW)).toEqual({
+			toReceiveCents: 1050, // 100+200+300+400+50
+			toReceiveNowCents: 600, // 100+200+300
+			toPayCents: 960, // reembolso 200 + 700 + 60
+			toPayNowCents: 260, // reembolso 200 + 60
+			overdueToPayCents: 60,
+		});
+	});
+	it("u2", () => {
+		expect(balanceOf(ex, "u2", NOW)).toEqual({
+			toPayCents: 1000,
+			toPayNowCents: 600,
+			overdueToPayCents: 200, // só a de 2026-11-05 (a sem vencimento nunca atrasa)
+			toReceiveCents: 960, // 700 + 60 + reembolso 200
+			toReceiveNowCents: 260, // 60 + reembolso 200
+		});
+	});
+	it("u3", () => {
+		expect(balanceOf(ex, "u3", NOW)).toEqual({ toPayCents: 50, toPayNowCents: 0, overdueToPayCents: 0, toReceiveCents: 0, toReceiveNowCents: 0 });
+	});
+	it("a virada de dia é em São Paulo: 23:59:59 ainda não atrasa, 00:00:00 do dia seguinte atrasa", () => {
+		const e = [owned("u1", "2026-11-11", sh("u2", 100, 0))];
+		expect(balanceOf(e, "u2", new Date("2026-11-12T02:59:59Z")).overdueToPayCents).toBe(0);
+		expect(balanceOf(e, "u2", new Date("2026-11-12T03:00:00Z")).overdueToPayCents).toBe(100);
+	});
+	it("a virada de mês também: 'agora' passa a incluir o mês seguinte", () => {
+		const e = [owned("u1", "2026-12-01", sh("u2", 100, 0))];
+		expect(balanceOf(e, "u2", new Date("2026-12-01T02:59:59Z")).toPayNowCents).toBe(0); // ainda 30/11 em SP
+		expect(balanceOf(e, "u2", new Date("2026-12-01T03:00:00Z")).toPayNowCents).toBe(100);
 	});
 });

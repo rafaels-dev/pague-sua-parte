@@ -1,3 +1,4 @@
+import { isDueNow, isPastDue, todayInSaoPaulo } from "./dates";
 import { splitEqually } from "./split";
 
 /**
@@ -129,27 +130,50 @@ export function orderShares<T extends { uid: string; amountCents: number }>(
 	);
 }
 
-export type Balance = { toReceiveCents: number; toPayCents: number };
+export type Balance = {
+	/** Tudo o que está em aberto. */
+	toReceiveCents: number;
+	toPayCents: number;
+	/** A parte de cima cuja despesa não tem vencimento ou vence até o fim do mês atual (reembolsos sempre contam). */
+	toReceiveNowCents: number;
+	toPayNowCents: number;
+	/** O que a pessoa deve em despesas com vencimento antes de hoje. */
+	overdueToPayCents: number;
+};
 
 /**
  * Referência em JS da conta de saldos (a agregação do MongoDB faz o mesmo):
  * a pagar = o que `uid` deve + reembolsos que `uid` deve como dono;
  * a receber = o que devem a `uid` como dono + reembolsos que outros donos devem a `uid`.
+ * "Agora" = sem `dueDate` ou `dueDate` até o último dia do mês de hoje (São Paulo); reembolso sempre é "agora".
  */
-export function balanceOf(expenses: { paidBy: string; shares: ExpenseShare[] }[], uid: string): Balance {
-	let toReceiveCents = 0;
-	let toPayCents = 0;
+export function balanceOf(
+	expenses: { paidBy: string; shares: ExpenseShare[]; dueDate?: string | null }[],
+	uid: string,
+	now: Date = new Date(),
+): Balance {
+	const today = todayInSaoPaulo(now);
+	const b: Balance = { toReceiveCents: 0, toPayCents: 0, toReceiveNowCents: 0, toPayNowCents: 0, overdueToPayCents: 0 };
 	for (const e of expenses) {
+		const dueNow = isDueNow(e.dueDate, today);
+		const late = isPastDue(e.dueDate, today);
 		for (const s of normalizeShares(e.shares)) {
 			if (s.uid === e.paidBy) continue;
+			const due = dueCents(s, e.paidBy);
+			const refund = refundCents(s, e.paidBy);
 			if (e.paidBy === uid) {
-				toReceiveCents += dueCents(s, e.paidBy);
-				toPayCents += refundCents(s, e.paidBy);
+				b.toReceiveCents += due;
+				b.toReceiveNowCents += dueNow ? due : 0;
+				b.toPayCents += refund;
+				b.toPayNowCents += refund;
 			} else if (s.uid === uid) {
-				toPayCents += dueCents(s, e.paidBy);
-				toReceiveCents += refundCents(s, e.paidBy);
+				b.toPayCents += due;
+				b.toPayNowCents += dueNow ? due : 0;
+				b.overdueToPayCents += late ? due : 0;
+				b.toReceiveCents += refund;
+				b.toReceiveNowCents += refund;
 			}
 		}
 	}
-	return { toReceiveCents, toPayCents };
+	return b;
 }

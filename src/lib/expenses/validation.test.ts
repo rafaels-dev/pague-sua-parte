@@ -99,8 +99,8 @@ describe("parseExpenseInput", () => {
 
 describe("parseParticipantsInput", () => {
 	it("aceita lista válida, inclusive só um participante", () => {
-		expect(parseParticipantsInput({ participantUids: ["a"] })).toEqual({ ok: true, value: ["a"] });
-		expect(parseParticipantsInput({ participantUids: ["a", "b"] })).toEqual({ ok: true, value: ["a", "b"] });
+		expect(parseParticipantsInput({ participantUids: ["a"] })).toEqual({ ok: true, value: ["a"], scope: "this" });
+		expect(parseParticipantsInput({ participantUids: ["a", "b"] })).toEqual({ ok: true, value: ["a", "b"], scope: "this" });
 	});
 	it.each([[null], [[]], ["x"], [{}], [{ participantUids: [] }], [{ participantUids: ["a", "a"] }], [{ participantUids: [1] }], [{ participantUids: "a" }]])(
 		"422 em participantUids para %j",
@@ -108,4 +108,57 @@ describe("parseParticipantsInput", () => {
 			expect(parseParticipantsInput(raw)).toMatchObject({ ok: false, status: 422, field: "participantUids" });
 		},
 	);
+});
+
+describe("parseParticipantsInput: scope", () => {
+	it("this (padrão) e following", () => {
+		expect(parseParticipantsInput({ participantUids: ["a"], scope: "following" })).toEqual({ ok: true, value: ["a"], scope: "following" });
+		expect(parseParticipantsInput({ participantUids: ["a"], scope: "this" })).toMatchObject({ scope: "this" });
+	});
+	it.each([["all"], [1], [""]])("422 em scope para %j", (scope) => {
+		expect(parseParticipantsInput({ participantUids: ["a"], scope })).toMatchObject({ ok: false, status: 422, field: "scope" });
+	});
+});
+
+describe("parseExpenseInput: vencimento e parcelas", () => {
+	// hoje em São Paulo: 2026-11-11
+	const p = (extra: Record<string, unknown>) => parseExpenseInput({ ...ok, ...extra }, now);
+	const field = (extra: Record<string, unknown>) => {
+		const r = p(extra);
+		return r.ok ? null : { status: r.status, field: r.field, error: r.error };
+	};
+	it("dueDate válida passa; ausente/nula não aparece no valor", () => {
+		expect(p({ dueDate: "2026-12-10" })).toMatchObject({ ok: true, value: { dueDate: "2026-12-10" } });
+		expect(p({ dueDate: "2026-10-01" })).toMatchObject({ ok: true, value: { dueDate: "2026-10-01" } }); // no passado também vale
+		const none = p({ dueDate: null });
+		expect(none.ok && "dueDate" in none.value).toBe(false);
+		const absent = p({});
+		expect(absent.ok && "dueDate" in absent.value).toBe(false);
+	});
+	it("dueDate inválida: 422 em dueDate", () => {
+		for (const dueDate of ["2026-02-30", "10/12/2026", "2026-13-01", "abc", 123, "1999-12-31"]) {
+			expect(field({ dueDate })).toMatchObject({ status: 422, field: "dueDate" });
+		}
+	});
+	it("no máximo 5 anos à frente", () => {
+		expect(p({ dueDate: "2031-11-11" }).ok).toBe(true);
+		expect(field({ dueDate: "2031-11-12" })).toMatchObject({ status: 422, field: "dueDate" });
+	});
+	it("parcelas: count inteiro de 2 a 48 e dueDate obrigatória", () => {
+		expect(p({ installments: { count: 2 }, dueDate: "2026-12-10" })).toMatchObject({ ok: true, value: { installments: { count: 2 }, dueDate: "2026-12-10", amountCents: 1000 } });
+		expect(p({ installments: { count: 48 }, dueDate: "2026-12-10" }).ok).toBe(true);
+		for (const installments of [{ count: 1 }, { count: 49 }, { count: 2.5 }, { count: "3" }, {}, 3, [], "x"]) {
+			expect(field({ installments, dueDate: "2026-12-10" })).toMatchObject({ status: 422, field: "installments" });
+		}
+	});
+	it("parcelas sem dueDate: 422 em dueDate pedindo a primeira data", () => {
+		const r = field({ installments: { count: 3 } });
+		expect(r).toMatchObject({ status: 422, field: "dueDate" });
+		expect(r?.error).toMatch(/primeira parcela/);
+		expect(field({ installments: { count: 3 }, dueDate: null })).toMatchObject({ field: "dueDate" });
+	});
+	it("installments nulo é como ausente", () => {
+		const r = p({ installments: null });
+		expect(r.ok && "installments" in r.value).toBe(false);
+	});
 });

@@ -9,7 +9,7 @@ import { ResplitContent } from "@/components/expenses/resplit-sheet";
 import { useWhoSplits } from "@/components/expenses/who-splits";
 import { ChooseGroupSheet, GroupsListView, type GroupSummary } from "@/components/groups/groups-list";
 import { HomeSummary } from "@/components/home-summary";
-import { buildExpenseShareText } from "@/lib/ui/expense-share";
+import { buildExpenseShareText, shareIntro } from "@/lib/ui/expense-share";
 import type { AttachmentView } from "@/components/expenses/expense-attachments";
 import { ExpenseListView } from "@/components/expenses/expense-list";
 import { NewExpenseFormView, NoPixKeyBlock, type FormErrors } from "@/components/expenses/new-expense-form";
@@ -21,6 +21,12 @@ import { normalizeMember, type Member } from "@/components/groups/types";
 import { ManagedSummaryCards } from "@/components/home-summary";
 import { Button, Sheet } from "@/components/ui";
 import { todayISO } from "@/lib/ui/dates";
+import { addMonthsClamped, nextDayOfMonth } from "@/lib/ui/due-dates";
+import type { PaymentKind } from "@/components/expenses/payment-choice";
+import type { ExpenseSeries } from "@/components/expenses/types";
+import type { InstallmentScope } from "@/components/expenses/installment-scope";
+import { DeleteInstallmentContent, ResplitScopeContent } from "@/components/expenses/installment-scope";
+import { normalizeGroup } from "@/components/groups/groups-list";
 
 const noop = () => {};
 const USER = { name: "Rafael Schettino", email: "rafael@example.com", picture: null };
@@ -63,8 +69,8 @@ const daysAgo = (n: number) => {
 	d.setUTCDate(d.getUTCDate() - n);
 	return d.toISOString().slice(0, 10);
 };
-type SumInput = Omit<ExpenseSummary, "yourDueCents" | "yourRefundCents" | "refundCount" | "managed" | "ownerView" | "paidBy"> &
-	Partial<Pick<ExpenseSummary, "yourDueCents" | "yourRefundCents" | "refundCount" | "managed" | "ownerView">> & {
+type SumInput = Omit<ExpenseSummary, "yourDueCents" | "yourRefundCents" | "refundCount" | "managed" | "ownerView" | "paidBy" | "dueDate" | "installment" | "overdue" | "settled" | "attachmentCount"> &
+	Partial<Pick<ExpenseSummary, "attachmentCount" | "yourDueCents" | "yourRefundCents" | "refundCount" | "managed" | "ownerView" | "dueDate" | "installment" | "overdue" | "settled">> & {
 		paidBy: { uid: string; name: string; isYou: boolean; youManage?: boolean };
 	};
 const sum = (o: SumInput): ExpenseSummary => ({
@@ -73,6 +79,11 @@ const sum = (o: SumInput): ExpenseSummary => ({
 	refundCount: 0,
 	managed: [],
 	ownerView: null,
+	attachmentCount: 0,
+	dueDate: null,
+	installment: null,
+	overdue: false,
+	settled: o.pendingCount === 0 && (o.refundCount ?? 0) === 0 && o.yourStatus !== "pending" && o.yourStatus !== "refund",
 	...o,
 	paidBy: { ...o.paidBy, youManage: o.paidBy.youManage ?? false },
 });
@@ -138,7 +149,28 @@ const CARE_EXPENSES: ExpenseSummary[] = [
 	sum({ id: "c4", description: "Consulta com a cardiologista", amountCents: 45000, date: daysAgo(8), paidBy: { uid: "a", name: "Renata Souza", isYou: true }, yourShareCents: 11250, yourStatus: "payer", pendingCount: 0, attachmentCount: 1 }),
 ];
 
-export function MockGroup({ empty = false, framed = true, care = false }: Readonly<{ empty?: boolean; framed?: boolean; care?: boolean }>) {
+/** Dia do vencimento mais próximo: o dia 10 que vem (ou hoje, se hoje é dia 10). */
+const DUE_NEXT = nextDayOfMonth(TODAY, 10);
+const ME = { uid: "a", name: "Rafael Schettino", isYou: true };
+const MARIA = { uid: "b", name: "Maria das Dores Silva", isYou: false };
+
+/** Grupo com vencimentos: vencida, no cartão, parcelada, comum, e muitas quitadas (a lista de quitadas começa recolhida). */
+const DUE_EXPENSES: ExpenseSummary[] = [
+	sum({ id: "v1", description: "Geladeira nova", amountCents: 12000, date: daysAgo(40), paidBy: MARIA, yourShareCents: 3000, yourStatus: "pending", pendingCount: 3, dueDate: daysAgo(8), overdue: true, installment: { seriesId: "s1", number: 2, count: 4 } }),
+	sum({ id: "v2", description: "Notebook da escola", amountCents: 45000, date: daysAgo(3), paidBy: ME, yourShareCents: 11250, yourStatus: "payer", pendingCount: 3, dueDate: DUE_NEXT, installment: { seriesId: "s2", number: 1, count: 6 } }),
+	sum({ id: "v3", description: "Passagem de ônibus", amountCents: 9000, date: daysAgo(1), paidBy: MARIA, yourShareCents: 2250, yourStatus: "pending", pendingCount: 2, dueDate: addMonthsClamped(DUE_NEXT, 1) }),
+	sum({ id: "v4", description: "Remédios da farmácia", amountCents: 28990, date: daysAgo(0), paidBy: MARIA, yourShareCents: 7248, yourStatus: "pending", pendingCount: 3, attachmentCount: 2 }),
+	...["Mercado do mês", "Consulta", "Fraldas", "Gás", "Luz", "Água", "Internet"].map((d, i) =>
+		sum({ id: `q${i}`, description: d, amountCents: 8000 + i * 1500, date: daysAgo(30 + i * 9), paidBy: i % 2 ? MARIA : ME, yourShareCents: 2000, yourStatus: i % 2 ? "paid" : "payer", pendingCount: 0 }),
+	),
+];
+
+export function MockGroup({
+	empty = false,
+	framed = true,
+	care = false,
+	due = false,
+}: Readonly<{ empty?: boolean; framed?: boolean; care?: boolean; due?: boolean }>) {
 	const group = care ? CARE_GROUP : MOCK_GROUP;
 	return (
 		<Shell pathname="/app/grupos/1" framed={framed} user={care ? CARE_USER : USER}>
@@ -151,7 +183,7 @@ export function MockGroup({ empty = false, framed = true, care = false }: Readon
 					</Button>
 				}
 				addManaged={care ? <AddManagedButton onClick={noop} /> : undefined}
-				expenses={<ExpenseListView groupId="1" state={{ kind: "ready", expenses: empty ? [] : care ? CARE_EXPENSES : EXPENSES }} />}
+				expenses={<ExpenseListView groupId="1" state={{ kind: "ready", expenses: empty ? [] : care ? CARE_EXPENSES : due ? DUE_EXPENSES : EXPENSES }} />}
 			/>
 		</Shell>
 	);
@@ -233,7 +265,10 @@ export function MockNewExpense({
 	choose,
 	care = false,
 	payer,
+	pay,
 }: Readonly<{
+	/** Como foi pago ao abrir (à vista por padrão). */
+	pay?: { payment: PaymentKind; dueDate?: string; installments?: number };
 	/** Cenário da Renata, que cuida de Benjamim e do tio Carlos. */
 	care?: boolean;
 	/** Quem pagou ao abrir (uid); sem isso, "Eu". */
@@ -249,6 +284,9 @@ export function MockNewExpense({
 	const [description, setDescription] = useState(initial?.description ?? "");
 	const [date, setDate] = useState(TODAY);
 	const [dateOpen, setDateOpen] = useState(false);
+	const [payment, setPayment] = useState<PaymentKind>(pay?.payment ?? "cash");
+	const [dueDate, setDueDate] = useState(pay?.dueDate ?? "");
+	const [installments, setInstallments] = useState(pay?.installments ?? 6);
 	const list = care ? CARE_GROUP.members : members;
 	const who = useWhoSplits(list.map((m) => m.uid));
 	const [payerUid, setPayerUid] = useState(payer ?? list.find((m) => m.isYou)?.uid ?? "");
@@ -270,6 +308,12 @@ export function MockNewExpense({
 				description={description}
 				date={date}
 				dateOpen={dateOpen}
+				payment={payment}
+				dueDate={dueDate}
+				installments={installments}
+				onPayment={setPayment}
+				onDueDate={setDueDate}
+				onInstallments={setInstallments}
 				selected={who.selected}
 				splitMode={who.mode}
 				onSplitMode={who.setMode}
@@ -319,7 +363,7 @@ const ATTACHMENTS: AttachmentView[] = [
 	{ id: "x3", name: "nota-da-consulta.pdf", contentType: "application/pdf", size: 1_200_000, url: null, state: "ready" },
 ];
 
-export type MockMode = "debtor" | "payer" | "partial" | "refund" | "owner-return" | "recalc" | "two-parts" | "care-paid";
+export type MockMode = "installment" | "overdue" | "owner-installment" | "debtor" | "payer" | "partial" | "refund" | "owner-return" | "recalc" | "two-parts" | "care-paid";
 const isCare = (mode: MockMode) => mode === "two-parts" || mode === "care-paid";
 
 type MS = Partial<ExpenseShare> & Pick<ExpenseShare, "uid" | "name" | "amountCents" | "status">;
@@ -341,11 +385,21 @@ const PAID_AT = daysAgo(1) + "T15:00:00.000Z";
 const A = { uid: "a", name: "Rafael Schettino" };
 const B = { uid: "b", name: "Maria das Dores Silva" };
 
+const NO_DUE = { dueDate: null, installment: null, overdue: false, series: null };
+
+/** Série mensal de `count` parcelas a partir do vencimento da primeira; as `paid` primeiras já estão quitadas. */
+function seriesMock(count: number, firstDue: string, paid: number): ExpenseSeries {
+	return {
+		count,
+		items: Array.from({ length: count }, (_, i) => ({ id: `p${i + 1}`, number: i + 1, dueDate: addMonthsClamped(firstDue, i), settled: i < paid })),
+	};
+}
+
 /** Despesas do cenário da Renata (que cuida do avô Benjamim). */
 function careDetail(mode: "two-parts" | "care-paid"): ExpenseDetailData {
 	const R = { uid: "a", name: "Renata Souza" };
 	const BEN = { uid: "m1", name: "Benjamim", kind: "managed" as const, managedByName: "Renata Souza", youManage: true };
-	const common = { groupId: "1", createdAt: new Date().toISOString(), attachments: [] as ExpenseDetailData["attachments"] };
+	const common = { groupId: "1", createdAt: new Date().toISOString(), attachments: [] as ExpenseDetailData["attachments"], ...NO_DUE };
 	if (mode === "two-parts") {
 		// Mercado de 620,00 pago pela Maria, dividido entre 4: a Renata deve a parte dela (155,00) e a do Benjamim (já pagou 50,00; faltam 105,00).
 		const shares = [
@@ -392,7 +446,66 @@ function careDetail(mode: "two-parts" | "care-paid"): ExpenseDetailData {
 	};
 }
 
+/** Parcela de uma compra parcelada, vista por quem deve (o dono é a Maria). */
+function installmentDetail(mode: "installment" | "overdue"): ExpenseDetailData {
+	const overdue = mode === "overdue";
+	// "Em dia": parcela 2 de 6, a primeira venceu no dia 10 e já foi paga. "Vencida": parcela 2 de 4, venceu há 8 dias.
+	const count = overdue ? 4 : 6;
+	const due2 = overdue ? daysAgo(8) : DUE_NEXT;
+	const series = seriesMock(count, addMonthsClamped(due2, -1), 1);
+	const shares = [
+		share({ ...B, amountCents: 3000, status: "payer" }),
+		share({ ...A, amountCents: 3000, status: "pending", isYou: true }),
+		share({ uid: "c", name: "José", amountCents: 3000, status: "paid", paidAt: PAID_AT, method: "manual" }),
+		share({ uid: "d", name: "Ana Paula", amountCents: 3000, status: "pending" }),
+	];
+	return {
+		id: "p2",
+		groupId: "1",
+		description: overdue ? "Geladeira nova" : "Sofá da sala",
+		amountCents: 12000,
+		date: daysAgo(overdue ? 40 : 30),
+		createdAt: new Date().toISOString(),
+		canDelete: false,
+		canMarkPaid: false,
+		canEditParticipants: false,
+		paidBy: { ...B, picture: null, isYou: false, kind: "user", youManage: false },
+		pix: { type: "cpf", key: "52998224725", payeeName: B.name },
+		attachments: [],
+		shares,
+		participantUids: shares.map((x) => x.uid),
+		dueDate: due2,
+		installment: { seriesId: "s1", number: 2, count },
+		overdue,
+		series,
+	};
+}
+
+/** Parcela 2 de 6 vista por quem lançou (dono): pode mudar a divisão e apagar, e a pergunta "só esta ou as próximas" aparece. */
+function ownerInstallmentDetail(): ExpenseDetailData {
+	const d = installmentDetail("installment");
+	const shares = [
+		share({ ...A, amountCents: 3000, status: "payer", isYou: true }),
+		share({ ...B, amountCents: 3000, status: "pending" }),
+		share({ uid: "c", name: "José", amountCents: 3000, status: "paid", paidAt: PAID_AT, method: "manual" }),
+		share({ uid: "d", name: "Ana Paula", amountCents: 3000, status: "pending" }),
+	];
+	return {
+		...d,
+		description: "Sofá da sala",
+		canDelete: true,
+		canMarkPaid: true,
+		canEditParticipants: true,
+		paidBy: { ...A, picture: null, isYou: true, kind: "user", youManage: false },
+		pix: { type: "cpf", key: "52998224725", payeeName: A.name },
+		shares,
+		participantUids: shares.map((x) => x.uid),
+	};
+}
+
 function detail(mode: MockMode): ExpenseDetailData {
+	if (mode === "installment" || mode === "overdue") return installmentDetail(mode);
+	if (mode === "owner-installment") return ownerInstallmentDetail();
 	if (isCare(mode)) return careDetail(mode as "two-parts" | "care-paid");
 	const youOwner = mode === "payer" || mode === "owner-return" || mode === "recalc";
 	const owner = youOwner ? { ...A, picture: null, isYou: true, kind: "user" as const, youManage: false } : { ...B, picture: null, isYou: false, kind: "user" as const, youManage: false };
@@ -406,6 +519,7 @@ function detail(mode: MockMode): ExpenseDetailData {
 		paidBy: owner,
 		pix: { type: "cpf" as const, key: "52998224725", payeeName: owner.name },
 		attachments: ATTACHMENTS.map(({ id, name, contentType, size }) => ({ id, name, contentType, size })),
+		...NO_DUE,
 	};
 	const out = (description: string, amountCents: number, dayAgo: number, shares: ExpenseShare[]): ExpenseDetailData => ({
 		...base,
@@ -470,8 +584,11 @@ export function MockExpense({
 	framed = true,
 	resplit,
 	shareSheet = false,
+	scopeSheet,
 }: Readonly<{
 	mode: MockMode;
+	/** Abre a pergunta "só esta parcela ou esta e as próximas" (ao apagar ou ao mudar quem divide). */
+	scopeSheet?: "delete" | "resplit";
 	qrOpen?: boolean;
 	codeFallback?: boolean;
 	framed?: boolean;
@@ -486,6 +603,8 @@ export function MockExpense({
 	const [action, setAction] = useState(confirm ?? null);
 	const [shareOpen, setShareOpen] = useState(shareSheet);
 	const [resplitOpen, setResplitOpen] = useState(!!resplit);
+	const [scopeStep, setScopeStep] = useState<"delete" | "resplit" | null>(scopeSheet ?? null);
+	const [scope, setScope] = useState<InstallmentScope>("this");
 	const expense = detail(mode);
 	const members = (isCare(mode) ? CARE_GROUP : MOCK_GROUP).members.map(({ uid, name, picture, isYou, kind }) => ({ uid, name, picture, isYou, kind }));
 	const who = useWhoSplits(members.map((m) => m.uid), resplit ?? expense.participantUids);
@@ -503,20 +622,49 @@ export function MockExpense({
 				onCopyKey={noop}
 				onOpenImage={noop}
 				onOpenPdf={noop}
-				onAskDelete={noop}
+				onAskDelete={() => setScopeStep("delete")}
 				onMarkPaid={(uid) => setAction({ uid, mode: "paid" })}
 				onUndoPaid={(uid) => setAction({ uid, mode: "pending" })}
 				onGiveBack={(uid) => setAction({ uid, mode: "refund" })}
-				onEditParticipants={() => setResplitOpen(true)}
+				onEditParticipants={() => (expense.installment ? setScopeStep("resplit") : setResplitOpen(true))}
 				onShare={() => setShareOpen(true)}
 			/>
 			<Sheet open={!!(action && target)} onClose={() => setAction(null)} title={action && target ? sharePaidTitle(action.mode, target) : ""}>
 				{action && <SharePaidContent mode={action.mode} busy={false} error={null} onConfirm={() => setAction(null)} onCancel={() => setAction(null)} />}
 			</Sheet>
+			<Sheet open={scopeStep === "resplit"} onClose={() => setScopeStep(null)} title="Mudar quem divide">
+				{expense.installment && (
+					<ResplitScopeContent
+						scope={scope}
+						number={expense.installment.number}
+						count={expense.installment.count}
+						onScope={setScope}
+						onContinue={() => {
+							setScopeStep(null);
+							setResplitOpen(true);
+						}}
+						onCancel={() => setScopeStep(null)}
+					/>
+				)}
+			</Sheet>
+			<Sheet open={scopeStep === "delete"} onClose={() => setScopeStep(null)} title="Apagar qual parcela?">
+				{expense.installment && (
+					<DeleteInstallmentContent
+						scope={scope}
+						number={expense.installment.number}
+						count={expense.installment.count}
+						busy={false}
+						error={null}
+						onScope={setScope}
+						onConfirm={() => setScopeStep(null)}
+						onCancel={() => setScopeStep(null)}
+					/>
+				)}
+			</Sheet>
 			<Sheet open={shareOpen} onClose={() => setShareOpen(false)} title="Despesa lançada!">
 				<ShareExpenseContent
 					text={text}
-					intro="Avise o grupo para cada um pagar a sua parte."
+					intro={shareIntro("launched", expense.installment?.count)}
 					canShare
 					copyFailed={false}
 					onCopy={noop}
@@ -542,11 +690,18 @@ export function MockExpense({
 	);
 }
 
-export const MOCK_GROUPS: GroupSummary[] = [
+export const MOCK_GROUPS: GroupSummary[] = ([
 	{ id: "1", name: "Despesas da vó", memberCount: 4, role: "admin", toReceiveCents: 34500, toPayCents: 0 },
 	{ id: "2", name: "Viagem a Floripa", memberCount: 5, role: "member", toReceiveCents: 12850, toPayCents: 4590 },
 	{ id: "3", name: "Casa de praia da família Silva Albuquerque", memberCount: 1, role: "admin", toReceiveCents: 0, toPayCents: 128000 },
 	{ id: "4", name: "Natal", memberCount: 8, role: "member", toReceiveCents: 0, toPayCents: 0 },
+] as Parameters<typeof normalizeGroup>[0][]).map(normalizeGroup);
+
+/** Grupos com vencimentos: um com valor vencido, um com parte só nos meses que vêm, um sem nada especial. */
+export const DUE_GROUPS: GroupSummary[] = [
+	normalizeGroup({ id: "1", name: "Despesas da vó", memberCount: 4, role: "admin", toReceiveCents: 34500, toReceiveNowCents: 12000, toPayCents: 21000, toPayNowCents: 9000, overdueToPayCents: 3000 }),
+	normalizeGroup({ id: "2", name: "Viagem a Floripa", memberCount: 5, role: "member", toReceiveCents: 12850, toPayCents: 45900, toPayNowCents: 15300 }),
+	normalizeGroup({ id: "3", name: "Natal", memberCount: 8, role: "member", toReceiveCents: 0, toPayCents: 0 }),
 ];
 
 /** Tela inicial com saldos por grupo; `chooser` abre o sheet "Em qual grupo?" (ou o aviso de que falta criar um grupo). */
@@ -555,14 +710,22 @@ export function MockHome({
 	chooser = false,
 	groups = MOCK_GROUPS,
 	managed = [],
-}: Readonly<{ framed?: boolean; chooser?: boolean; groups?: GroupSummary[]; managed?: React.ComponentProps<typeof ManagedSummaryCards>["managed"] }>) {
+	summary,
+}: Readonly<{
+	framed?: boolean;
+	chooser?: boolean;
+	groups?: GroupSummary[];
+	managed?: React.ComponentProps<typeof ManagedSummaryCards>["managed"];
+	/** Totais com vencimentos ("até o fim do mês" e vencido). */
+	summary?: Partial<React.ComponentProps<typeof HomeSummary>>;
+}>) {
 	const [open, setOpen] = useState(chooser);
 	return (
 		<Shell pathname="/app" framed={framed} user={managed.length > 0 ? CARE_USER : USER}>
 			<div className="space-y-6">
 				<h1 className="text-headline-medium md:text-headline-large">Olá, {managed.length > 0 ? "Renata" : "Rafael"}!</h1>
 				<div className="space-y-3">
-					<HomeSummary receiveCents={47350} payCents={132590} />
+					<HomeSummary receiveCents={47350} payCents={132590} {...summary} />
 					<ManagedSummaryCards managed={managed} />
 				</div>
 				<GroupsListView state={{ kind: "ready", groups }} onPostExpense={() => setOpen(true)} />

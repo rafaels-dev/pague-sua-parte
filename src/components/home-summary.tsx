@@ -7,6 +7,8 @@ import { Avatar, Card, Icon, Skeleton } from "@/components/ui";
 import { GroupBalance } from "@/components/groups/groups-list";
 import { apiFetch } from "@/lib/api-client";
 import { formatBRL } from "@/lib/money";
+import { todayISO } from "@/lib/ui/dates";
+import { untilEndOfMonthLine } from "@/lib/ui/due-dates";
 import { normalizeMeSummary, type MeSummary } from "@/lib/ui/managed";
 
 /**
@@ -16,8 +18,25 @@ import { normalizeMeSummary, type MeSummary } from "@/lib/ui/managed";
 export function HomeSummary({
 	receiveCents,
 	payCents,
+	receiveNowCents,
+	payNowCents,
+	overdueCents = 0,
 	loading = false,
-}: Readonly<{ receiveCents: number | null; payCents: number | null; loading?: boolean }>) {
+}: Readonly<{
+	receiveCents: number | null;
+	payCents: number | null;
+	/** Parte do total sem vencimento ou vencendo até o fim do mês; só aparece quando difere do total. */
+	receiveNowCents?: number | null;
+	payNowCents?: number | null;
+	/** O que a pessoa deve e já venceu. */
+	overdueCents?: number;
+	loading?: boolean;
+}>) {
+	const today = todayISO();
+	const untilLine = (total: number | null, now: number | null | undefined) =>
+		!loading && total !== null && now !== null && now !== undefined ? untilEndOfMonthLine(total, now, today) : null;
+	const receiveUntil = untilLine(receiveCents, receiveNowCents);
+	const payUntil = untilLine(payCents, payNowCents);
 	const value = (cents: number | null, color: string) =>
 		loading ? (
 			<Skeleton className="mt-2 h-8 w-32 md:h-10" />
@@ -30,15 +49,23 @@ export function HomeSummary({
 			<p className={`money mt-1 text-headline-small font-bold md:text-headline-large md:font-bold ${color}`}>{formatBRL(cents)}</p>
 		);
 	return (
-		<Card as="section" tone="high" aria-label="Resumo" aria-busy={loading || undefined} className="grid grid-cols-2 gap-4 p-5 md:p-8">
+		<Card as="section" tone="high" aria-label="Resumo" aria-busy={loading || undefined} className="grid grid-cols-2 gap-x-4 gap-y-3 p-5 md:p-8">
 			<div className="min-w-0">
 				<p className="text-body-large text-on-surface-variant">Você tem a receber</p>
 				{value(receiveCents, "text-receive")}
+				{receiveUntil && <p className="money mt-1 text-body-large text-on-surface-variant">{receiveUntil}</p>}
 			</div>
 			<div className="min-w-0 border-l border-outline-variant pl-4 md:pl-8">
 				<p className="text-body-large text-on-surface-variant">Você tem a pagar</p>
 				{value(payCents, "text-pay")}
+				{payUntil && <p className="money mt-1 text-body-large text-on-surface-variant">{payUntil}</p>}
 			</div>
+			{!loading && overdueCents > 0 && (
+				<p className="col-span-2 flex items-center gap-2 border-t border-outline-variant pt-3 text-title-medium text-error">
+					<Icon name="warning" size={22} />
+					<span className="money">{formatBRL(overdueCents)} vencido</span>
+				</p>
+			)}
 		</Card>
 	);
 }
@@ -92,7 +119,14 @@ export function HomeSummaryLive() {
 	const ready = state.kind === "ready" ? state.summary : null;
 	return (
 		<div className="space-y-3">
-			<HomeSummary loading={state.kind === "loading"} receiveCents={ready?.toReceiveCents ?? null} payCents={ready?.toPayCents ?? null} />
+			<HomeSummary
+				loading={state.kind === "loading"}
+				receiveCents={ready?.toReceiveCents ?? null}
+				payCents={ready?.toPayCents ?? null}
+				receiveNowCents={ready?.toReceiveNowCents}
+				payNowCents={ready?.toPayNowCents}
+				overdueCents={ready?.overdueToPayCents ?? 0}
+			/>
 			{ready && <ManagedSummaryCards managed={ready.managed} />}
 		</div>
 	);

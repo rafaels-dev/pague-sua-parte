@@ -1,6 +1,8 @@
 "use client";
 
-import { MOCK_GROUP, MockExpense, MockGroup, MockHome, MockManagedSheet, MockNewExpense, MockNoPixKey } from "../expense-mocks";
+import { todayISO } from "@/lib/ui/dates";
+import { nextDayOfMonth } from "@/lib/ui/due-dates";
+import { DUE_GROUPS, MOCK_GROUP, MockExpense, MockGroup, MockHome, MockManagedSheet, MockNewExpense, MockNoPixKey } from "../expense-mocks";
 
 export function Telas({ tela }: Readonly<{ tela: string }>) {
 	switch (tela) {
@@ -95,8 +97,53 @@ export function Telas({ tela }: Readonly<{ tela: string }>) {
 				<MockHome
 					framed={false}
 					managed={[
-						{ uid: "m1", name: "Benjamim", groupId: "1", groupName: "Despesas da família", toReceiveCents: 14500, toPayCents: 10333 },
-						{ uid: "m3", name: "Tio Carlos", groupId: "1", groupName: "Despesas da família", toReceiveCents: 0, toPayCents: 0 },
+						{ uid: "m1", name: "Benjamim", groupId: "1", groupName: "Despesas da família", toReceiveCents: 14500, toPayCents: 10333, toReceiveNowCents: 14500, toPayNowCents: 10333, overdueToPayCents: 0 },
+						{ uid: "m3", name: "Tio Carlos", groupId: "1", groupName: "Despesas da família", toReceiveCents: 0, toPayCents: 0, toReceiveNowCents: 0, toPayNowCents: 0, overdueToPayCents: 0 },
+					]}
+				/>
+			);
+		case "nova-cartao":
+			return <MockNewExpense framed={false} initial={{ amountCents: 28990, description: "Remédios da farmácia" }} pay={{ payment: "card" }} />;
+		case "nova-parcelado":
+			return (
+				<MockNewExpense
+					framed={false}
+					initial={{ amountCents: 12000, description: "Geladeira nova" }}
+					pay={{ payment: "installments", dueDate: nextDayOfMonth(todayISO(), 10), installments: 6 }}
+				/>
+			);
+		case "nova-parcelado-erros":
+			return (
+				<MockNewExpense
+					framed={false}
+					initial={{ amountCents: 12000, description: "Geladeira nova" }}
+					pay={{ payment: "installments", installments: 6 }}
+					errors={{ dueDate: "Escolha quando vence a primeira parcela." }}
+				/>
+			);
+		case "despesa-parcela":
+			return <MockExpense mode="installment" framed={false} />;
+		case "despesa-parcela-dono":
+			return <MockExpense mode="owner-installment" framed={false} />;
+		case "despesa-parcela-lancada":
+			return <MockExpense mode="owner-installment" shareSheet framed={false} />;
+		case "despesa-vencida":
+			return <MockExpense mode="overdue" framed={false} />;
+		case "apagar-parcela-escopo":
+			return <MockExpense mode="owner-installment" scopeSheet="delete" framed={false} />;
+		case "mudar-parcela-escopo":
+			return <MockExpense mode="owner-installment" scopeSheet="resplit" framed={false} />;
+		case "grupo-vencimentos":
+			return <MockGroup due framed={false} />;
+		case "home-vencimentos":
+			return (
+				<MockHome
+					framed={false}
+					groups={DUE_GROUPS}
+					summary={{ receiveNowCents: 30000, payNowCents: 45000, overdueCents: 12000 }}
+					managed={[
+						{ uid: "m1", name: "Benjamim", groupId: "1", groupName: "Despesas da família", toReceiveCents: 14500, toPayCents: 30333, toReceiveNowCents: 14500, toPayNowCents: 10333, overdueToPayCents: 0 },
+						{ uid: "m3", name: "Tio Carlos", groupId: "1", groupName: "Despesas da família", toReceiveCents: 0, toPayCents: 8000, toReceiveNowCents: 0, toPayNowCents: 8000, overdueToPayCents: 2500 },
 					]}
 				/>
 			);

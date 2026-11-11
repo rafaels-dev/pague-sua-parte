@@ -6,6 +6,7 @@ import { useAuth } from "@/components/auth/auth-provider";
 import { Button, EmptyState, Fab, Icon, List, ListItem, Sheet, Skeleton } from "@/components/ui";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { formatBRL } from "@/lib/money";
+import { compactBalanceLine } from "@/lib/ui/due-dates";
 import { peopleLabel } from "@/lib/ui/invite";
 
 export type GroupSummary = {
@@ -17,6 +18,11 @@ export type GroupSummary = {
 	toReceiveCents: number;
 	/** Quanto a pessoa tem a pagar neste grupo (inclui devoluções). */
 	toPayCents: number;
+	/** Sem vencimento ou vencendo até o fim do mês. */
+	toReceiveNowCents: number;
+	toPayNowCents: number;
+	/** O que a pessoa deve e já venceu. */
+	overdueToPayCents: number;
 };
 
 export type GroupsListState =
@@ -26,17 +32,41 @@ export type GroupsListState =
 
 /** Completa o saldo quando o servidor ainda manda o formato antigo. */
 export function normalizeGroup(g: Partial<GroupSummary> & Pick<GroupSummary, "id" | "name" | "memberCount" | "role">): GroupSummary {
-	return { ...g, toReceiveCents: g.toReceiveCents ?? 0, toPayCents: g.toPayCents ?? 0 };
+	const toReceiveCents = g.toReceiveCents ?? 0;
+	const toPayCents = g.toPayCents ?? 0;
+	return {
+		...g,
+		toReceiveCents,
+		toPayCents,
+		toReceiveNowCents: g.toReceiveNowCents ?? toReceiveCents,
+		toPayNowCents: g.toPayNowCents ?? toPayCents,
+		overdueToPayCents: g.overdueToPayCents ?? 0,
+	};
 }
 
-/** Saldo do grupo em palavras: "A receber R$ X", "A pagar R$ Y" ou "Tudo em dia". */
-export function GroupBalance({ group: g }: Readonly<{ group: Pick<GroupSummary, "toReceiveCents" | "toPayCents"> }>) {
+/**
+ * Saldo do grupo em palavras: "A receber R$ X", "A pagar R$ Y" ou "Tudo em dia", mais UMA linha extra
+ * quando há vencido ou quando o que vale para este mês difere do total.
+ */
+export function GroupBalance({
+	group: g,
+}: Readonly<{ group: Pick<GroupSummary, "toReceiveCents" | "toPayCents"> & Partial<Pick<GroupSummary, "toReceiveNowCents" | "toPayNowCents" | "overdueToPayCents">> }>) {
 	if (g.toReceiveCents <= 0 && g.toPayCents <= 0) return <span className="block text-on-surface-variant">Tudo em dia</span>;
+	const extra = compactBalanceLine({
+		toReceiveCents: g.toReceiveCents,
+		toPayCents: g.toPayCents,
+		toReceiveNowCents: g.toReceiveNowCents ?? g.toReceiveCents,
+		toPayNowCents: g.toPayNowCents ?? g.toPayCents,
+		overdueToPayCents: g.overdueToPayCents ?? 0,
+	});
 	return (
-		<span className="flex flex-wrap gap-x-4 font-medium">
-			{g.toReceiveCents > 0 && <span className="money text-receive">A receber {formatBRL(g.toReceiveCents)}</span>}
-			{g.toPayCents > 0 && <span className="money text-error">A pagar {formatBRL(g.toPayCents)}</span>}
-		</span>
+		<>
+			<span className="flex flex-wrap gap-x-4 font-medium">
+				{g.toReceiveCents > 0 && <span className="money text-receive">A receber {formatBRL(g.toReceiveCents)}</span>}
+				{g.toPayCents > 0 && <span className="money text-error">A pagar {formatBRL(g.toPayCents)}</span>}
+			</span>
+			{extra && <span className={`money block text-sm ${extra.tone === "error" ? "font-medium text-error" : "text-on-surface-variant"}`}>{extra.text}</span>}
+		</>
 	);
 }
 

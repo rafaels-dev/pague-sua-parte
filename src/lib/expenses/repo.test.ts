@@ -53,7 +53,13 @@ function mockDb(o: { group?: unknown; payer?: unknown; expense?: unknown; expens
 		insertOne: o.insertError ? vi.fn().mockRejectedValue(o.insertError) : vi.fn().mockResolvedValue({}),
 		deleteOne: vi.fn().mockResolvedValue({ deletedCount: 1 }),
 		updateOne: vi.fn().mockResolvedValue({ matchedCount: o.matched ?? 1 }),
-		aggregate: vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue(o.agg ?? []) }),
+		// A listagem (tem $sort) devolve `expenses`; as agregações de saldo devolvem `agg`.
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		aggregate: vi.fn((pipeline: any[]) => ({
+			toArray: vi.fn().mockResolvedValue(pipeline.some((st) => "$sort" in st) ? (o.expenses ?? []) : (o.agg ?? [])),
+		})),
+		insertMany: vi.fn().mockResolvedValue({}),
+		deleteMany: vi.fn().mockResolvedValue({ deletedCount: 1 }),
 	};
 	const db = { collection: (n: string) => ({ groups, users, expenses })[n] } as unknown as Db;
 	return { db, groups, users, expenses, cursor };
@@ -152,8 +158,9 @@ describe("listExpenses", () => {
 		const partial = expense({ _id: new ObjectId(), shares: [S("u2", 600), S("u1", 600, 250)] });
 		const m = mockDb({ expenses: [expense(), noPart, mine, refunds, partial] });
 		const list = (await listExpenses(m.db, GID, "u1"))!;
-		expect(m.cursor.sort).toHaveBeenCalledWith({ date: -1, createdAt: -1, _id: -1 });
-		expect(m.cursor.limit).toHaveBeenCalledWith(100);
+		const pipeline = m.expenses.aggregate.mock.calls[0][0] as Record<string, unknown>[];
+		expect(pipeline.find((st) => "$sort" in st)).toEqual({ $sort: { _rank: 1, _asc: 1, date: -1, createdAt: -1, _id: -1 } });
+		expect(pipeline.find((st) => "$limit" in st)).toEqual({ $limit: 300 });
 		expect(list[0]).toMatchObject({ yourStatus: "pending", yourShareCents: 1000, yourDueCents: 1000, yourRefundCents: 0, pendingCount: 2, refundCount: 0, attachmentCount: 1, paidBy: { uid: "u2", name: "Beto", isYou: false } });
 		expect(list[1]).toMatchObject({ yourStatus: "none", yourShareCents: 0, yourDueCents: 0, yourRefundCents: 0, pendingCount: 1, refundCount: 0 });
 		expect(list[2]).toMatchObject({ yourStatus: "payer", yourShareCents: 1000, yourDueCents: 0, pendingCount: 1, refundCount: 0, paidBy: { name: "Aninha", isYou: true } });
@@ -208,7 +215,7 @@ describe("deleteExpense", () => {
 	it("criador apaga e remove os anexos", async () => {
 		const m = mockDb();
 		const store = fakeStore();
-		expect(await deleteExpense(m.db, store, GID, EID, "u2")).toEqual({ status: "ok" });
+		expect(await deleteExpense(m.db, store, GID, EID, "u2")).toEqual({ status: "ok", deleted: 1, kept: 0 });
 		expect(m.expenses.deleteOne).toHaveBeenCalledWith(expect.objectContaining({ shares: { $not: { $elemMatch: { $or: [{ paidCents: { $gt: 0 } }, { status: "paid" }] } } } }));
 		expect(store.delete).toHaveBeenCalledWith(["groups/g/e/" + AID]);
 	});
@@ -246,35 +253,44 @@ describe("getSummary", () => {
 	it("zero sem grupos, sem consultar despesas", async () => {
 		const m = mockDb();
 		m.groups.find.mockReturnValue({ toArray: vi.fn().mockResolvedValue([]) });
-		expect(await getSummary(m.db, "u1")).toEqual({ toReceiveCents: 0, toPayCents: 0, managed: [] });
+		expect(await getSummary(m.db, "u1")).toEqual({ toReceiveCents: 0, toPayCents: 0, toReceiveNowCents: 0, toPayNowCents: 0, overdueToPayCents: 0, managed: [] });
 		expect(m.expenses.aggregate).not.toHaveBeenCalled();
 	});
 	it("soma os saldos por grupo (uma agregação) e restringe aos grupos atuais", async () => {
-		const m = mockDb({ agg: [{ _id: { g: new ObjectId(GID), u: "u1" }, toPay: 700, toReceive: 2500 }, { _id: { g: G2, u: "u1" }, toPay: 50, toReceive: 5 }] });
+		const m = mockDb({ agg: [{ _id: { g: new ObjectId(GID), u: "u1" }, toPay: 700, toReceive: 2500, toPayNow: 600, toReceiveNow: 2000, overdue: 100 }, { _id: { g: G2, u: "u1" }, toPay: 50, toReceive: 5, toPayNow: 40, toReceiveNow: 5, overdue: 10 }] });
 		m.groups.find.mockReturnValue({ toArray: vi.fn().mockResolvedValue([{ _id: new ObjectId(GID), members: [] }, { _id: G2, members: [] }]) });
-		expect(await getSummary(m.db, "u1")).toEqual({ toReceiveCents: 2505, toPayCents: 750, managed: [] });
+		expect(await getSummary(m.db, "u1")).toEqual({ toReceiveCents: 2505, toPayCents: 750, toReceiveNowCents: 2005, toPayNowCents: 640, overdueToPayCents: 110, managed: [] });
 		expect(m.expenses.aggregate).toHaveBeenCalledTimes(1);
 		const pipeline = m.expenses.aggregate.mock.calls[0][0];
 		expect(pipeline[0].$match.groupId.$in).toHaveLength(2);
 		expect(m.groups.find).toHaveBeenCalledWith({ "members.uid": "u1" }, expect.anything());
 	});
 	it("summary == soma dos grupos de GET /api/groups (mesma agregação)", async () => {
-		const rows = [{ _id: { g: new ObjectId(GID), u: "u1" }, toPay: 700, toReceive: 2500 }, { _id: { g: G2, u: "u1" }, toPay: 50, toReceive: 5 }];
+		const f = { toPayNow: 600, toReceiveNow: 2000, overdue: 100 };
+		const g = { toPayNow: 40, toReceiveNow: 5, overdue: 10 };
+		const rows = [{ _id: { g: new ObjectId(GID), u: "u1" }, toPay: 700, toReceive: 2500, ...f }, { _id: { g: G2, u: "u1" }, toPay: 50, toReceive: 5, ...g }];
 		const gdocs = [
 			{ _id: new ObjectId(GID), name: "A", members: [member("u1")], createdAt: new Date() },
 			{ _id: G2, name: "B", members: [member("u1")], createdAt: new Date() },
 		];
-		const m = mockDb({ agg: [{ _id: new ObjectId(GID), toPay: 700, toReceive: 2500 }, { _id: G2, toPay: 50, toReceive: 5 }] });
+		const m = mockDb({ agg: [{ _id: new ObjectId(GID), toPay: 700, toReceive: 2500, ...f }, { _id: G2, toPay: 50, toReceive: 5, ...g }] });
 		const sumM = mockDb({ agg: rows });
 		sumM.groups.find.mockReturnValue({ toArray: vi.fn().mockResolvedValue(gdocs) });
 		m.groups.find.mockReturnValue({ toArray: vi.fn().mockResolvedValue(gdocs), sort: vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue(gdocs) }) });
 		const groups = await listGroups(m.db, "u1");
 		const summary = await getSummary(sumM.db, "u1");
-		expect(summary).toMatchObject({
-			toReceiveCents: groups.reduce((a, g) => a + g.toReceiveCents, 0),
-			toPayCents: groups.reduce((a, g) => a + g.toPayCents, 0),
-		});
-		expect(summary).toMatchObject({ toReceiveCents: 2505, toPayCents: 750 });
+		for (const k of ["toReceiveCents", "toPayCents", "toReceiveNowCents", "toPayNowCents", "overdueToPayCents"] as const) {
+			expect(summary[k]).toBe(groups.reduce((a, x) => a + x[k], 0));
+		}
+		expect(summary).toMatchObject({ toReceiveCents: 2505, toPayCents: 750, toReceiveNowCents: 2005, toPayNowCents: 640, overdueToPayCents: 110 });
+	});
+	it("o pipeline recebe o fim do mês e hoje (relógio injetado) e aplica 'agora'/'atrasado' só às dívidas", async () => {
+		const m = mockDb();
+		await getSummary(m.db, "u1", new Date("2026-02-10T12:00:00Z"));
+		const text = JSON.stringify(m.expenses.aggregate.mock.calls[0][0]);
+		expect(text).toContain('"2026-02-28"'); // fim do mês
+		expect(text).toContain('"2026-02-10"'); // hoje
+		expect(text).toContain("$dueDate");
 	});
 	it("o pipeline usa due/refund (max 0) e ignora a cota de quem pagou", async () => {
 		const m = mockDb();

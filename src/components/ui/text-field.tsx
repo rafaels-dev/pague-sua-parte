@@ -9,6 +9,7 @@ export function TextField({
 	error,
 	className,
 	id,
+	floatLabel = false,
 	...input
 }: Readonly<
 	{
@@ -16,6 +17,8 @@ export function TextField({
 		supportingText?: React.ReactNode;
 		/** Mensagem de erro; quando presente o campo fica em estado de erro. */
 		error?: string | null;
+		/** Rótulo sempre no alto do campo (campos de data, que nunca ficam "vazios" para o navegador). */
+		floatLabel?: boolean;
 		className?: string;
 	} & Omit<React.InputHTMLAttributes<HTMLInputElement>, "className">
 >) {
@@ -46,6 +49,7 @@ export function TextField({
 					className={cx(
 						"pointer-events-none absolute left-3 top-4 origin-left bg-(--field-bg,var(--md-surface)) px-1 text-body-large transition-all duration-150 ease-out",
 						"peer-focus:-top-2.5 peer-focus:text-sm peer-focus:font-medium peer-not-placeholder-shown:-top-2.5 peer-not-placeholder-shown:text-sm peer-not-placeholder-shown:font-medium",
+						floatLabel && "-top-2.5 text-sm font-medium",
 						hasError ? "text-error" : "text-on-surface-variant peer-focus:text-primary",
 					)}
 				>

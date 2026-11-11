@@ -1,6 +1,6 @@
 "use client";
 
-import { Avatar, Banner, Button, Card, QrCode } from "@/components/ui";
+import { Avatar, Banner, Button, Card, Icon, QrCode } from "@/components/ui";
 import { formatBRL } from "@/lib/money";
 import { PIX_KEY_LABELS, type PixKeyType } from "@/lib/pix/key";
 
@@ -46,7 +46,10 @@ export function PixPayCard({
 	onCopyCode,
 	onCopyKey,
 	headingId = "sua-parte",
+	due,
 }: Readonly<{
+	/** "Vence em 10 de dezembro" (em vermelho quando venceu e está em aberto). */
+	due?: { text: string; overdue: boolean } | null;
 	/** Identificador do título (único quando há mais de um cartão na tela). */
 	headingId?: string;
 	/** Quando a pessoa logada tem mais de uma conta (ou cuida de alguém), cada cartão leva a faixa com o nome de quem deve. */
@@ -82,6 +85,12 @@ export function PixPayCard({
 				)}
 				<p className="money text-display-small font-bold text-error">{formatBRL(shareCents)}</p>
 				<p className="text-body-large text-on-surface-variant">para {payeeName}</p>
+				{due && (
+					<p className={`mt-1 flex items-center gap-1.5 text-body-large font-medium ${due.overdue ? "text-error" : "text-on-surface"}`}>
+						<Icon name={due.overdue ? "warning" : "calendar_today"} size={20} />
+						{due.text}
+					</p>
+				)}
 				{paidSoFarCents > 0 && (
 					<p className="mt-1 text-body-large text-on-surface">
 						{managed ? `${accountName} já pagou` : "Você já pagou"} {formatBRL(paidSoFarCents)}; falta {formatBRL(shareCents)}.

@@ -43,6 +43,27 @@ describe("POST /api/groups/:id/expenses", () => {
 		expect(args).toMatchObject({ groupId: GID, uid: "u1", files: [{ name: "foto.jpg", contentType: "application/pdf" }] });
 		expect(createExpense.mock.calls[0][1]).toBe(store);
 	});
+	it("repassa vencimento e parcelas ao repo", async () => {
+		const res = await post({ ...data, dueDate: "2030-01-31", installments: { count: 3 } });
+		expect(res.status).toBe(201);
+		expect(createExpense.mock.calls[0][2].input).toMatchObject({ amountCents: 3000, dueDate: "2030-01-31", installments: { count: 3 } });
+	});
+	it("422 em dueDate: parcelas sem primeira data, data impossível, longe demais", async () => {
+		for (const body of [{ ...data, installments: { count: 3 } }, { ...data, dueDate: "2030-02-31" }, { ...data, dueDate: "2099-01-01" }]) {
+			const res = await post(body);
+			expect(res.status).toBe(422);
+			expect(((await res.json()) as { field: string }).field).toBe("dueDate");
+		}
+		expect(createExpense).not.toHaveBeenCalled();
+	});
+	it("422 em installments para contagem inválida", async () => {
+		for (const count of [1, 49, 2.5, "3"]) {
+			const res = await post({ ...data, dueDate: "2030-01-31", installments: { count } });
+			expect(res.status).toBe(422);
+			expect(((await res.json()) as { field: string }).field).toBe("installments");
+		}
+		expect(createExpense).not.toHaveBeenCalled();
+	});
 	it("415 para executável declarado como image/png", async () => {
 		const res = await post(data, [{ name: "a.png", type: "image/png", bytes: EXE }]);
 		expect(res.status).toBe(415);

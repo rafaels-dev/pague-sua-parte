@@ -7,7 +7,7 @@ import { GoogleButtonView } from "@/components/auth/sign-in-button";
 import { CreateGroupFormView } from "@/components/groups/create-group-form";
 import { ExpenseListView } from "@/components/expenses/expense-list";
 import { GroupDetailView, GroupDetailSkeleton, type Group } from "@/components/groups/group-detail";
-import { GroupsListView, type GroupSummary } from "@/components/groups/groups-list";
+import { GroupsListView, normalizeGroup, type GroupSummary } from "@/components/groups/groups-list";
 import { InviteReady, InviteShell } from "@/components/groups/invite-accept";
 import { InviteSheetContent } from "@/components/groups/invite-panel";
 import { MemberSheetContent } from "@/components/groups/member-sheet";
@@ -42,9 +42,9 @@ const noop = () => {};
 const USER = { name: "Rafael Schettino", email: "rafael@example.com", picture: null };
 
 const GROUPS: GroupSummary[] = [
-	{ id: "1", name: "Família Silva", memberCount: 5, role: "admin", toReceiveCents: 12850, toPayCents: 0 },
-	{ id: "2", name: "Viagem a Floripa", memberCount: 4, role: "member", toReceiveCents: 0, toPayCents: 4590 },
-	{ id: "3", name: "Despesas da vó", memberCount: 1, role: "admin", toReceiveCents: 0, toPayCents: 0 },
+	normalizeGroup({ id: "1", name: "Família Silva", memberCount: 5, role: "admin", toReceiveCents: 12850, toPayCents: 0 }),
+	normalizeGroup({ id: "2", name: "Viagem a Floripa", memberCount: 4, role: "member", toReceiveCents: 0, toPayCents: 4590 }),
+	normalizeGroup({ id: "3", name: "Despesas da vó", memberCount: 1, role: "admin", toReceiveCents: 0, toPayCents: 0 }),
 ];
 
 const GROUP: Group = {

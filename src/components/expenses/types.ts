@@ -22,7 +22,20 @@ export type ExpenseSummary = {
 	managed: ManagedShareSummary[];
 	/** Quando você age por quem pagou (pessoa sem celular): o que falta receber e devolver. */
 	ownerView: OwnerView | null;
+	/** Vencimento (compra no cartão ou parcela); null = sem data. */
+	dueDate: string | null;
+	/** Parcela de uma compra parcelada; null = despesa comum. */
+	installment: InstallmentRef | null;
+	/** Venceu e ainda está em aberto. */
+	overdue: boolean;
+	/** Nada mais a pagar nem a devolver (vai para "Quitadas"). */
+	settled: boolean;
 };
+
+export type InstallmentRef = { seriesId: string; number: number; count: number };
+
+export type SeriesItem = { id: string; number: number; dueDate: string | null; settled: boolean };
+export type ExpenseSeries = { count: number; items: SeriesItem[] };
 
 export type ExpenseShare = {
 	uid: string;
@@ -66,7 +79,35 @@ export type ExpenseDetailData = {
 	pix: { type: PixKeyType; key: string; payeeName: string };
 	shares: ExpenseShare[];
 	attachments: ExpenseAttachment[];
+	dueDate: string | null;
+	installment: InstallmentRef | null;
+	overdue: boolean;
+	/** Todas as parcelas da compra (só quando é parcelada). */
+	series: ExpenseSeries | null;
 };
+
+function normalizeInstallment(raw: unknown): InstallmentRef | null {
+	if (!raw || typeof raw !== "object") return null;
+	const r = raw as Record<string, unknown>;
+	const number = typeof r.number === "number" ? r.number : 0;
+	const count = typeof r.count === "number" ? r.count : 0;
+	if (number < 1 || count < 1) return null;
+	return { seriesId: typeof r.seriesId === "string" ? r.seriesId : "", number, count };
+}
+
+function normalizeSeries(raw: unknown): ExpenseSeries | null {
+	if (!raw || typeof raw !== "object") return null;
+	const r = raw as Record<string, unknown>;
+	if (!Array.isArray(r.items)) return null;
+	const items: SeriesItem[] = (r.items as Record<string, unknown>[])
+		.filter((i) => i && typeof i.id === "string" && typeof i.number === "number")
+		.map((i) => ({ id: i.id as string, number: i.number as number, dueDate: typeof i.dueDate === "string" ? i.dueDate : null, settled: !!i.settled }))
+		.sort((a, b) => a.number - b.number);
+	if (items.length === 0) return null;
+	return { count: typeof r.count === "number" ? r.count : items.length, items };
+}
+
+const dueOrNull = (v: unknown): string | null => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null);
 
 type Loose<T> = { [K in keyof T]?: T[K] };
 
@@ -107,6 +148,10 @@ export function normalizeExpense(raw: Loose<Omit<ExpenseDetailData, "shares">> &
 		},
 		shares,
 		attachments: raw.attachments ?? [],
+		dueDate: dueOrNull(raw.dueDate),
+		installment: normalizeInstallment(raw.installment),
+		overdue: !!raw.overdue,
+		series: normalizeSeries(raw.series),
 		canDelete: !!raw.canDelete,
 		canMarkPaid: !!raw.canMarkPaid,
 		canEditParticipants: raw.canEditParticipants ?? false,
@@ -116,6 +161,9 @@ export function normalizeExpense(raw: Loose<Omit<ExpenseDetailData, "shares">> &
 
 /** Completa os campos novos de um item da lista de despesas quando o servidor ainda manda o formato antigo. */
 export function normalizeSummary(raw: Loose<ExpenseSummary> & Record<string, unknown>): ExpenseSummary {
+	const pendingCount = raw.pendingCount ?? 0;
+	const refundCount = raw.refundCount ?? 0;
+	const yourStatus = raw.yourStatus ?? "none";
 	const paidBy = (raw.paidBy ?? { uid: "", name: "", isYou: false }) as Loose<ExpenseSummary["paidBy"]>;
 	const ownerView = raw.ownerView && typeof raw.ownerView === "object" ? raw.ownerView : null;
 	return {
@@ -126,10 +174,15 @@ export function normalizeSummary(raw: Loose<ExpenseSummary> & Record<string, unk
 		yourShareCents: raw.yourShareCents ?? 0,
 		yourDueCents: raw.yourDueCents ?? (raw.yourStatus === "pending" ? (raw.yourShareCents ?? 0) : 0),
 		yourRefundCents: raw.yourRefundCents ?? 0,
-		pendingCount: raw.pendingCount ?? 0,
-		refundCount: raw.refundCount ?? 0,
+		pendingCount,
+		refundCount,
 		attachmentCount: raw.attachmentCount ?? 0,
-		yourStatus: raw.yourStatus ?? "none",
+		yourStatus,
+		dueDate: dueOrNull(raw.dueDate),
+		installment: normalizeInstallment(raw.installment),
+		overdue: !!raw.overdue,
+		// Servidor antigo: quitada = ninguém deve nem recebe de volta.
+		settled: typeof raw.settled === "boolean" ? raw.settled : pendingCount === 0 && refundCount === 0 && yourStatus !== "pending" && yourStatus !== "refund",
 	};
 }
 

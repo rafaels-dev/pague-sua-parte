@@ -23,7 +23,15 @@ describe("PUT /expenses/:eid/participants", () => {
 	it("200 com o detalhe e repassa os argumentos", async () => {
 		updateParticipants.mockResolvedValue({ status: "ok", expense: { id: "e" } });
 		expect(await out(await put({ participantUids: ["u1"] }))).toEqual([200, { id: "e" }]);
-		expect(updateParticipants).toHaveBeenCalledWith({ fake: true }, "g", "e", "u1", ["u1"]);
+		expect(updateParticipants).toHaveBeenCalledWith({ fake: true }, "g", "e", "u1", ["u1"], "this");
+	});
+	it("scope following é repassado; scope inválido: 422 em scope", async () => {
+		updateParticipants.mockResolvedValue({ status: "ok", expense: { id: "e" } });
+		await put({ participantUids: ["u1"], scope: "following" });
+		expect(updateParticipants).toHaveBeenCalledWith({ fake: true }, "g", "e", "u1", ["u1"], "following");
+		updateParticipants.mockClear();
+		expect(await out(await put({ participantUids: ["u1"], scope: "todas" }))).toEqual([422, { error: "Escopo inválido.", field: "scope" }]);
+		expect(updateParticipants).not.toHaveBeenCalled();
 	});
 	it("mapeia os resultados do repo", async () => {
 		updateParticipants.mockResolvedValue({ status: "no_group" });

@@ -59,7 +59,7 @@ describe("listGroups", () => {
 		const { db, groups } = mockDb({});
 		groups.find.mockReturnValue({ sort });
 		expect(await listGroups(db, "u2")).toEqual([
-			{ id: GID, name: "Viagem", memberCount: 2, role: "member", toReceiveCents: 0, toPayCents: 0 },
+			{ id: GID, name: "Viagem", memberCount: 2, role: "member", toReceiveCents: 0, toPayCents: 0, toReceiveNowCents: 0, toPayNowCents: 0, overdueToPayCents: 0 },
 		]);
 		expect(groups.find).toHaveBeenCalledWith({ "members.uid": "u2" });
 		expect(sort.mock.calls[0][0]).toMatchObject({ createdAt: -1 });
@@ -70,7 +70,7 @@ describe("listGroups: saldos", () => {
 	it("uma única agregação para todos os grupos e saldo por grupo", async () => {
 		const g2 = { ...group(), _id: new ObjectId("507f1f77bcf86cd799439099"), name: "Casa" };
 		const sort = vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue([group(), g2]) });
-		const { db, groups, expenses } = mockDb({ balanceRows: [{ _id: new ObjectId(GID), toPay: 300, toReceive: 1200 }] });
+		const { db, groups, expenses } = mockDb({ balanceRows: [{ _id: new ObjectId(GID), toPay: 300, toReceive: 1200, toPayNow: 300, toReceiveNow: 1200, overdue: 0 }] });
 		groups.find.mockReturnValue({ sort });
 		const list = await listGroups(db, "u2");
 		expect(expenses.aggregate).toHaveBeenCalledTimes(1);

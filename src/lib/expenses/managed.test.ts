@@ -58,7 +58,13 @@ function mockDb(o: { members?: ReturnType<typeof members>; expense?: unknown; ex
 		insertOne: vi.fn().mockResolvedValue({}),
 		deleteOne: vi.fn().mockResolvedValue({ deletedCount: 1 }),
 		updateOne: vi.fn().mockResolvedValue({ matchedCount: o.matched ?? 1 }),
-		aggregate: vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue(o.agg ?? []) }),
+		// A listagem (tem $sort) devolve `expenses`; as agregações de saldo devolvem `agg`.
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		aggregate: vi.fn((pipeline: any[]) => ({
+			toArray: vi.fn().mockResolvedValue(pipeline.some((st) => "$sort" in st) ? (o.expenses ?? []) : (o.agg ?? [])),
+		})),
+		insertMany: vi.fn().mockResolvedValue({}),
+		deleteMany: vi.fn().mockResolvedValue({ deletedCount: 1 }),
 	};
 	const db = { collection: (n: string) => ({ groups, users, expenses })[n] } as unknown as Db;
 	return { db, groups, users, expenses };
@@ -218,14 +224,17 @@ describe("getSummary com pessoas sem login", () => {
 	it("totais só do chamador; managed de quem cuido AGORA, zeros incluídos; UMA agregação", async () => {
 		const { db, expenses } = mockDb({
 			agg: [
-				{ _id: { g: G, u: "u2" }, toPay: 300, toReceive: 100 },
-				{ _id: { g: G, u: "m_ben" }, toPay: 50, toReceive: 2000 },
+				{ _id: { g: G, u: "u2" }, toPay: 300, toReceive: 100, toPayNow: 200, toReceiveNow: 100, overdue: 50 },
+				{ _id: { g: G, u: "m_ben" }, toPay: 50, toReceive: 2000, toPayNow: 50, toReceiveNow: 1500, overdue: 0 },
 			],
 		});
 		expect(await getSummary(db, "u2")).toEqual({
 			toReceiveCents: 100,
 			toPayCents: 300,
-			managed: [{ uid: "m_ben", name: "Benjamim", groupId: GID, groupName: "Família", toReceiveCents: 2000, toPayCents: 50 }],
+			toReceiveNowCents: 100,
+			toPayNowCents: 200,
+			overdueToPayCents: 50,
+			managed: [{ uid: "m_ben", name: "Benjamim", groupId: GID, groupName: "Família", toReceiveCents: 2000, toPayCents: 50, toReceiveNowCents: 1500, toPayNowCents: 50, overdueToPayCents: 0 }],
 		});
 		expect(expenses.aggregate).toHaveBeenCalledTimes(1);
 		const pipeline = expenses.aggregate.mock.calls[0][0];
@@ -234,7 +243,7 @@ describe("getSummary com pessoas sem login", () => {
 	});
 	it("entrada com zeros continua listada; quem não é responsável não vê a pessoa", async () => {
 		const mine = await getSummary(mockDb().db, "u3");
-		expect(mine.managed).toEqual([{ uid: "m_vo", name: "Vó", groupId: GID, groupName: "Família", toReceiveCents: 0, toPayCents: 0 }]);
+		expect(mine.managed).toEqual([{ uid: "m_vo", name: "Vó", groupId: GID, groupName: "Família", toReceiveCents: 0, toPayCents: 0, toReceiveNowCents: 0, toPayNowCents: 0, overdueToPayCents: 0 }]);
 		expect((await getSummary(mockDb().db, "u1")).managed).toEqual([]);
 	});
 	it("responsável substituído deixa de ver a pessoa no resumo", async () => {
@@ -279,8 +288,8 @@ describe("modelo antigo (status 'paid', sem paidCents)", () => {
 		expect(item).toMatchObject({ pendingCount: 1 });
 	});
 	it("saldos (referência em JS) excluem a cota legada já paga", () => {
-		expect(balanceOf([legacy() as never], "u2")).toEqual({ toReceiveCents: 1000, toPayCents: 0 });
-		expect(balanceOf([legacy() as never], "u1")).toEqual({ toReceiveCents: 0, toPayCents: 0 });
+		expect(balanceOf([legacy() as never], "u2")).toEqual({ toReceiveCents: 1000, toPayCents: 0, toReceiveNowCents: 1000, toPayNowCents: 0, overdueToPayCents: 0 });
+		expect(balanceOf([legacy() as never], "u1")).toEqual({ toReceiveCents: 0, toPayCents: 0, toReceiveNowCents: 0, toPayNowCents: 0, overdueToPayCents: 0 });
 	});
 	it("a agregação lê o status antigo (sem paidCents numérico)", async () => {
 		const { db, expenses } = mockDb();

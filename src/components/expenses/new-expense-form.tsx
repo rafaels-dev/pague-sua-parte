@@ -10,14 +10,16 @@ import { Banner, Button, Card, EmptyState, Icon, MoneyField, SegmentedButton, Sk
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { formatBRL } from "@/lib/money";
 import { formatDateShort, isValidISODate, todayISO } from "@/lib/ui/dates";
-import { splitPreview } from "@/lib/ui/split-preview";
+import { isValidDueDate } from "@/lib/ui/due-dates";
+import { installmentSplitLine, splitPreview } from "@/lib/ui/split-preview";
 import { cx } from "@/lib/ui/cx";
 import { AttachmentPicker } from "./attachment-picker";
+import { PaymentChoice, type PaymentKind } from "./payment-choice";
 import { setFlash } from "./types";
 import { useAttachments } from "./use-attachments";
 import { WhoSplits, type SplitMode } from "./who-splits";
 
-export type FormErrors = Partial<Record<"amount" | "description" | "date" | "participants" | "files" | "form", string>>;
+export type FormErrors = Partial<Record<"amount" | "description" | "date" | "dueDate" | "installments" | "participants" | "files" | "form", string>>;
 
 /** Aviso exibido no lugar do formulário quando a pessoa ainda não cadastrou a chave Pix. */
 export function NoPixKeyBlock() {
@@ -69,6 +71,11 @@ export type NewExpenseFormViewProps = {
 	description: string;
 	date: string;
 	dateOpen: boolean;
+	/** Como foi pago: à vista, no cartão (vence numa data) ou parcelado. */
+	payment: PaymentKind;
+	/** Vencimento (no cartão) ou vencimento da primeira parcela (parcelado). */
+	dueDate: string;
+	installments: number;
 	selected: string[];
 	splitMode: SplitMode;
 	errors: FormErrors;
@@ -80,6 +87,9 @@ export type NewExpenseFormViewProps = {
 	onDescription: (v: string) => void;
 	onDate: (v: string) => void;
 	onOpenDate: () => void;
+	onPayment: (p: PaymentKind) => void;
+	onDueDate: (v: string) => void;
+	onInstallments: (n: number) => void;
 	onToggle: (uid: string) => void;
 	onSplitMode: (m: SplitMode) => void;
 	onSubmit: () => void;
@@ -95,6 +105,7 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 	const onlyPayer = p.selected.length === 1 && p.selected[0] === payer?.uid;
 	const payerUid = payer?.uid ?? "";
 	const payerName = payerIsManaged ? payer?.name : undefined;
+	const total = p.payment === "installments" ? "em cada parcela" : "no total";
 	const preview = splitPreview(p.amountCents, p.selected, payerUid, payerName);
 	const payerChoice =
 		payerOptions.length > 1 ? (
@@ -137,7 +148,20 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 			className="mx-auto max-w-xl space-y-6 max-md:pb-2"
 		>
 			{payerChoice}
-			<MoneyField id="campo-valor" label="Quanto custou?" cents={p.amountCents} onChange={p.onAmount} error={p.errors.amount} autoFocus={payerOptions.length <= 1} />
+			<MoneyField id="campo-valor" label={p.payment === "installments" ? "Valor de cada parcela" : "Quanto custou?"} cents={p.amountCents} onChange={p.onAmount} error={p.errors.amount} autoFocus={payerOptions.length <= 1} />
+
+			<PaymentChoice
+				payment={p.payment}
+				onPayment={p.onPayment}
+				dueDate={p.dueDate}
+				onDueDate={p.onDueDate}
+				installments={p.installments}
+				onInstallments={p.onInstallments}
+				amountCents={p.amountCents}
+				purchaseDate={p.date}
+				today={today}
+				errors={p.errors}
+			/>
 
 			<TextField
 				id="campo-descricao"
@@ -194,13 +218,13 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 				/>
 				{preview.kind === "ok" && !onlyPayer && (
 					<Card tone="high" className="space-y-1 p-4" aria-live="polite">
-						<p className="money text-title-large">{preview.line}</p>
+						<p className="money text-title-large">{p.payment === "installments" ? installmentSplitLine(preview) : preview.line}</p>
 						{preview.note && <p className="text-body-large text-on-surface-variant">{preview.note}</p>}
 						{preview.othersCents > 0 && (
 							<p className="text-body-large text-on-surface-variant">
 								{payerIsManaged
-									? `${payer.name} recebe ${formatBRL(preview.othersCents)} dos outros no total.`
-									: `Os outros te devem ${formatBRL(preview.othersCents)} no total.`}
+									? `${payer.name} recebe ${formatBRL(preview.othersCents)} dos outros ${total}.`
+									: `Os outros te devem ${formatBRL(preview.othersCents)} ${total}.`}
 							</p>
 						)}
 					</Card>
@@ -246,12 +270,16 @@ const FIELD_ID: Record<string, string> = {
 	amount: "campo-valor",
 	description: "campo-descricao",
 	date: "campo-data",
+	dueDate: "campo-vencimento",
+	installments: "campo-parcelas",
 	participants: "campo-participantes",
 };
 const SERVER_FIELD: Record<string, keyof FormErrors> = {
 	amountCents: "amount",
 	description: "description",
 	date: "date",
+	dueDate: "dueDate",
+	installments: "installments",
 	participantUids: "participants",
 	files: "files",
 };
@@ -269,6 +297,9 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 	const [description, setDescription] = useState("");
 	const [date, setDate] = useState(() => todayISO());
 	const [dateOpen, setDateOpen] = useState(false);
+	const [payment, setPayment] = useState<PaymentKind>("cash");
+	const [dueDate, setDueDate] = useState("");
+	const [installments, setInstallments] = useState(6);
 	const [selected, setSelected] = useState<string[] | null>(null);
 	const [splitMode, setSplitMode] = useState<SplitMode>("all");
 	const [errors, setErrors] = useState<FormErrors>({});
@@ -357,6 +388,13 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 		if (!desc) e.description = "Escreva o que foi a despesa.";
 		else if (desc.length > 80) e.description = "Use até 80 letras.";
 		if (!isValidISODate(date) || date > todayISO()) e.date = "Escolha uma data válida, que não seja no futuro.";
+		if (payment !== "cash" && !isValidDueDate(dueDate, date, todayISO())) {
+			e.dueDate = dueDate
+				? "Escolha uma data válida, a partir do dia da compra."
+				: payment === "installments"
+					? "Escolha quando vence a primeira parcela."
+					: "Escolha o dia do vencimento.";
+		}
 		if (selected!.length === 0) e.participants = "Escolha pelo menos uma pessoa.";
 		else if (amountCents > 0 && amountCents < selected!.length) e.participants = "O valor é pequeno demais para dividir entre tantas pessoas.";
 		return e;
@@ -364,7 +402,7 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 
 	function showErrors(e: FormErrors) {
 		setErrors(e);
-		const first = (["amount", "description", "date", "participants"] as const).find((k) => e[k]);
+		const first = (["amount", "description", "date", "dueDate", "installments", "participants"] as const).find((k) => e[k]);
 		if (first === "date") setDateOpen(true);
 		focusTarget.current = first ? FIELD_ID[first] : null;
 		// o campo de data pode acabar de ser aberto; dá tempo de ele existir
@@ -381,7 +419,15 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 			const body = new FormData();
 			body.append(
 				"data",
-				JSON.stringify({ description: description.trim(), amountCents, date, participantUids: selected, ...(payerIsManaged ? { paidByUid: payer } : {}) }),
+				JSON.stringify({
+						description: description.trim(),
+						amountCents,
+						date,
+						participantUids: selected,
+						...(payerIsManaged ? { paidByUid: payer } : {}),
+						...(payment !== "cash" ? { dueDate } : {}),
+						...(payment === "installments" ? { installments: { count: installments } } : {}),
+					}),
 			);
 			for (const it of att.items) body.append("files", it.file, it.file.name);
 			const created = await apiFetch<{ id: string }>(`/api/groups/${encodeURIComponent(groupId)}/expenses`, { method: "POST", body });
@@ -419,6 +465,21 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 				description={description}
 				date={date}
 				dateOpen={dateOpen}
+				payment={payment}
+				dueDate={dueDate}
+				installments={installments}
+				onPayment={(m) => {
+					setPayment(m);
+					setErrors((x) => ({ ...x, dueDate: undefined, installments: undefined }));
+				}}
+				onDueDate={(v) => {
+					setDueDate(v);
+					if (errors.dueDate) setErrors((x) => ({ ...x, dueDate: undefined }));
+				}}
+				onInstallments={(n) => {
+					setInstallments(n);
+					if (errors.installments) setErrors((x) => ({ ...x, installments: undefined }));
+				}}
 				selected={selected}
 				splitMode={splitMode}
 				errors={errors}

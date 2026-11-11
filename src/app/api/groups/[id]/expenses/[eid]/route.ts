@@ -2,6 +2,7 @@ import { handleError, jsonError } from "@/lib/api/http";
 import { requireUser } from "@/lib/auth/server";
 import { getDb } from "@/lib/db/client";
 import { deleteExpense, getExpenseDetail } from "@/lib/expenses/repo";
+import { parseScope } from "@/lib/expenses/validation";
 import { getAttachmentStore } from "@/lib/storage/attachments";
 
 export const dynamic = "force-dynamic";
@@ -25,7 +26,9 @@ export async function DELETE(request: Request, { params }: Ctx) {
 	try {
 		const user = await requireUser(request);
 		const { id, eid } = await params;
-		const res = await deleteExpense(await getDb(), getAttachmentStore(), id, eid, user.uid);
+		const scope = parseScope(new URL(request.url).searchParams.get("scope"));
+		if (!scope) return jsonError("Escopo inválido.", 422, "scope");
+		const res = await deleteExpense(await getDb(), getAttachmentStore(), id, eid, user.uid, scope);
 		switch (res.status) {
 			case "no_group":
 				return jsonError("Grupo não encontrado.", 404);
@@ -36,7 +39,7 @@ export async function DELETE(request: Request, { params }: Ctx) {
 			case "has_payment":
 				return jsonError("Essa despesa já tem pagamento e não pode ser apagada.", 409);
 			case "ok":
-				return Response.json({ ok: true });
+				return Response.json({ ok: true, deleted: res.deleted, kept: res.kept });
 		}
 	} catch (err) {
 		return handleError(err, "api/groups/[id]/expenses/[eid] DELETE");

@@ -30,10 +30,21 @@ describe("GET /expenses/:eid", () => {
 });
 
 describe("DELETE /expenses/:eid", () => {
-	const del = () => DELETE(new Request("http://x", { method: "DELETE" }), ctx);
+	const del = (query = "") => DELETE(new Request("http://x/api/x" + query, { method: "DELETE" }), ctx);
+	it("scope: padrão this, following repassado, inválido 422", async () => {
+		deleteExpense.mockResolvedValue({ status: "ok", deleted: 2, kept: 1 });
+		expect(await (await del("?scope=following")).json()).toEqual({ ok: true, deleted: 2, kept: 1 });
+		expect(deleteExpense).toHaveBeenLastCalledWith({ fake: true }, { fakeStore: true }, "g", "e", "u1", "following");
+		await del();
+		expect(deleteExpense).toHaveBeenLastCalledWith({ fake: true }, { fakeStore: true }, "g", "e", "u1", "this");
+		deleteExpense.mockClear();
+		const res = await del("?scope=all");
+		expect([res.status, await res.json()]).toEqual([422, { error: "Escopo inválido.", field: "scope" }]);
+		expect(deleteExpense).not.toHaveBeenCalled();
+	});
 	it("200, 403, 409 e 404 com as mensagens do contrato", async () => {
-		deleteExpense.mockResolvedValue({ status: "ok" });
-		expect(await (await del()).json()).toEqual({ ok: true });
+		deleteExpense.mockResolvedValue({ status: "ok", deleted: 1, kept: 0 });
+		expect(await (await del()).json()).toEqual({ ok: true, deleted: 1, kept: 0 });
 		deleteExpense.mockResolvedValue({ status: "forbidden" });
 		let res = await del();
 		expect([res.status, await res.json()]).toEqual([403, { error: "Só quem lançou a despesa ou quem administra o grupo pode apagar." }]);

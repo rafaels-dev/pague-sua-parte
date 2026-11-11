@@ -16,11 +16,18 @@ export type ManagedShareSummary = {
 /** Quando a pessoa logada age por quem pagou a despesa (pessoa sem celular). */
 export type OwnerView = { pendingCount: number; refundCount: number };
 
+/** Saldo com o recorte "agora" (sem vencimento ou vencendo até o fim do mês) e o que já venceu. */
+export type NowBalance = {
+	toReceiveNowCents: number;
+	toPayNowCents: number;
+	overdueToPayCents: number;
+};
+
 export type MeSummary = {
 	toReceiveCents: number;
 	toPayCents: number;
-	managed: { uid: string; name: string; groupId: string; groupName: string; toReceiveCents: number; toPayCents: number }[];
-};
+	managed: ({ uid: string; name: string; groupId: string; groupName: string; toReceiveCents: number; toPayCents: number } & NowBalance)[];
+} & NowBalance;
 
 /** "Sem celular · aos cuidados de Renata", "Sem celular · você cuida" ou null para quem tem celular. */
 export function managedCaption(p: ManagedLike): string | null {
@@ -58,6 +65,15 @@ export function ownerViewStatus(payerName: string, v: OwnerView): { text: string
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
+/** Completa os campos "agora" quando o servidor ainda não manda: "agora" = o total, e nada vencido. */
+export function nowBalanceOf(r: Record<string, unknown>, toReceiveCents: number, toPayCents: number): NowBalance {
+	return {
+		toReceiveNowCents: typeof r.toReceiveNowCents === "number" && Number.isFinite(r.toReceiveNowCents) ? r.toReceiveNowCents : toReceiveCents,
+		toPayNowCents: typeof r.toPayNowCents === "number" && Number.isFinite(r.toPayNowCents) ? r.toPayNowCents : toPayCents,
+		overdueToPayCents: num(r.overdueToPayCents),
+	};
+}
+
 /** Aceita a resposta antiga de `/api/me/summary` (sem `managed`) e completa o que falta. */
 export function normalizeMeSummary(raw: unknown): MeSummary {
 	const r = (raw ?? {}) as Record<string, unknown>;
@@ -65,6 +81,7 @@ export function normalizeMeSummary(raw: unknown): MeSummary {
 	return {
 		toReceiveCents: num(r.toReceiveCents),
 		toPayCents: num(r.toPayCents),
+		...nowBalanceOf(r, num(r.toReceiveCents), num(r.toPayCents)),
 		managed: list
 			.filter((m) => m && typeof m.uid === "string" && typeof m.groupId === "string")
 			.map((m) => ({
@@ -74,6 +91,7 @@ export function normalizeMeSummary(raw: unknown): MeSummary {
 				groupName: typeof m.groupName === "string" ? m.groupName : "",
 				toReceiveCents: num(m.toReceiveCents),
 				toPayCents: num(m.toPayCents),
+				...nowBalanceOf(m, num(m.toReceiveCents), num(m.toPayCents)),
 			})),
 	};
 }

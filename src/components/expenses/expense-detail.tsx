@@ -11,11 +11,14 @@ import { formatBRL } from "@/lib/money";
 import { buildPixPayload } from "@/lib/pix/brcode";
 import { copyText } from "@/lib/ui/clipboard";
 import { formatDateLong, formatDateShort, todayISO } from "@/lib/ui/dates";
+import { deleteFlashMessage, dueLong, installmentLabel } from "@/lib/ui/due-dates";
 import { isImageType } from "@/lib/ui/attachments";
-import { buildExpenseLink, buildExpenseShareText } from "@/lib/ui/expense-share";
+import { buildExpenseLink, buildExpenseShareText, shareIntro } from "@/lib/ui/expense-share";
 import { paidByLabel, shareStatusChip } from "@/lib/ui/expense-status";
 import { managedCaption } from "@/lib/ui/managed";
 import { ExpenseAttachments, type AttachmentView } from "./expense-attachments";
+import { DeleteInstallmentContent, ResplitScopeContent, type InstallmentScope } from "./installment-scope";
+import { InstallmentsSection } from "./installments-section";
 import { ShareExpenseContent } from "./expense-share";
 import { AccountHeader, PixPayCard } from "./pix-pay-card";
 import { ResplitContent } from "./resplit-sheet";
@@ -181,6 +184,8 @@ export function ExpenseDetailView({
 	const accounts = expense.shares
 		.filter((s) => (s.isYou || s.youManage) && s.status !== "payer")
 		.sort((a, b) => Number(b.isYou) - Number(a.isYou));
+	const today = todayISO();
+	const due = dueLong(expense.dueDate, expense.overdue, today);
 	const labeled = expense.shares.some((s) => s.youManage) || expense.paidBy.youManage;
 	const youPaid = expense.paidBy.isYou || expense.paidBy.youManage;
 	const payerManaged = expense.paidBy.youManage;
@@ -197,11 +202,22 @@ export function ExpenseDetailView({
 	return (
 		<div className="mx-auto max-w-2xl space-y-6">
 			<header className="space-y-1">
+				{expense.installment && (
+					<p className="pb-1">
+						<StatusChip tone="neutral">{installmentLabel(expense.installment)}</StatusChip>
+					</p>
+				)}
 				<h1 className="break-words text-headline-medium md:text-headline-large">{expense.description}</h1>
 				<p className="money text-display-small font-bold">{formatBRL(expense.amountCents)}</p>
 				<p className="text-body-large text-on-surface-variant">
 					{paidByLabel(expense.paidBy)} · {formatDateLong(expense.date)}
 				</p>
+				{due && (
+					<p className={`flex items-center gap-2 text-title-medium ${due.overdue ? "text-error" : "text-on-surface"}`}>
+						<Icon name={due.overdue ? "warning" : "calendar_today"} size={22} />
+						{due.text}
+					</p>
+				)}
 				<Button variant="text" size="md" icon="share" onClick={onShare} className="-ml-4">
 					Avisar no WhatsApp
 				</Button>
@@ -214,6 +230,7 @@ export function ExpenseDetailView({
 						<PixPayCard
 							key={s.uid}
 							headingId={headingId}
+							due={due}
 							accountName={labeled ? s.name : undefined}
 							managed={s.youManage}
 							shareCents={s.dueCents}
@@ -296,6 +313,10 @@ export function ExpenseDetailView({
 				</Card>
 			)}
 
+			{expense.installment && expense.series && (
+				<InstallmentsSection groupId={expense.groupId} currentId={expense.id} series={expense.series} today={today} />
+			)}
+
 			<section className="space-y-3" aria-labelledby="quem-participa">
 				<div className="flex flex-wrap items-center justify-between gap-x-4">
 					<h2 id="quem-participa" className="text-title-large">
@@ -321,7 +342,7 @@ export function ExpenseDetailView({
 			{expense.canDelete && (
 				<div className="pt-2">
 					<Button variant="text" size="md" icon="delete" onClick={onAskDelete} className="-ml-4 text-error!">
-						Apagar despesa
+						{expense.installment ? "Apagar parcela" : "Apagar despesa"}
 					</Button>
 				</div>
 			)}
@@ -463,6 +484,9 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 	const [confirmingDelete, setConfirmingDelete] = useState(false);
 	const [deleting, setDeleting] = useState(false);
 	const [deleteError, setDeleteError] = useState<string | null>(null);
+	// Parcelas: antes de mudar a divisão ou apagar, pergunta quais parcelas (só esta ou esta e as próximas).
+	const [scopeStep, setScopeStep] = useState<"resplit" | "delete" | null>(null);
+	const [scope, setScope] = useState<InstallmentScope>("this");
 	const [shareAction, setShareAction] = useState<{ uid: string; mode: "paid" | "pending" | "refund" } | null>(null);
 	const [shareBusy, setShareBusy] = useState(false);
 	const [shareError, setShareError] = useState<string | null>(null);
@@ -554,8 +578,12 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 		setDeleting(true);
 		setDeleteError(null);
 		try {
-			await apiFetch(`/api/groups/${encodeURIComponent(groupId)}/expenses/${encodeURIComponent(expenseId)}`, { method: "DELETE" });
-			setFlash("Despesa apagada.");
+			const query = expense?.installment ? `?scope=${scope}` : "";
+			const res = await apiFetch<{ deleted?: number; kept?: number } | null>(
+				`/api/groups/${encodeURIComponent(groupId)}/expenses/${encodeURIComponent(expenseId)}${query}`,
+				{ method: "DELETE" },
+			);
+			setFlash(deleteFlashMessage({ scope: expense?.installment ? scope : "this", installment: !!expense?.installment, deleted: res?.deleted, kept: res?.kept }));
 			router.replace(`/app/grupos/${encodeURIComponent(groupId)}`);
 		} catch (e) {
 			setDeleteError(e instanceof ApiError ? e.message : "Não foi possível apagar. Tente de novo.");
@@ -616,11 +644,11 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 		try {
 			const updated = await apiFetch<ExpenseDetailData>(
 				`/api/groups/${encodeURIComponent(groupId)}/expenses/${encodeURIComponent(expenseId)}/participants`,
-				{ method: "PUT", body: JSON.stringify({ participantUids: resplitSelected }) },
+				{ method: "PUT", body: JSON.stringify({ participantUids: resplitSelected, ...(expense.installment ? { scope } : {}) }) },
 			);
 			setExpense(normalizeExpense(updated));
 			setResplitOpen(false);
-			setSnack("Divisão atualizada.");
+			setSnack(expense.installment && scope === "following" ? "Divisão atualizada nas parcelas." : "Divisão atualizada.");
 		} catch (e) {
 			setResplitError(e instanceof ApiError ? e.message : "Não foi possível recalcular. Tente de novo.");
 		} finally {
@@ -665,6 +693,7 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 	const shareLink = buildExpenseLink(window.location.origin, groupId, expenseId);
 	const shareText = buildExpenseShareText(expense, shareLink);
 	const canNativeShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
+	const hasNext = !!expense.installment && expense.installment.number < expense.installment.count;
 	const closeShare = () => {
 		setShareOpen(null);
 		setCopyFailed(false);
@@ -699,12 +728,18 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 				onOpenPdf={(id) => void openPdf(id)}
 				onAskDelete={() => {
 					setDeleteError(null);
-					setConfirmingDelete(true);
+					setScope("this");
+					if (hasNext) setScopeStep("delete");
+					else setConfirmingDelete(true);
 				}}
 				onMarkPaid={(uid) => openShare(uid, "paid")}
 				onUndoPaid={(uid) => openShare(uid, "pending")}
 				onGiveBack={(uid) => openShare(uid, "refund")}
-				onEditParticipants={openResplit}
+				onEditParticipants={() => {
+					setScope("this");
+					if (hasNext) setScopeStep("resplit");
+					else openResplit();
+				}}
 				onShare={() => setShareOpen("manual")}
 			/>
 
@@ -715,7 +750,7 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 			>
 				<ShareExpenseContent
 					text={shareText}
-					intro={shareOpen === "manual" ? "Mande o link para cada um pagar a sua parte." : "Avise o grupo para cada um pagar a sua parte."}
+					intro={shareIntro(shareOpen === "manual" ? "manual" : "launched", expense.installment?.count)}
 					canShare={canNativeShare}
 					copyFailed={copyFailed}
 					dismissLabel={shareOpen === "manual" ? "Fechar" : "Agora não"}
@@ -786,12 +821,49 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 				</Button>
 			</Sheet>
 
+			<Sheet open={scopeStep === "resplit"} onClose={() => setScopeStep(null)} title="Mudar quem divide">
+				{expense.installment && (
+					<ResplitScopeContent
+						scope={scope}
+						number={expense.installment.number}
+						count={expense.installment.count}
+						onScope={setScope}
+						onContinue={() => {
+							setScopeStep(null);
+							openResplit();
+						}}
+						onCancel={() => setScopeStep(null)}
+					/>
+				)}
+			</Sheet>
+
+			<Sheet
+				open={scopeStep === "delete"}
+				onClose={() => {
+					if (!deleting) setScopeStep(null);
+				}}
+				title="Apagar qual parcela?"
+			>
+				{expense.installment && (
+					<DeleteInstallmentContent
+						scope={scope}
+						number={expense.installment.number}
+						count={expense.installment.count}
+						busy={deleting}
+						error={deleteError}
+						onScope={setScope}
+						onConfirm={() => void remove()}
+						onCancel={() => setScopeStep(null)}
+					/>
+				)}
+			</Sheet>
+
 			<Sheet
 				open={confirmingDelete}
 				onClose={() => {
 					if (!deleting) setConfirmingDelete(false);
 				}}
-				title="Apagar esta despesa?"
+				title={expense.installment ? "Apagar esta parcela?" : "Apagar esta despesa?"}
 			>
 				<DeleteExpenseContent busy={deleting} error={deleteError} onConfirm={() => void remove()} onCancel={() => setConfirmingDelete(false)} />
 			</Sheet>

@@ -22,7 +22,7 @@ export async function PUT(request: Request, { params }: Ctx) {
 		const input = parseParticipantsInput(json);
 		if (!input.ok) return jsonError(input.error, input.status, input.field);
 
-		const res = await updateParticipants(await getDb(), id, eid, user.uid, input.value);
+		const res = await updateParticipants(await getDb(), id, eid, user.uid, input.value, input.scope);
 		switch (res.status) {
 			case "no_group":
 				return jsonError("Grupo não encontrado.", 404);

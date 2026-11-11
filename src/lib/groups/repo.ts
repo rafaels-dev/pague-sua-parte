@@ -1,5 +1,6 @@
 import { ObjectId, type Db } from "mongodb";
 import { getBalancesByGroup, ZERO_BALANCE } from "@/lib/expenses/balances";
+import type { Balance } from "@/lib/expenses/shares";
 import { usersCollection, type UserDoc } from "@/lib/users/repo";
 import type { PixKey } from "@/lib/pix/key";
 import {
@@ -59,15 +60,15 @@ export async function createGroup(db: Db, uid: string, name: string): Promise<Gr
 	return { id: insertedId.toHexString(), name, memberCount: 1, role: "admin" };
 }
 
-export type ListedGroup = GroupSummary & { toReceiveCents: number; toPayCents: number };
+export type ListedGroup = GroupSummary & Balance;
 
-export async function listGroups(db: Db, uid: string): Promise<ListedGroup[]> {
+export async function listGroups(db: Db, uid: string, now: Date = new Date()): Promise<ListedGroup[]> {
 	const docs = await groupsCollection(db)
 		.find({ "members.uid": uid })
 		.sort({ createdAt: -1, _id: -1 })
 		.toArray();
 	// Uma única agregação para todos os grupos (nada de consulta por grupo).
-	const balances = await getBalancesByGroup(db, uid, docs.map((g) => g._id));
+	const balances = await getBalancesByGroup(db, uid, docs.map((g) => g._id), now);
 	return docs.map((g) => ({
 		id: g._id.toHexString(),
 		name: g.name,

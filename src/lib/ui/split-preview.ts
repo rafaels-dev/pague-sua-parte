@@ -4,7 +4,7 @@ import { splitEqually } from "@/lib/expenses/split";
 export type SplitPreview =
 	| { kind: "empty" }
 	| { kind: "error"; message: string }
-	| { kind: "ok"; line: string; note: string | null; othersCents: number };
+	| { kind: "ok"; line: string; note: string | null; othersCents: number; baseCents: number; people: number };
 
 function centavos(n: number): string {
 	return n === 1 ? "1 centavo" : `${n} centavos`;
@@ -34,5 +34,10 @@ export function splitPreview(amountCents: number, participantUids: string[], pay
 				? `Uma pessoa fica com ${centavos(more)} a mais`
 				: `${extra.length} pessoas ficam com ${centavos(more)} a mais`;
 	}
-	return { kind: "ok", line, note, othersCents };
+	return { kind: "ok", line, note, othersCents, baseCents: base, people: shares.length };
+}
+
+/** "Fica R$ 30,00 por pessoa em cada parcela" (ou, com uma pessoa só, "... para a pessoa escolhida em cada parcela"). */
+export function installmentSplitLine(p: { baseCents: number; people: number }): string {
+	return p.people === 1 ? `Fica ${formatBRL(p.baseCents)} para a pessoa escolhida em cada parcela` : `Fica ${formatBRL(p.baseCents)} por pessoa em cada parcela`;
 }
