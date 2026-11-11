@@ -25,7 +25,10 @@ export function createR2Store(config: R2Config): AttachmentStore {
 
 	return {
 		async put(key, bytes, contentType) {
-			const res = await client.fetch(urlFor(key), { method: "PUT", headers: { "Content-Type": contentType }, body: bytes as BodyInit });
+			// Assina primeiro e envia os bytes direto: assim o `fetch` manda Content-Length. Passando o corpo por um
+			// Request (como o `client.fetch` faz), alguns ambientes enviam em pedaços e o R2 recusa com 411.
+			const signed = await client.sign(urlFor(key), { method: "PUT", headers: { "Content-Type": contentType, "X-Amz-Content-Sha256": "UNSIGNED-PAYLOAD" } });
+			const res = await fetch(signed.url, { method: "PUT", headers: signed.headers, body: bytes as BodyInit });
 			if (!res.ok) throw new Error(`R2 put falhou (${res.status})`);
 			await res.body?.cancel();
 		},
