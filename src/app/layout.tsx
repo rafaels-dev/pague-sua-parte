@@ -13,6 +13,9 @@ const roboto = Roboto({
 export const metadata: Metadata = {
 	title: { default: "Racha Pix", template: "%s | Racha Pix" },
 	description: "Divida as despesas da família de forma simples: lance o gasto, pague por Pix e anexe o comprovante.",
+	openGraph: { locale: "pt_BR", siteName: "Racha Pix", type: "website" },
+	// O conteúdo já está em português: evita que o navegador ofereça tradução.
+	other: { google: "notranslate" },
 };
 
 export const viewport: Viewport = {
@@ -27,7 +30,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
 	return (
-		<html lang="pt-BR" className={roboto.variable}>
+		<html lang="pt-BR" translate="no" className={roboto.variable}>
 			<head>
 				<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 			</head>

@@ -8,6 +8,7 @@ import { GroupDetailView, GroupDetailSkeleton, type Group } from "@/components/g
 import { GroupsListView, type GroupSummary } from "@/components/groups/groups-list";
 import { InviteReady, InviteShell } from "@/components/groups/invite-accept";
 import { InviteSheetContent } from "@/components/groups/invite-panel";
+import { MemberSheetContent } from "@/components/groups/member-sheet";
 import { HomeSummary } from "@/components/home-summary";
 import { PixKeyWarningView } from "@/components/pix-key-warning";
 import { ProfileFormView } from "@/components/profile-form";
@@ -88,10 +89,16 @@ function Shell({ pathname, children }: Readonly<{ pathname: string; children: Re
 	);
 }
 
-export function Showcase({ sheetOpen, snackbarOpen }: Readonly<{ sheetOpen: boolean; snackbarOpen: boolean }>) {
+export function Showcase({
+	sheetOpen,
+	snackbarOpen,
+	memberSheetOpen,
+}: Readonly<{ sheetOpen: boolean; snackbarOpen: boolean; memberSheetOpen: boolean }>) {
 	const [sheet, setSheet] = useState(sheetOpen);
 	const [snack, setSnack] = useState(snackbarOpen);
 	const [confirming, setConfirming] = useState(false);
+	const [memberSheet, setMemberSheet] = useState(memberSheetOpen);
+	const [confirmingRemove, setConfirmingRemove] = useState(false);
 
 	return (
 		<main className="mx-auto max-w-6xl space-y-12 px-4 py-8 md:px-8">
@@ -316,6 +323,7 @@ export function Showcase({ sheetOpen, snackbarOpen }: Readonly<{ sheetOpen: bool
 						<Shell pathname="/app/grupos/1">
 							<GroupDetailView
 								group={GROUP}
+								onMemberOptions={() => setMemberSheet(true)}
 								invite={
 									<Button icon="share" fullWidth className="md:w-auto">
 										Convidar pessoas
@@ -398,6 +406,25 @@ export function Showcase({ sheetOpen, snackbarOpen }: Readonly<{ sheetOpen: bool
 					onConfirmNew={noop}
 				/>
 				<Snackbar open={snack && sheet} message="Link copiado!" onClose={() => setSnack(false)} />
+			</Sheet>
+			<Sheet
+				open={memberSheet}
+				onClose={() => {
+					setMemberSheet(false);
+					setConfirmingRemove(false);
+				}}
+				title="Maria das Dores Silva"
+			>
+				<MemberSheetContent
+					member={{ name: "Maria das Dores Silva", role: "member" }}
+					busy={false}
+					error={null}
+					confirmingRemove={confirmingRemove}
+					onToggleRole={() => setMemberSheet(false)}
+					onAskRemove={() => setConfirmingRemove(true)}
+					onCancelRemove={() => setConfirmingRemove(false)}
+					onConfirmRemove={() => setMemberSheet(false)}
+				/>
 			</Sheet>
 			<Snackbar open={snack && !sheet} message="Salvo!" onClose={() => setSnack(false)} aboveNav />
 		</main>

@@ -9,5 +9,5 @@ export default async function DevUiPage({
 }: Readonly<{ searchParams: Promise<Record<string, string | string[] | undefined>> }>) {
 	if (process.env.NODE_ENV === "production") notFound();
 	const sp = await searchParams;
-	return <Showcase sheetOpen={sp.sheet === "open"} snackbarOpen={sp.snackbar === "open"} />;
+	return <Showcase sheetOpen={sp.sheet === "open"} snackbarOpen={sp.snackbar === "open"} memberSheetOpen={sp.sheet === "member"} />;
 }

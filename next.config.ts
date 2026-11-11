@@ -1,7 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-	/* config options here */
+	// Declara o idioma do conteúdo também no cabeçalho HTTP.
+	async headers() {
+		return [{ source: "/:path*", headers: [{ key: "Content-Language", value: "pt-BR" }] }];
+	},
 };
 
 export default nextConfig;

@@ -186,3 +186,69 @@ export async function acceptInvite(db: Db, token: string, uid: string): Promise<
 	if (group.members.some((m) => m.uid === uid)) return { status: "ok", groupId: group._id.toHexString() };
 	return { status: "full" };
 }
+
+export type MemberActionResult =
+	| { status: "ok" }
+	| { status: "not_found" }
+	| { status: "forbidden" }
+	| { status: "self" }
+	| { status: "target_missing" };
+
+/** Explica por que o update atômico não casou. A ordem importa: não vazar a existência do grupo. */
+async function explainNoMatch(
+	groups: ReturnType<typeof groupsCollection>,
+	_id: ObjectId,
+	actorUid: string,
+	targetUid: string,
+): Promise<MemberActionResult> {
+	const group = await groups.findOne({ _id, "members.uid": actorUid });
+	if (!group) return { status: "not_found" };
+	if (roleOf(group, actorUid) !== "admin") return { status: "forbidden" };
+	if (actorUid === targetUid) return { status: "self" };
+	if (!group.members.some((m) => m.uid === targetUid)) return { status: "target_missing" };
+	// Casou na releitura: perdeu a corrida por pouco; o chamador pode tentar de novo.
+	throw new Error("Falha ao atualizar o membro.");
+}
+
+/** Filtro: o grupo existe, quem age é admin AGORA, e o alvo é membro. */
+function adminActsOnMember(_id: ObjectId, actorUid: string, targetUid: string) {
+	return {
+		_id,
+		members: { $elemMatch: { uid: actorUid, role: "admin" as const } },
+		"members.uid": targetUid,
+	};
+}
+
+export async function setMemberRole(
+	db: Db,
+	id: string,
+	actorUid: string,
+	targetUid: string,
+	role: Role,
+): Promise<MemberActionResult> {
+	if (!isObjectIdHex(id)) return { status: "not_found" };
+	const groups = groupsCollection(db);
+	const _id = new ObjectId(id);
+	if (actorUid === targetUid) return explainNoMatch(groups, _id, actorUid, targetUid);
+
+	const res = await groups.updateOne(adminActsOnMember(_id, actorUid, targetUid), {
+		$set: { "members.$[t].role": role, updatedAt: new Date() },
+	}, { arrayFilters: [{ "t.uid": targetUid }] });
+	// matchedCount (e não modifiedCount): trocar para o papel que já existe é sucesso (idempotente).
+	if (res.matchedCount > 0) return { status: "ok" };
+	return explainNoMatch(groups, _id, actorUid, targetUid);
+}
+
+export async function removeMember(db: Db, id: string, actorUid: string, targetUid: string): Promise<MemberActionResult> {
+	if (!isObjectIdHex(id)) return { status: "not_found" };
+	const groups = groupsCollection(db);
+	const _id = new ObjectId(id);
+	if (actorUid === targetUid) return explainNoMatch(groups, _id, actorUid, targetUid);
+
+	const res = await groups.updateOne(adminActsOnMember(_id, actorUid, targetUid), {
+		$pull: { members: { uid: targetUid } },
+		$set: { updatedAt: new Date() },
+	});
+	if (res.matchedCount > 0) return { status: "ok" };
+	return explainNoMatch(groups, _id, actorUid, targetUid);
+}

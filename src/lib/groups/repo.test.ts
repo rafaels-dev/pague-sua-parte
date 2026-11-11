@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ObjectId, type Db } from "mongodb";
-import { acceptInvite, createGroup, getGroupDetail, getOrCreateInvite, listGroups, previewInvite } from "./repo";
+import { acceptInvite, createGroup, getGroupDetail, getOrCreateInvite, listGroups, previewInvite, removeMember, setMemberRole } from "./repo";
 
 const GID = "507f1f77bcf86cd799439011";
 const TOKEN = "t".repeat(43);
@@ -205,5 +205,80 @@ describe("acceptInvite", () => {
 		groups.findOneAndUpdate.mockResolvedValue(null);
 		groups.findOne.mockResolvedValue(group());
 		expect(await acceptInvite(db, TOKEN, "u3")).toEqual({ status: "full" });
+	});
+});
+
+describe("setMemberRole / removeMember", () => {
+	const matched = { matchedCount: 1 };
+	const none = { matchedCount: 0 };
+
+	it("promove com um update atômico cujo filtro exige que quem age seja admin", async () => {
+		const { db, groups } = mockDb({ groups: { updateOne: vi.fn().mockResolvedValue(matched) } });
+		expect(await setMemberRole(db, GID, "u1", "u2", "admin")).toEqual({ status: "ok" });
+		const [filter, update, opts] = groups.updateOne.mock.calls[0];
+		expect(filter).toMatchObject({
+			_id: new ObjectId(GID),
+			members: { $elemMatch: { uid: "u1", role: "admin" } },
+			"members.uid": "u2",
+		});
+		expect(update.$set["members.$[t].role"]).toBe("admin");
+		expect(opts).toEqual({ arrayFilters: [{ "t.uid": "u2" }] });
+		expect(groups.findOne).not.toHaveBeenCalled();
+	});
+	it("rebaixa", async () => {
+		const { db, groups } = mockDb({ groups: { updateOne: vi.fn().mockResolvedValue(matched) } });
+		expect(await setMemberRole(db, GID, "u1", "u2", "member")).toEqual({ status: "ok" });
+		expect(groups.updateOne.mock.calls[0][1].$set["members.$[t].role"]).toBe("member");
+	});
+	it("é idempotente: papel já igual (matched, não modified) continua ok", async () => {
+		const { db } = mockDb({ groups: { updateOne: vi.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 0 }) } });
+		expect(await setMemberRole(db, GID, "u1", "u2", "member")).toEqual({ status: "ok" });
+	});
+	it("remove com $pull e o mesmo filtro de admin", async () => {
+		const { db, groups } = mockDb({ groups: { updateOne: vi.fn().mockResolvedValue(matched) } });
+		expect(await removeMember(db, GID, "u1", "u2")).toEqual({ status: "ok" });
+		const [filter, update] = groups.updateOne.mock.calls[0];
+		expect(filter.members).toEqual({ $elemMatch: { uid: "u1", role: "admin" } });
+		expect(filter["members.uid"]).toBe("u2");
+		expect(update.$pull).toEqual({ members: { uid: "u2" } });
+	});
+	it("id malformado: not_found sem consultar o banco", async () => {
+		const { db, groups } = mockDb({});
+		expect(await setMemberRole(db, "ruim", "u1", "u2", "admin")).toEqual({ status: "not_found" });
+		expect(await removeMember(db, "ruim", "u1", "u2")).toEqual({ status: "not_found" });
+		expect(groups.updateOne).not.toHaveBeenCalled();
+		expect(groups.findOne).not.toHaveBeenCalled();
+	});
+	it("não membro: not_found", async () => {
+		const { db } = mockDb({ groups: { updateOne: vi.fn().mockResolvedValue(none), findOne: vi.fn().mockResolvedValue(null) } });
+		expect(await setMemberRole(db, GID, "x", "u2", "admin")).toEqual({ status: "not_found" });
+		expect(await removeMember(db, GID, "x", "u2")).toEqual({ status: "not_found" });
+	});
+	it("membro comum: forbidden", async () => {
+		const { db } = mockDb({ groups: { updateOne: vi.fn().mockResolvedValue(none), findOne: vi.fn().mockResolvedValue(group()) } });
+		expect(await setMemberRole(db, GID, "u2", "u1", "member")).toEqual({ status: "forbidden" });
+		expect(await removeMember(db, GID, "u2", "u1")).toEqual({ status: "forbidden" });
+	});
+	it("admin rebaixado no meio da corrida: forbidden", async () => {
+		const g = group({ members: [member("u1"), member("u2", "admin")] });
+		const { db } = mockDb({ groups: { updateOne: vi.fn().mockResolvedValue(none), findOne: vi.fn().mockResolvedValue(g) } });
+		expect(await removeMember(db, GID, "u1", "u2")).toEqual({ status: "forbidden" });
+	});
+	it("a si mesmo: self, sem tentar atualizar", async () => {
+		const { db, groups } = mockDb({ groups: { findOne: vi.fn().mockResolvedValue(group()) } });
+		expect(await setMemberRole(db, GID, "u1", "u1", "member")).toEqual({ status: "self" });
+		expect(await removeMember(db, GID, "u1", "u1")).toEqual({ status: "self" });
+		expect(groups.updateOne).not.toHaveBeenCalled();
+	});
+	it("a si mesmo sendo membro comum: forbidden; sendo estranho: not_found", async () => {
+		const m = mockDb({ groups: { findOne: vi.fn().mockResolvedValue(group()) } });
+		expect(await removeMember(m.db, GID, "u2", "u2")).toEqual({ status: "forbidden" });
+		const s = mockDb({ groups: { findOne: vi.fn().mockResolvedValue(null) } });
+		expect(await removeMember(s.db, GID, "x", "x")).toEqual({ status: "not_found" });
+	});
+	it("alvo que não é (mais) membro: target_missing", async () => {
+		const { db } = mockDb({ groups: { updateOne: vi.fn().mockResolvedValue(none), findOne: vi.fn().mockResolvedValue(group()) } });
+		expect(await setMemberRole(db, GID, "u1", "zz", "admin")).toEqual({ status: "target_missing" });
+		expect(await removeMember(db, GID, "u1", "zz")).toEqual({ status: "target_missing" });
 	});
 });

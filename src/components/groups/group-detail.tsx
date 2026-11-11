@@ -2,15 +2,20 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
-import { Avatar, Button, Card, EmptyState, Icon, List, ListItem, Skeleton } from "@/components/ui";
+import { Avatar, Button, Card, EmptyState, Icon, IconButton, List, ListItem, Sheet, Skeleton, Snackbar } from "@/components/ui";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { InvitePanel } from "./invite-panel";
+import { MemberSheetContent } from "./member-sheet";
 
 export type Member = { uid: string; name: string; picture: string | null; role: "admin" | "member"; hasPixKey: boolean; isYou: boolean };
 export type Group = { id: string; name: string; role: "admin" | "member"; members: Member[] };
 
-/** Visual da tela do grupo; o painel de convite entra como slot. */
-export function GroupDetailView({ group, invite }: Readonly<{ group: Group; invite: React.ReactNode }>) {
+/** Visual da tela do grupo; o painel de convite entra como slot. `onMemberOptions` só é passado para administradores. */
+export function GroupDetailView({
+	group,
+	invite,
+	onMemberOptions,
+}: Readonly<{ group: Group; invite: React.ReactNode; onMemberOptions?: (member: Member) => void }>) {
 	return (
 		<div className="space-y-6">
 			<h1 className="break-words text-headline-medium md:text-headline-large">{group.name}</h1>
@@ -47,7 +52,21 @@ export function GroupDetailView({ group, invite }: Readonly<{ group: Group; invi
 										</>
 									}
 									supporting={notes.length ? notes.join(" · ") : undefined}
-									trailing={!m.hasPixKey ? <Icon name="warning" className="text-on-surface-variant" /> : undefined}
+									trailing={
+										!m.hasPixKey || (onMemberOptions && !m.isYou) ? (
+											<>
+												{!m.hasPixKey && <Icon name="warning" className="text-on-surface-variant" />}
+												{onMemberOptions && !m.isYou && (
+													<IconButton
+														icon="more_vert"
+														label={`Opções para ${m.name}`}
+														onClick={() => onMemberOptions(m)}
+														className="-mr-2"
+													/>
+												)}
+											</>
+										) : undefined
+									}
 								/>
 							);
 						})}
@@ -77,6 +96,11 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 	const [group, setGroup] = useState<Group | null>(null);
 	const [error, setError] = useState<{ message: string; notFound: boolean } | null>(null);
 	const [reloadKey, setReloadKey] = useState(0);
+	const [selected, setSelected] = useState<Member | null>(null);
+	const [confirmingRemove, setConfirmingRemove] = useState(false);
+	const [busy, setBusy] = useState(false);
+	const [actionError, setActionError] = useState<string | null>(null);
+	const [snack, setSnack] = useState<string | null>(null);
 
 	useEffect(() => {
 		if (!user) return;
@@ -94,6 +118,31 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 			cancelled = true;
 		};
 	}, [user, id, reloadKey]);
+
+	function closeSheet() {
+		if (busy) return;
+		setSelected(null);
+		setConfirmingRemove(false);
+		setActionError(null);
+	}
+
+	async function run(member: Member, request: () => Promise<unknown>, message: string) {
+		setBusy(true);
+		setActionError(null);
+		try {
+			await request();
+			setSelected(null);
+			setConfirmingRemove(false);
+			setSnack(message);
+			setReloadKey((k) => k + 1);
+		} catch (e) {
+			setActionError(e instanceof ApiError ? e.message : "Não foi possível concluir. Tente de novo.");
+		} finally {
+			setBusy(false);
+		}
+	}
+
+	const memberUrl = (m: Member) => `/api/groups/${encodeURIComponent(id)}/members/${encodeURIComponent(m.uid)}`;
 
 	if (error) {
 		return (
@@ -128,10 +177,44 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 
 	if (!group) return <GroupDetailSkeleton />;
 
+	const isAdmin = group.role === "admin";
 	return (
-		<GroupDetailView
-			group={group}
-			invite={<InvitePanel groupId={group.id} groupName={group.name} isAdmin={group.role === "admin"} />}
-		/>
+		<>
+			<GroupDetailView
+				group={group}
+				invite={<InvitePanel groupId={group.id} groupName={group.name} isAdmin={isAdmin} />}
+				onMemberOptions={
+					isAdmin
+						? (m) => {
+								setActionError(null);
+								setConfirmingRemove(false);
+								setSelected(m);
+							}
+						: undefined
+				}
+			/>
+			<Sheet open={!!selected} onClose={closeSheet} title={selected?.name ?? ""}>
+				{selected && (
+					<MemberSheetContent
+						member={selected}
+						busy={busy}
+						error={actionError}
+						confirmingRemove={confirmingRemove}
+						onToggleRole={() => {
+							const promote = selected.role !== "admin";
+							void run(
+								selected,
+								() => apiFetch(memberUrl(selected), { method: "PATCH", body: JSON.stringify({ role: promote ? "admin" : "member" }) }),
+								promote ? `${selected.name} agora administra o grupo.` : `${selected.name} não administra mais o grupo.`,
+							);
+						}}
+						onAskRemove={() => setConfirmingRemove(true)}
+						onCancelRemove={() => setConfirmingRemove(false)}
+						onConfirmRemove={() => void run(selected, () => apiFetch(memberUrl(selected), { method: "DELETE" }), `${selected.name} saiu do grupo.`)}
+					/>
+				)}
+			</Sheet>
+			<Snackbar open={snack !== null} message={snack ?? ""} onClose={() => setSnack(null)} />
+		</>
 	);
 }
