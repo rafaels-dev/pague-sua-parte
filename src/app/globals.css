@@ -316,7 +316,9 @@ body {
 	input[type="date"] {
 		-webkit-appearance: none;
 		appearance: none;
-		display: block;
+		/* flex (e não block): é o que mantém o texto da data centralizado na altura do campo no Safari. */
+		display: flex;
+		align-items: center;
 		min-width: 0;
 		max-width: 100%;
 	}
