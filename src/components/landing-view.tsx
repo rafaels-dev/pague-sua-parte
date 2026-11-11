@@ -1,12 +1,11 @@
-import { BrandMark } from "@/components/brand";
+import { BrandGlyph, BrandMark } from "@/components/brand";
 
-/** Ilustração decorativa: losangos sobrepostos em tons do Pix. */
+/** Ilustração decorativa: a mãozinha da marca recebendo a moeda, em tamanho grande. */
 function Illustration() {
 	return (
-		<svg viewBox="0 0 320 320" aria-hidden="true" className="h-auto w-full max-w-xs">
-			<path d="M160 20 300 160 160 300 20 160Z" className="fill-primary/15" />
-			<path d="M160 60 260 160 160 260 60 160Z" className="fill-primary/30" />
-			<path d="M160 100 220 160 160 220 100 160Z" className="fill-primary" />
+		<svg viewBox="0 0 64 64" aria-hidden="true" className="h-auto w-full max-w-xs">
+			<circle cx="32" cy="34" r="30" className="fill-primary/15" />
+			<BrandGlyph handClass="fill-primary" coinClass="fill-primary" detailClass="stroke-primary-container" />
 		</svg>
 	);
 }
