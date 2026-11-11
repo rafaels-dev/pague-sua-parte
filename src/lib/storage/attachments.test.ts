@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { attachmentKey, deleteAttachments, putAttachment, randomId, type AttachmentStore } from "./attachments";
+import { attachmentKey, deleteAttachments, putAttachment, putReceipt, randomId, receiptKey, type AttachmentStore } from "./attachments";
 
 vi.mock("@opennextjs/cloudflare", () => ({ getCloudflareContext: vi.fn() }));
 
@@ -19,6 +19,15 @@ describe("attachments", () => {
 		expect(m.size).toBe(3);
 		expect(store.put).toHaveBeenCalledWith(m.key, expect.any(Uint8Array), "application/pdf");
 		expect(randomId()).not.toBe(randomId());
+	});
+	it("comprovante usa prefixo próprio e não leva o nome do arquivo", async () => {
+		const store = fake();
+		const m = await putReceipt(store, { groupId: "g", expenseId: "e", bytes: new Uint8Array(2), name: "../pix.png", contentType: "image/png" });
+		expect(m.key).toBe(receiptKey("g", "e", m.id));
+		expect(m.key.startsWith("receipts/g/e/")).toBe(true);
+		expect(m.key).not.toContain("pix");
+		expect(m.key).not.toBe(attachmentKey("g", "e", m.id));
+		expect(store.put).toHaveBeenCalledWith(m.key, expect.any(Uint8Array), "image/png");
 	});
 	it("deleteAttachments nunca lança", async () => {
 		const store = fake();

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useId, useRef } from "react";
 import { Button, Icon, IconButton } from "@/components/ui";
 import { ACCEPT_ATTR, MAX_FILES, formatFileSize } from "@/lib/ui/attachments";
 import { cx } from "@/lib/ui/cx";
@@ -18,6 +18,8 @@ export function AttachmentPicker({
 	onPick,
 	onRemove,
 	onPaste,
+	maxFiles = MAX_FILES,
+	copy,
 }: Readonly<{
 	items: PickedFile[];
 	problems: string[];
@@ -29,25 +31,39 @@ export function AttachmentPicker({
 	onPick: (files: File[]) => void;
 	onRemove: (id: string) => void;
 	onPaste: () => void;
+	/** 1 = um arquivo só (comprovante): o botão de escolher passa a trocar o arquivo. */
+	maxFiles?: number;
+	/** Textos (padrão: anexos da despesa). */
+	copy?: { title: string; optional: boolean; hint: string; pick: string; pickAgain: string; inputLabel: string };
 }>) {
 	const input = useRef<HTMLInputElement>(null);
-	const full = items.length >= MAX_FILES;
+	const single = maxFiles === 1;
+	const full = !single && items.length >= maxFiles;
+	const titleId = useId();
+	const texts = copy ?? {
+		title: "Anexos",
+		optional: true,
+		hint: `Foto, print ou PDF da nota. Até ${maxFiles} arquivos.`,
+		pick: "Anexar foto ou PDF",
+		pickAgain: "Anexar foto ou PDF",
+		inputLabel: "Escolher arquivos para anexar",
+	};
 	const messages = [...problems, ...(serverError ? [serverError] : [])];
 
 	return (
 		<section
-			aria-labelledby="anexos-titulo"
+			aria-labelledby={titleId}
 			className={cx(
 				"space-y-3 rounded-shape-lg border-2 border-dashed p-4 transition-colors duration-150",
 				dragging ? "border-primary bg-primary-container/40" : "border-outline-variant",
 			)}
 		>
 			<div>
-				<h2 id="anexos-titulo" className="text-title-medium">
-					Anexos <span className="font-normal text-on-surface-variant">(opcional)</span>
+				<h2 id={titleId} className="text-title-medium">
+					{texts.title} {texts.optional && <span className="font-normal text-on-surface-variant">(opcional)</span>}
 				</h2>
 				<p className="text-body-large text-on-surface-variant">
-					{dragging ? "Solte aqui para anexar." : "Foto, print ou PDF da nota. Até 3 arquivos."}
+					{dragging ? "Solte aqui para anexar." : texts.hint}
 				</p>
 			</div>
 
@@ -89,7 +105,7 @@ export function AttachmentPicker({
 					onClick={() => input.current?.click()}
 					className="sm:flex-1 sm:basis-0"
 				>
-					Anexar foto ou PDF
+					{single && items.length > 0 ? texts.pickAgain : texts.pick}
 				</Button>
 				{canPaste && (
 					<Button variant="outlined" icon="content_paste" size="md" disabled={disabled || full} onClick={onPaste} className="sm:flex-1 sm:basis-0">
@@ -100,10 +116,10 @@ export function AttachmentPicker({
 					ref={input}
 					type="file"
 					accept={ACCEPT_ATTR}
-					multiple
+					multiple={!single}
 					tabIndex={-1}
 					className="sr-only"
-					aria-label="Escolher arquivos para anexar"
+					aria-label={texts.inputLabel}
 					onChange={(e) => {
 						const files = Array.from(e.target.files ?? []);
 						e.target.value = ""; // permite escolher o mesmo arquivo de novo

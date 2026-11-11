@@ -3,7 +3,7 @@ import { ObjectId, type Db } from "mongodb";
 import type { AttachmentStore } from "@/lib/storage/attachments";
 
 vi.mock("@opennextjs/cloudflare", () => ({ getCloudflareContext: vi.fn() }));
-const { createExpense, deleteExpense, getAttachmentRef, getExpenseDetail, getSummary, listExpenses, setSharePaid, updateParticipants } = await import("./repo");
+const { createExpense, deleteExpense, getAttachmentRef, getExpenseDetail, getReceiptRef, getSummary, listExpenses, markSelfPaid, setSharePaid, updateParticipants } = await import("./repo");
 const { listGroups } = await import("@/lib/groups/repo");
 
 const GID = "507f1f77bcf86cd799439011";
@@ -13,7 +13,7 @@ const member = (uid: string, role: "admin" | "member" = "member") => ({ uid, rol
 const group = () => ({ _id: new ObjectId(GID), name: "G", members: [member("u1", "admin"), member("u2"), member("u3"), member("u4")] });
 const PIX = { type: "email", key: "ana@x.com" };
 
-type Share = { uid: string; amountCents: number; paidCents: number; paidAt?: Date; markedBy?: string; method?: "manual" };
+type Share = { uid: string; amountCents: number; paidCents: number; paidAt?: Date; markedBy?: string; method?: "manual" | "self"; receipt?: { id: string; key: string; name: string; contentType: string; size: number } };
 const S = (uid: string, amountCents: number, paidCents = 0, extra: Partial<Share> = {}): Share => ({ uid, amountCents, paidCents, ...extra });
 const expense = (over: Record<string, unknown> = {}) => ({
 	_id: new ObjectId(EID),
@@ -564,5 +564,169 @@ describe("detalhe: derivação e permissões", () => {
 	it("lista: parte paga ou reembolsada não conta como pendente; reembolso conta em refundCount", async () => {
 		const list = await listExpenses(mockDb({ expenses: [mixed()] }).db, GID, "u2");
 		expect(list?.[0]).toMatchObject({ pendingCount: 0, refundCount: 1 });
+	});
+});
+
+// ---------- comprovantes ----------
+
+const rcpt = (id: string) => ({ id, key: `receipts/g/e/${id}`, name: `${id}.png`, contentType: "image/png", size: 4 });
+const PNG = { name: "pix.png", contentType: "image/png" as const, bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]) };
+const paidAtR = new Date("2026-11-11T12:00:00Z");
+const selfPaid = (r = rcpt("r1")) => S("u1", 1000, 1000, { paidAt: paidAtR, markedBy: "u1", method: "self", receipt: r });
+
+describe("markSelfPaid", () => {
+	const pay = (db: Db, store: AttachmentStore, o: { uid?: string; target?: string; file?: typeof PNG; eid?: string } = {}) =>
+		markSelfPaid(db, store, { groupId: GID, eid: o.eid ?? EID, uid: o.uid ?? "u1", targetUid: o.target ?? "u1", file: o.file });
+
+	it("cota pendente sem arquivo: quita como self, sem comprovante e sem tocar no armazenamento", async () => {
+		const m = statefulDb(expense());
+		const store = fakeStore();
+		const r = await pay(m.db, store);
+		expect(r.status).toBe("ok");
+		const u1 = m.doc.shares.find((s) => s.uid === "u1")!;
+		expect(u1).toMatchObject({ paidCents: 1000, markedBy: "u1", method: "self" });
+		expect(u1.receipt).toBeUndefined();
+		expect(store.put).not.toHaveBeenCalled();
+		if (r.status === "ok") expect(r.expense.shares.find((s) => s.uid === "u1")).toMatchObject({ status: "paid", method: "self", receipt: null, canPay: false, canAddReceipt: true });
+	});
+	it("com arquivo: grava em receipts/ e guarda os metadados na cota", async () => {
+		const m = statefulDb(expense());
+		const store = fakeStore();
+		const r = await pay(m.db, store, { file: PNG });
+		const u1 = m.doc.shares.find((s) => s.uid === "u1")!;
+		expect(u1.receipt).toMatchObject({ name: "pix.png", contentType: "image/png", size: 4 });
+		expect(u1.receipt!.key.startsWith(`receipts/${GID}/${EID}/`)).toBe(true);
+		expect(store.put).toHaveBeenCalledWith(u1.receipt!.key, PNG.bytes, "image/png");
+		if (r.status === "ok") {
+			const view = r.expense.shares.find((s) => s.uid === "u1")!;
+			expect(view.receipt).toEqual({ name: "pix.png", contentType: "image/png", size: 4 });
+			expect(JSON.stringify(r.expense)).not.toContain("receipts/");
+		}
+	});
+	it("já quitada: com arquivo troca o comprovante, apaga o antigo e mantém paidAt/markedBy/method", async () => {
+		const m = statefulDb(expense({ shares: [S("u2", 1000), selfPaid(), S("u3", 1000)] }));
+		const store = fakeStore();
+		expect((await pay(m.db, store, { file: PNG })).status).toBe("ok");
+		const u1 = m.doc.shares.find((s) => s.uid === "u1")!;
+		expect(u1).toMatchObject({ paidAt: paidAtR, markedBy: "u1", method: "self" });
+		expect(u1.receipt!.id).not.toBe("r1");
+		expect(store.delete).toHaveBeenCalledWith([rcpt("r1").key]);
+	});
+	it("já quitada sem arquivo: não grava nada", async () => {
+		const m = statefulDb(expense({ shares: [S("u2", 1000), selfPaid(), S("u3", 1000)] }));
+		const store = fakeStore();
+		expect((await pay(m.db, store)).status).toBe("ok");
+		expect(m.writes).toHaveLength(0);
+		expect(store.delete).not.toHaveBeenCalled();
+	});
+	it("403 se não age pela pessoa; 404 para dono, reembolso, sem cota, despesa e grupo", async () => {
+		const m = statefulDb(expense());
+		const store = fakeStore();
+		expect((await pay(m.db, store, { uid: "u3", target: "u1", file: PNG })).status).toBe("forbidden");
+		expect((await pay(m.db, store, { uid: "u2", target: "u1" })).status).toBe("forbidden"); // o dono também não avisa por outro
+		expect((await pay(m.db, store, { uid: "u2", target: "u2" })).status).toBe("no_share"); // a cota de quem pagou
+		expect((await pay(m.db, store, { target: "u4" , uid: "u4" })).status).toBe("no_share");
+		const refund = statefulDb(expense({ shares: [S("u2", 1500), S("u3", 1500), S("u1", 0, 500, { paidAt: paidAtR })] }));
+		expect((await pay(refund.db, store, { file: PNG })).status).toBe("no_share");
+		expect((await pay(mockDb({ expense: null }).db, store)).status).toBe("no_expense");
+		expect((await pay(mockDb({ group: null }).db, store)).status).toBe("no_group");
+		expect(store.put).not.toHaveBeenCalled();
+		expect(m.writes).toHaveLength(0);
+	});
+	it("responsável paga por pessoa sem login", async () => {
+		const BEN = "managed:ben";
+		const g = { ...group(), members: [...group().members, { uid: BEN, role: "member", kind: "managed", managedBy: "u3", name: "Ben", joinedAt: new Date() }] };
+		const base = statefulDb(expense({ shares: [S("u2", 1000), S(BEN, 1000), S("u3", 1000)] }));
+		const db = { collection: (n: string) => (n === "groups" ? { findOne: vi.fn().mockResolvedValue(g) } : base.db.collection(n)) } as unknown as Db;
+		const store = fakeStore();
+		expect((await pay(db, store, { uid: "u1", target: BEN })).status).toBe("forbidden");
+		expect((await pay(db, store, { uid: "u3", target: BEN, file: PNG })).status).toBe("ok");
+		expect(base.doc.shares.find((s) => s.uid === BEN)).toMatchObject({ paidCents: 1000, markedBy: "u3", method: "self" });
+	});
+	it("falha na gravação (conflito): apaga o arquivo enviado", async () => {
+		const m = statefulDb(expense(), { failUpdates: 5 });
+		const store = fakeStore();
+		expect((await pay(m.db, store, { file: PNG })).status).toBe("conflict");
+		expect(store.put).toHaveBeenCalledTimes(1);
+		expect(store.delete).toHaveBeenCalledWith([store.put.mock.calls[0][0]]);
+	});
+	it("erro do banco: apaga o arquivo e propaga", async () => {
+		const m = statefulDb(expense());
+		m.expenses.updateOne.mockRejectedValueOnce(new Error("boom"));
+		const store = fakeStore();
+		await expect(pay(m.db, store, { file: PNG })).rejects.toThrow("boom");
+		expect(store.delete).toHaveBeenCalledWith([store.put.mock.calls[0][0]]);
+	});
+});
+
+describe("comprovantes: desfazer, recalcular, apagar, detalhe", () => {
+	it("dono desfaz: a cota perde o comprovante e o objeto é apagado; idempotente", async () => {
+		const m = statefulDb(expense({ shares: [S("u2", 1000), selfPaid(), S("u3", 1000)] }));
+		const store = fakeStore();
+		expect((await setSharePaid(m.db, GID, EID, "u2", "u1", "pending", undefined, store)).status).toBe("ok");
+		expect(m.doc.shares.find((s) => s.uid === "u1")).toEqual(S("u1", 1000, 0));
+		expect(store.delete).toHaveBeenCalledWith([rcpt("r1").key]);
+		await setSharePaid(m.db, GID, EID, "u2", "u1", "pending", undefined, store);
+		expect(store.delete).toHaveBeenCalledTimes(1);
+	});
+	it("dono quita (paid) cota que já tem comprovante: mantém tudo", async () => {
+		const m = statefulDb(expense({ shares: [S("u2", 1000), selfPaid(), S("u3", 1000)] }));
+		const store = fakeStore();
+		await setSharePaid(m.db, GID, EID, "u2", "u1", "paid", undefined, store);
+		expect(m.doc.shares.find((s) => s.uid === "u1")).toMatchObject({ method: "self", receipt: rcpt("r1") });
+		expect(store.delete).not.toHaveBeenCalled();
+	});
+	it("recalcular: cota que fica (inclusive só reembolso) mantém comprovante e method", async () => {
+		const m = statefulDb(expense({ shares: [S("u2", 1500), selfPaid(), S("u3", 500)] }));
+		const store = fakeStore();
+		await updateParticipants(m.db, GID, EID, "u2", ["u2", "u3"], "this", undefined, store);
+		expect(m.doc.shares.find((s) => s.uid === "u1")).toMatchObject({ amountCents: 0, paidCents: 1000, method: "self", receipt: rcpt("r1") });
+		await updateParticipants(m.db, GID, EID, "u2", ["u2", "u1", "u3"], "this", undefined, store);
+		expect(m.doc.shares.find((s) => s.uid === "u1")).toMatchObject({ method: "self", receipt: rcpt("r1") });
+		expect(store.delete).not.toHaveBeenCalled();
+	});
+	it("devolver o reembolso remove a linha e o comprovante", async () => {
+		const m = statefulDb(expense({ shares: [S("u2", 1500), S("u3", 1500), S("u1", 0, 1000, { method: "self", paidAt: paidAtR, receipt: rcpt("r1") })] }));
+		const store = fakeStore();
+		await setSharePaid(m.db, GID, EID, "u2", "u1", "paid", undefined, store);
+		expect(m.doc.shares.some((s) => s.uid === "u1")).toBe(false);
+		expect(store.delete).toHaveBeenCalledWith([rcpt("r1").key]);
+	});
+	it("deleteExpense apaga os comprovantes junto com os anexos", async () => {
+		const m = mockDb({ expense: expense({ shares: [S("u2", 1000), S("u1", 1000), S("u3", 1000)] }) });
+		const store = fakeStore();
+		expect((await deleteExpense(m.db, store, GID, EID, "u2")).status).toBe("ok");
+		// despesa sem pagamento não tem comprovante; com um comprovante legado a chave também sai
+		const legacy = mockDb({ expense: expense({ shares: [S("u2", 1000), S("u1", 1000, 0, { receipt: rcpt("r9") })] }) });
+		legacy.expenses.find.mockReturnValue({ toArray: vi.fn().mockResolvedValue([]) });
+		expect((await deleteExpense(legacy.db, store, GID, EID, "u2")).status).toBe("ok");
+		expect(store.delete).toHaveBeenCalledWith([rcpt("r9").key]);
+	});
+	it("detalhe: receipt só para quem pode baixar; canPay e canAddReceipt", async () => {
+		const doc = () => expense({ shares: [S("u2", 1000), selfPaid(), S("u3", 1000), S("u4", 0, 300, { paidAt: paidAtR, receipt: rcpt("r4") })] });
+		const get = async (uid: string) => {
+			const r = await getExpenseDetail(mockDb({ expense: doc(), group: { ...group(), members: [...group().members] } }).db, GID, EID, uid);
+			if (r.status !== "ok") throw new Error("esperava ok");
+			return Object.fromEntries(r.expense.shares.map((s) => [s.uid, s]));
+		};
+		const [self, owner, other] = [await get("u1"), await get("u2"), await get("u3")];
+		expect(self.u1).toMatchObject({ receipt: { name: "r1.png", contentType: "image/png", size: 4 }, canPay: false, canAddReceipt: true });
+		expect(owner.u1.receipt).not.toBeNull();
+		expect(owner.u1).toMatchObject({ canPay: false, canAddReceipt: false });
+		expect(other.u1.receipt).toBeNull();
+		expect(other.u3).toMatchObject({ canPay: true, canAddReceipt: false, receipt: null });
+		expect(self.u3).toMatchObject({ canPay: false });
+		expect(self.u2).toMatchObject({ canPay: false, canAddReceipt: false });
+		expect(owner.u4.receipt).not.toBeNull(); // linha de reembolso: o dono vê
+		expect(other.u4.receipt).toBeNull();
+		for (const v of Object.values(self)) expect(v).not.toHaveProperty("key");
+	});
+	it("getReceiptRef: a pessoa e o dono baixam; os outros e a cota sem comprovante dão not_found", async () => {
+		const open = (uid: string, target = "u1") => getReceiptRef(mockDb({ expense: expense({ shares: [S("u2", 1000), selfPaid(), S("u3", 1000)] }) }).db, GID, EID, target, uid);
+		expect(await open("u1")).toEqual({ status: "ok", key: rcpt("r1").key, name: "r1.png", contentType: "image/png" });
+		expect((await open("u2")).status).toBe("ok");
+		expect((await open("u3")).status).toBe("not_found");
+		expect((await open("u1", "u3")).status).toBe("not_found");
+		expect((await getReceiptRef(mockDb({ group: null }).db, GID, EID, "u1", "x")).status).toBe("not_found");
 	});
 });

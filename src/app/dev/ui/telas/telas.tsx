@@ -28,6 +28,18 @@ export function Telas({ tela }: Readonly<{ tela: string }>) {
 			return <MockNoPixKey framed={false} />;
 		case "devo":
 			return <MockExpense mode="debtor" framed={false} />;
+		case "comprovante-devo":
+			return <MockExpense mode="debtor" framed={false} />;
+		case "comprovante-sheet-vazio":
+			return <MockExpense mode="debtor" receiptSheet={{ mode: "pay" }} framed={false} />;
+		case "comprovante-sheet-arquivo":
+			return <MockExpense mode="debtor" receiptSheet={{ mode: "pay", filled: true }} framed={false} />;
+		case "comprovante-dono":
+			return <MockExpense mode="self-owner" framed={false} />;
+		case "comprovante-depois-de-pagar":
+			return <MockExpense mode="self-debtor" framed={false} />;
+		case "comprovante-anexar":
+			return <MockExpense mode="self-debtor" receiptSheet={{ mode: "attach" }} framed={false} />;
 		case "devo-qr":
 			return <MockExpense mode="debtor" qrOpen framed={false} />;
 		case "devo-sem-copiar":

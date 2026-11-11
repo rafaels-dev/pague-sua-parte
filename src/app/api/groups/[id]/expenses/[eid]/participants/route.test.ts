@@ -6,6 +6,7 @@ vi.mock("@/lib/auth/server", () => ({ requireUser, UnauthorizedError }));
 vi.mock("@/lib/db/client", () => ({ getDb: vi.fn().mockResolvedValue({ fake: true }) }));
 const updateParticipants = vi.fn();
 vi.mock("@/lib/expenses/repo", () => ({ updateParticipants }));
+vi.mock("@/lib/storage/attachments", () => ({ getAttachmentStore: () => ({ fakeStore: true }) }));
 
 const { PUT } = await import("./route");
 const ctx = { params: Promise.resolve({ id: "g", eid: "e" }) };
@@ -23,12 +24,12 @@ describe("PUT /expenses/:eid/participants", () => {
 	it("200 com o detalhe e repassa os argumentos", async () => {
 		updateParticipants.mockResolvedValue({ status: "ok", expense: { id: "e" } });
 		expect(await out(await put({ participantUids: ["u1"] }))).toEqual([200, { id: "e" }]);
-		expect(updateParticipants).toHaveBeenCalledWith({ fake: true }, "g", "e", "u1", ["u1"], "this");
+		expect(updateParticipants).toHaveBeenCalledWith({ fake: true }, "g", "e", "u1", ["u1"], "this", undefined, { fakeStore: true });
 	});
 	it("scope following é repassado; scope inválido: 422 em scope", async () => {
 		updateParticipants.mockResolvedValue({ status: "ok", expense: { id: "e" } });
 		await put({ participantUids: ["u1"], scope: "following" });
-		expect(updateParticipants).toHaveBeenCalledWith({ fake: true }, "g", "e", "u1", ["u1"], "following");
+		expect(updateParticipants).toHaveBeenCalledWith({ fake: true }, "g", "e", "u1", ["u1"], "following", undefined, { fakeStore: true });
 		updateParticipants.mockClear();
 		expect(await out(await put({ participantUids: ["u1"], scope: "todas" }))).toEqual([422, { error: "Escopo inválido.", field: "scope" }]);
 		expect(updateParticipants).not.toHaveBeenCalled();

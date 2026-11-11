@@ -35,6 +35,8 @@ describe("validação", () => {
 	it("quantidade", () => {
 		expect(countProblem(2)).toBeNull();
 		expect(countProblem(3)).toMatch(/até 3/);
+		expect(countProblem(1, 2)).toBeNull();
+		expect(countProblem(1, 1)).toMatch(/1 arquivo/);
 	});
 	it("nome longo é encurtado na mensagem", () => {
 		const msg = typeProblem({ name: `${"a".repeat(60)}.gif`, type: "image/gif", size: 1 });

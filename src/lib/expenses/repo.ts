@@ -5,6 +5,7 @@ import type { PixKey } from "@/lib/pix/key";
 import {
 	deleteAttachments,
 	putAttachment,
+	putReceipt,
 	randomId,
 	type AttachmentMeta,
 	type AttachmentStore,
@@ -14,12 +15,14 @@ import { getBalancesForUids, sumBalances, ZERO_BALANCE } from "./balances";
 import { installmentDueDates, isPastDue, todayInSaoPaulo } from "./dates";
 import {
 	addHelper,
+	droppedReceiptKeys,
 	dueCents,
 	hasPayments,
 	isHelper,
 	normalizeShares,
 	orderShares,
 	participantUidsOf,
+	payShare,
 	recalcShares,
 	refundCents,
 	settleShare,
@@ -161,6 +164,12 @@ export type ExpenseDetail = {
 		managedByName: string | null;
 		paidAt: string | null;
 		method: ShareMethod | null;
+		/** Só para quem pode baixar (a pessoa, quem age por ela ou por quem pagou); null para os demais. */
+		receipt: { name: string; contentType: string; size: number } | null;
+		/** Você age por esta pessoa e a parte dela está pendente: pode avisar que pagou. */
+		canPay: boolean;
+		/** Você age por esta pessoa e ela já pagou o valor todo: pode anexar ou trocar o comprovante. */
+		canAddReceipt: boolean;
 	}[];
 	attachments: { id: string; name: string; contentType: string; size: number }[];
 	dueDate: string | null;
@@ -255,21 +264,29 @@ async function toDetail(db: Db, e: ExpenseDoc, group: GroupDoc, uid: string, now
 		participantUids: participantUidsOf(e.shares),
 		paidBy: { ...view(e.paidBy), kind: dir.kind(e.paidBy), youManage: dir.youManage(e.paidBy) },
 		pix: { type: e.pix.type, key: e.pix.key, payeeName: e.pix.payeeName },
-		shares: orderShares(e.shares, e.paidBy, dir.name).map((s) => ({
-			...view(s.uid),
-			kind: dir.kind(s.uid),
-			youManage: dir.youManage(s.uid),
-			managedByName: dir.managedByName(s.uid),
-			amountCents: s.amountCents,
-			paidCents: s.paidCents,
-			dueCents: dueCents(s, e.paidBy),
-			refundCents: refundCents(s, e.paidBy),
-			participates: s.amountCents > 0,
-			helped: isHelper(s),
-			status: shareStatus(s, e.paidBy),
-			paidAt: s.paidCents > 0 && s.paidAt ? new Date(s.paidAt).toISOString() : null,
-			method: s.paidCents > 0 ? (s.method ?? null) : null,
-		})),
+		shares: orderShares(e.shares, e.paidBy, dir.name).map((s) => {
+			const actsForShare = actsFor(group.members, uid, s.uid);
+			const status = shareStatus(s, e.paidBy);
+			return {
+				...view(s.uid),
+				kind: dir.kind(s.uid),
+				youManage: dir.youManage(s.uid),
+				managedByName: dir.managedByName(s.uid),
+				amountCents: s.amountCents,
+				paidCents: s.paidCents,
+				dueCents: dueCents(s, e.paidBy),
+				refundCents: refundCents(s, e.paidBy),
+				participates: s.amountCents > 0,
+				helped: isHelper(s),
+				status,
+				paidAt: s.paidCents > 0 && s.paidAt ? new Date(s.paidAt).toISOString() : null,
+				method: s.paidCents > 0 ? (s.method ?? null) : null,
+				receipt:
+					s.receipt && (actsForShare || owns) ? { name: s.receipt.name, contentType: s.receipt.contentType, size: s.receipt.size } : null,
+				canPay: actsForShare && status === "pending",
+				canAddReceipt: actsForShare && s.uid !== e.paidBy && s.amountCents > 0 && s.paidCents === s.amountCents,
+			};
+		}),
 		attachments: e.attachments.map((a) => ({ id: a.id, name: a.name, contentType: a.contentType, size: a.size })),
 		dueDate: e.dueDate ?? null,
 		installment: e.installment ?? null,
@@ -522,6 +539,19 @@ export async function getAttachmentRef(db: Db, groupId: string, eid: string, aid
 	return { status: "ok", key: a.key, name: a.name, contentType: a.contentType };
 }
 
+export type ReceiptRef = { status: "ok"; key: string; name: string; contentType: string } | { status: "not_found" };
+
+/** Comprovante da cota de `targetUid`: só para quem age por ela ou por quem pagou a despesa. */
+export async function getReceiptRef(db: Db, groupId: string, eid: string, targetUid: string, uid: string): Promise<ReceiptRef> {
+	const group = await findMemberGroup(db, groupId, uid);
+	if (!group) return { status: "not_found" };
+	const e = await findExpense(db, groupId, eid);
+	const r = e?.shares.find((s) => s.uid === targetUid)?.receipt;
+	if (!e || !r) return { status: "not_found" };
+	if (!actsFor(group.members, uid, targetUid) && !actsFor(group.members, uid, e.paidBy)) return { status: "not_found" };
+	return { status: "ok", key: r.key, name: r.name, contentType: r.contentType };
+}
+
 // ---------- apagar ----------
 
 export type DeleteResult =
@@ -580,6 +610,7 @@ export async function deleteExpense(
 			return (await findExpense(db, groupId, eid)) ? { status: "has_payment" } : { status: "no_expense" };
 		}
 		await releaseAttachments(db, store, e.attachments.map((a) => a.key));
+		await deleteAttachments(store, receiptKeysOf(e));
 		return { status: "ok", deleted: 1, kept: 0 };
 	}
 
@@ -591,8 +622,19 @@ export async function deleteExpense(
 		return (await findExpense(db, groupId, eid)) ? { status: "has_payment" } : { status: "no_expense" };
 	}
 	await releaseAttachments(db, store, targets.flatMap((t) => t.attachments.map((a) => a.key)));
+	const withReceipts = targets.filter((t) => receiptKeysOf(t).length > 0);
+	if (withReceipts.length > 0) {
+		// Só as parcelas que de fato foram apagadas perdem os comprovantes.
+		const left = await expensesCollection(db)
+			.find({ _id: { $in: withReceipts.map((t) => t._id) } }, { projection: { _id: 1 } })
+			.toArray();
+		const stillThere = new Set(left.map((d) => d._id.toHexString()));
+		await deleteAttachments(store, withReceipts.filter((t) => !stillThere.has(t._id.toHexString())).flatMap(receiptKeysOf));
+	}
 	return { status: "ok", deleted: res.deletedCount, kept: targets.length - res.deletedCount };
 }
+
+const receiptKeysOf = (e: { shares: ExpenseShare[] }): string[] => e.shares.flatMap((s) => (s.receipt ? [s.receipt.key] : []));
 
 /** Esta parcela e as seguintes da mesma série, em ordem (normalizadas). */
 async function followingOf(db: Db, e: ExpenseDoc): Promise<ExpenseDoc[]> {
@@ -663,6 +705,7 @@ export async function setSharePaid(
 	targetUid: string,
 	status: "paid" | "pending",
 	now: Date = new Date(),
+	store?: AttachmentStore,
 ): Promise<MarkShareResult> {
 	const group = await findMemberGroup(db, groupId, uid);
 	if (!group) return { status: "no_group" };
@@ -674,6 +717,54 @@ export async function setSharePaid(
 	if (r.kind === "no_expense") return { status: "no_expense" };
 	if (r.kind === "conflict") return { status: "conflict" };
 	if (r.kind === "rejected") return { status: r.error === "forbidden" ? "forbidden" : "no_share" };
+	if (store && r.wrote) await deleteAttachments(store, droppedReceiptKeys(r.before.shares, r.doc.shares));
+	return { status: "ok", expense: await toDetail(db, r.doc, group, uid, now) };
+}
+
+// ---------- "já paguei" (a própria pessoa) ----------
+
+export type SelfPayResult =
+	| { status: "ok"; expense: ExpenseDetail }
+	| { status: "no_group" }
+	| { status: "no_expense" }
+	| { status: "forbidden" }
+	| { status: "no_share" }
+	| { status: "conflict" };
+
+/**
+ * Quem deve (ou quem age por essa pessoa) avisa que pagou, com comprovante opcional. Cota pendente vira quitada
+ * (`method: "self"`); cota já quitada só recebe/troca o comprovante. O arquivo vai ao armazenamento só depois de
+ * validar a permissão e é apagado se a gravação falhar; o comprovante substituído é apagado depois da gravação.
+ */
+export async function markSelfPaid(
+	db: Db,
+	store: AttachmentStore,
+	args: { groupId: string; eid: string; uid: string; targetUid: string; file?: SniffedFile; now?: Date },
+): Promise<SelfPayResult> {
+	const { groupId, eid, uid, targetUid, file } = args;
+	const now = args.now ?? new Date();
+	const group = await findMemberGroup(db, groupId, uid);
+	if (!group) return { status: "no_group" };
+	const current = await findExpense(db, groupId, eid);
+	if (!current) return { status: "no_expense" };
+	if (!actsFor(group.members, uid, targetUid)) return { status: "forbidden" };
+	if (payShare(current.shares, current.paidBy, targetUid, now, uid) === null) return { status: "no_share" };
+
+	const receipt = file
+		? await putReceipt(store, { groupId, expenseId: current._id.toHexString(), bytes: file.bytes, name: file.name, contentType: file.contentType })
+		: undefined;
+	let r: Mutated;
+	try {
+		r = await mutateShares(db, groupId, eid, (e) => payShare(e.shares, e.paidBy, targetUid, now, uid, receipt) ?? { error: "no_share" });
+	} catch (err) {
+		if (receipt) await deleteAttachments(store, [receipt.key]);
+		throw err;
+	}
+	if (receipt && !(r.kind === "ok" && r.wrote)) await deleteAttachments(store, [receipt.key]);
+	if (r.kind === "no_expense") return { status: "no_expense" };
+	if (r.kind === "conflict") return { status: "conflict" };
+	if (r.kind === "rejected") return { status: "no_share" };
+	if (r.wrote) await deleteAttachments(store, droppedReceiptKeys(r.before.shares, r.doc.shares));
 	return { status: "ok", expense: await toDetail(db, r.doc, group, uid, now) };
 }
 
@@ -706,6 +797,7 @@ export async function updateParticipants(
 	participantUids: string[],
 	scope: ParticipantsScope = "this",
 	now: Date = new Date(),
+	store?: AttachmentStore,
 ): Promise<UpdateParticipantsResult> {
 	const group = await findMemberGroup(db, groupId, uid);
 	if (!group) return { status: "no_group" };
@@ -734,6 +826,7 @@ export async function updateParticipants(
 		if (r.kind === "no_expense") return { status: "no_expense" };
 		if (r.kind === "conflict") return { status: "conflict" };
 		if (r.kind === "rejected") return rejection(r.error);
+		if (store && r.wrote) await deleteAttachments(store, droppedReceiptKeys(r.before.shares, r.doc.shares));
 		return { status: "ok", expense: await toDetail(db, r.doc, group, uid, now) };
 	}
 
@@ -770,6 +863,8 @@ export async function updateParticipants(
 		}
 		return failure;
 	}
+	// Quem saiu da divisão sem ter pago perde só a cota; comprovante só some junto com a cota inteira.
+	if (store) await deleteAttachments(store, written.flatMap((w) => droppedReceiptKeys(w.before.shares, w.doc.shares)));
 	const mine = written.find((w) => w.doc._id.equals(first._id))?.doc ?? first;
 	return { status: "ok", expense: await toDetail(db, mine, group, uid, now) };
 }

@@ -47,6 +47,8 @@ export function PixPayCard({
 	onCopyKey,
 	headingId = "sua-parte",
 	due,
+	canPay = false,
+	onPaid,
 }: Readonly<{
 	/** "Vence em 10 de dezembro" (em vermelho quando venceu e está em aberto). */
 	due?: { text: string; overdue: boolean } | null;
@@ -70,6 +72,10 @@ export function PixPayCard({
 	onToggleQr: () => void;
 	onCopyCode: () => void;
 	onCopyKey: () => void;
+	/** Mostra "Já paguei" (você pode avisar o pagamento desta parte). */
+	canPay?: boolean;
+	/** Abre o sheet "Já paguei". */
+	onPaid?: () => void;
 }>) {
 	return (
 		<Card as="section" tone="high" aria-labelledby={headingId} className="overflow-hidden">
@@ -170,12 +176,16 @@ export function PixPayCard({
 				</Button>
 			</div>
 
-			<p
-				aria-disabled="true"
-				className="rounded-shape-md border border-dashed border-outline-variant px-4 py-3 text-center text-body-large text-on-surface-variant"
-			>
-				Em breve: enviar comprovante
-			</p>
+			{canPay && onPaid && (
+				<div className="space-y-2 border-t border-outline-variant pt-4">
+					<p className="text-body-large text-on-surface-variant">
+						{managed && accountName ? `Depois que ${accountName} pagar, avise aqui.` : "Depois de pagar, avise aqui."}
+					</p>
+					<Button variant="tonal" icon="check" fullWidth onClick={onPaid}>
+						Já paguei
+					</Button>
+				</div>
+			)}
 			</div>
 		</Card>
 	);

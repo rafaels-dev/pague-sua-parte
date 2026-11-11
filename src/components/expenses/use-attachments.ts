@@ -20,9 +20,9 @@ const PASTE_DENIED =
 
 /**
  * Anexos da tela de nova despesa: escolher arquivos, colar (Ctrl+V na tela toda e botão "Colar print") e arrastar e soltar.
- * Imagens grandes são reduzidas antes de entrar na lista. Mensagens de problema ficam em `problems`.
+ * Com `maxFiles: 1` (comprovante), escolher outro arquivo troca o atual. Imagens grandes são reduzidas antes de entrar na lista. Mensagens de problema ficam em `problems`.
  */
-export function useAttachments({ enabled = true }: { enabled?: boolean } = {}) {
+export function useAttachments({ enabled = true, maxFiles = MAX_FILES }: { enabled?: boolean; maxFiles?: number } = {}) {
 	const [items, setItems] = useState<PickedFile[]>([]);
 	const [problems, setProblems] = useState<string[]>([]);
 	const [processing, setProcessing] = useState(false);
@@ -63,7 +63,7 @@ export function useAttachments({ enabled = true }: { enabled?: boolean } = {}) {
 				let current = itemsRef.current;
 				let tooMany = false;
 				for (const original of incoming) {
-					const full = countProblem(current.length);
+					const full = maxFiles === 1 ? null : countProblem(current.length, maxFiles);
 					if (full) {
 						tooMany = true;
 						continue;
@@ -82,20 +82,25 @@ export function useAttachments({ enabled = true }: { enabled?: boolean } = {}) {
 						continue;
 					}
 					const image = isImageType(effectiveType(file));
+					if (maxFiles === 1) {
+						// Um arquivo só: o novo substitui o anterior.
+						for (const old of current) if (old.previewUrl) URL.revokeObjectURL(old.previewUrl);
+						current = [];
+					}
 					current = [
 						...current,
 						{ id: `a${++seq.current}`, file, kind: image ? "image" : "pdf", previewUrl: image ? URL.createObjectURL(file) : null },
 					];
 					commit(current);
 				}
-				if (tooMany) msgs.push(countProblem(MAX_FILES)!);
+				if (tooMany) msgs.push(countProblem(maxFiles, maxFiles)!);
 				setProblems(msgs);
 			});
 			queue.current = queue.current.catch(() => {}).finally(() => {
 				if (--pending.current === 0) setProcessing(false);
 			});
 		},
-		[commit],
+		[commit, maxFiles],
 	);
 
 	const remove = useCallback(

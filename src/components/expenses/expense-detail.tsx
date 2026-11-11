@@ -15,12 +15,15 @@ import { deleteFlashMessage, dueLong, installmentLabel } from "@/lib/ui/due-date
 import { isImageType } from "@/lib/ui/attachments";
 import { buildExpenseLink, buildExpenseShareText, shareIntro } from "@/lib/ui/expense-share";
 import { paidByLabel, shareStatusChip } from "@/lib/ui/expense-status";
+import { paidCaption, receiptActions, receiptDoneMessage, receiptSheetCopy, undoLabel, type ReceiptMode } from "@/lib/ui/receipts";
 import { managedCaption } from "@/lib/ui/managed";
 import { HelpCard, HelpContent, canHelpOn, helperOptions } from "./help";
 import { ExpenseAttachments, type AttachmentView } from "./expense-attachments";
 import { DeleteInstallmentContent, ResplitScopeContent, type InstallmentScope } from "./installment-scope";
 import { InstallmentsSection } from "./installments-section";
 import { ShareExpenseContent } from "./expense-share";
+import { openBlobInNewTab } from "./open-blob";
+import { ReceiptSheetBody } from "./receipt-sheet";
 import { AccountHeader, PixPayCard } from "./pix-pay-card";
 import { ResplitContent } from "./resplit-sheet";
 import { clearFlash, normalizeExpense, peekFlash, setFlash, type ExpenseDetailData, type ExpenseShare } from "./types";
@@ -51,17 +54,23 @@ function ShareRow({
 	onMarkPaid,
 	onUndoPaid,
 	onGiveBack,
+	onViewReceipt,
+	onAttachReceipt,
 }: Readonly<{
 	share: ExpenseShare;
 	canMarkPaid: boolean;
 	onMarkPaid: (uid: string) => void;
 	onUndoPaid: (uid: string) => void;
 	onGiveBack: (uid: string) => void;
+	onViewReceipt: (uid: string) => void;
+	onAttachReceipt: (uid: string) => void;
 }>) {
 	const chip = shareStatusChip(s.status, s);
 	const canAct = canMarkPaid && s.status !== "payer";
 	const when = paidDateLabel(s.paidAt);
 	const caption = managedCaption(s);
+	const receiptAct = receiptActions(s);
+	const paidNote = paidCaption(s, when);
 	return (
 		<li className="px-4 py-3 text-on-surface">
 			<div className="flex min-h-12 items-center gap-4">
@@ -93,14 +102,38 @@ function ShareRow({
 								Devolvi
 							</ActionChip>
 						)}
-						{canAct && s.status === "paid" && <ActionChip onClick={() => onUndoPaid(s.uid)}>Desfazer</ActionChip>}
+						{receiptAct.view && (
+							<ActionChip icon="receipt_long" tone="tonal" onClick={() => onViewReceipt(s.uid)}>
+								Ver comprovante
+							</ActionChip>
+						)}
+						{receiptAct.attach && (
+							<ActionChip icon="receipt_long" onClick={() => onAttachReceipt(s.uid)}>
+								Anexar comprovante
+							</ActionChip>
+						)}
+						{canAct && s.status === "paid" && <ActionChip onClick={() => onUndoPaid(s.uid)}>{undoLabel(s)}</ActionChip>}
 					</span>
 				</div>
 			</div>
-			{s.status === "paid" && s.method === "manual" && (
+			{paidNote && (
 				<p className="ml-16 mt-1 text-sm text-on-surface-variant">
-					{s.participates ? "Marcado por quem pagou a conta" : "Devolução marcada por quem pagou a conta"}
-					{when && ` · ${when}`}
+					{paidNote}
+					{receiptAct.replace && (
+						<>
+							{" · "}
+							<button type="button" onClick={() => onAttachReceipt(s.uid)} className="rounded-sm text-primary underline underline-offset-2">
+								Trocar comprovante
+							</button>
+						</>
+					)}
+				</p>
+			)}
+			{!paidNote && receiptAct.replace && (
+				<p className="ml-16 mt-1 text-sm">
+					<button type="button" onClick={() => onAttachReceipt(s.uid)} className="rounded-sm text-primary underline underline-offset-2">
+						Trocar comprovante
+					</button>
 				</p>
 			)}
 		</li>
@@ -120,7 +153,16 @@ function PartStatusCard({
 	const refund = share.status === "refund";
 	const managed = share.youManage;
 	const who = managed ? share.name : "Você";
-	const title = refund ? "A receber de volta" : managed ? "Parte paga" : "Sua parte está paga";
+	const told = share.method === "self";
+	const title = refund
+		? "A receber de volta"
+		: told
+			? managed
+				? "Aviso de pagamento enviado"
+				: "Você avisou que pagou"
+			: managed
+				? "Parte paga"
+				: "Sua parte está paga";
 	return (
 		<Card as="section" tone="high" aria-labelledby={headingId} className="overflow-hidden">
 			{labeled && <AccountHeader id={headingId} name={share.name} managed={managed} />}
@@ -164,6 +206,9 @@ export function ExpenseDetailView({
 	onEditParticipants,
 	onShare,
 	onHelp,
+	onPaid,
+	onViewReceipt,
+	onAttachReceipt,
 }: Readonly<{
 	expense: ExpenseDetailData;
 	attachments: AttachmentView[];
@@ -189,6 +234,12 @@ export function ExpenseDetailView({
 	onShare: () => void;
 	/** Abre o sheet "Quero ajudar". */
 	onHelp: () => void;
+	/** Abre o sheet "Já paguei" da parte de alguém que você paga. */
+	onPaid: (uid: string) => void;
+	/** Abre o comprovante de uma parte. */
+	onViewReceipt: (uid: string) => void;
+	/** Abre o sheet "Anexar comprovante" de uma parte já paga. */
+	onAttachReceipt: (uid: string) => void;
 }>) {
 	// Contas que a pessoa controla nesta despesa: a dela e as das pessoas sem celular que ela cuida (a dela primeiro).
 	const accounts = expense.shares
@@ -206,7 +257,16 @@ export function ExpenseDetailView({
 	const inSplit = expense.shares.filter((s) => s.participates);
 	const left = expense.shares.filter((s) => !s.participates);
 	const row = (s: ExpenseShare) => (
-		<ShareRow key={s.uid} share={s} canMarkPaid={expense.canMarkPaid} onMarkPaid={onMarkPaid} onUndoPaid={onUndoPaid} onGiveBack={onGiveBack} />
+		<ShareRow
+			key={s.uid}
+			share={s}
+			canMarkPaid={expense.canMarkPaid}
+			onMarkPaid={onMarkPaid}
+			onUndoPaid={onUndoPaid}
+			onGiveBack={onGiveBack}
+			onViewReceipt={onViewReceipt}
+			onAttachReceipt={onAttachReceipt}
+		/>
 	);
 
 	return (
@@ -255,6 +315,8 @@ export function ExpenseDetailView({
 							onToggleQr={() => onToggleQr(s.uid)}
 							onCopyCode={() => onCopyCode(s.uid)}
 							onCopyKey={onCopyKey}
+							canPay={s.canPay}
+							onPaid={() => onPaid(s.uid)}
 						/>
 					);
 				}
@@ -408,12 +470,15 @@ export function DeleteExpenseContent({
 /** Conteúdo (visual) do sheet de confirmação ao marcar uma parte como paga, ou ao desfazer. */
 export function SharePaidContent({
 	mode,
+	selfReported = false,
 	busy,
 	error,
 	onConfirm,
 	onCancel,
 }: Readonly<{
 	mode: "paid" | "pending" | "refund";
+	/** A pessoa avisou que pagou: desfazer vira "Não recebi". */
+	selfReported?: boolean;
 	busy: boolean;
 	error: string | null;
 	onConfirm: () => void;
@@ -428,7 +493,9 @@ export function SharePaidContent({
 					? "Use quando você já devolveu o dinheiro, por Pix ou em dinheiro."
 					: marking
 						? "Use quando a pessoa pagou em dinheiro ou combinou de outra forma."
-						: "A marcação some e a parte volta a ficar em aberto."}
+						: selfReported
+							? "O aviso e o comprovante somem e a parte volta a ficar em aberto."
+							: "A marcação some e a parte volta a ficar em aberto."}
 			</p>
 			{error && (
 				<Banner tone="error" icon="error" role="alert">
@@ -447,7 +514,9 @@ export function SharePaidContent({
 								: "Sim, marcar como pago"
 							: busy
 								? "Desfazendo..."
-								: "Sim, desfazer"}
+								: selfReported
+									? "Sim, não recebi"
+									: "Sim, desfazer"}
 				</Button>
 				<Button variant="outlined" onClick={onCancel} disabled={busy} fullWidth>
 					Cancelar
@@ -460,10 +529,11 @@ export function SharePaidContent({
 /** Título do sheet de confirmação. */
 export function sharePaidTitle(
 	mode: "paid" | "pending" | "refund",
-	share: Pick<ExpenseShare, "name" | "amountCents" | "dueCents" | "refundCents">,
+	share: Pick<ExpenseShare, "name" | "amountCents" | "dueCents" | "refundCents"> & { method?: ExpenseShare["method"] },
 ): string {
 	if (mode === "refund") return `Você devolveu ${formatBRL(share.refundCents)} para ${share.name}?`;
 	if (mode === "paid") return `${share.name} pagou ${formatBRL(share.dueCents > 0 ? share.dueCents : share.amountCents)}?`;
+	if (share.method === "self") return `Você não recebeu de ${share.name}?`;
 	return `Desfazer a marcação de ${share.name}?`;
 }
 
@@ -502,6 +572,12 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 	const [shareAction, setShareAction] = useState<{ uid: string; mode: "paid" | "pending" | "refund" } | null>(null);
 	const [shareBusy, setShareBusy] = useState(false);
 	const [shareError, setShareError] = useState<string | null>(null);
+	// "Já paguei" / "Anexar comprovante" e o visualizador de comprovante (imagem).
+	const [receiptSheet, setReceiptSheet] = useState<{ uid: string; mode: ReceiptMode } | null>(null);
+	const [receiptBusy, setReceiptBusy] = useState(false);
+	const [receiptError, setReceiptError] = useState<string | null>(null);
+	const [receiptFileError, setReceiptFileError] = useState<string | null>(null);
+	const [receiptView, setReceiptView] = useState<{ name: string; url: string | null } | null>(null);
 	const [helpOpen, setHelpOpen] = useState(false);
 	const [helpWho, setHelpWho] = useState("");
 	const [helpBusy, setHelpBusy] = useState(false);
@@ -585,24 +661,75 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 	}));
 
 	async function openPdf(aid: string) {
-		// Abrimos a aba já no toque (senão o navegador bloqueia) e só depois colocamos o arquivo nela.
-		const tab = window.open("", "_blank");
 		try {
-			const blob = await apiFetchBlob(attachmentUrl(aid));
-			const url = URL.createObjectURL(blob);
-			urls.current.push(url);
-			if (tab) {
-				tab.opener = null;
-				tab.location.href = url;
-			} else {
-				const a = document.createElement("a");
-				a.href = url;
-				a.download = expense?.attachments.find((x) => x.id === aid)?.name ?? "anexo.pdf";
-				a.click();
-			}
+			await openBlobInNewTab(() => apiFetchBlob(attachmentUrl(aid)), expense?.attachments.find((x) => x.id === aid)?.name ?? "anexo.pdf", (u) => urls.current.push(u));
 		} catch (e) {
-			tab?.close();
 			setSnack(e instanceof ApiError ? e.message : "Não foi possível abrir o PDF.");
+		}
+	}
+
+	const receiptUrl = useCallback(
+		(uid: string) => `/api/groups/${encodeURIComponent(groupId)}/expenses/${encodeURIComponent(expenseId)}/shares/${encodeURIComponent(uid)}/receipt`,
+		[groupId, expenseId],
+	);
+
+	async function viewReceipt(uid: string) {
+		const receipt = expense?.shares.find((s) => s.uid === uid)?.receipt;
+		if (!receipt) return;
+		if (!isImageType(receipt.contentType)) {
+			try {
+				await openBlobInNewTab(() => apiFetchBlob(receiptUrl(uid)), receipt.name, (u) => urls.current.push(u));
+			} catch (e) {
+				setSnack(e instanceof ApiError ? e.message : "Não foi possível abrir o comprovante.");
+			}
+			return;
+		}
+		setReceiptView({ name: receipt.name, url: null });
+		try {
+			const url = URL.createObjectURL(await apiFetchBlob(receiptUrl(uid)));
+			urls.current.push(url);
+			setReceiptView({ name: receipt.name, url });
+		} catch (e) {
+			setReceiptView(null);
+			setSnack(e instanceof ApiError ? e.message : "Não foi possível abrir o comprovante.");
+		}
+	}
+
+	function openReceiptSheet(uid: string, mode: ReceiptMode) {
+		setReceiptError(null);
+		setReceiptFileError(null);
+		setReceiptSheet({ uid, mode });
+	}
+
+	async function submitReceipt(file: File | null) {
+		if (!receiptSheet) return;
+		const { uid, mode } = receiptSheet;
+		setReceiptBusy(true);
+		setReceiptError(null);
+		setReceiptFileError(null);
+		try {
+			const body = new FormData();
+			if (file) body.append("file", file);
+			const updated = await apiFetch<ExpenseDetailData>(
+				`/api/groups/${encodeURIComponent(groupId)}/expenses/${encodeURIComponent(expenseId)}/shares/${encodeURIComponent(uid)}/payment`,
+				{ method: "POST", body },
+			);
+			setExpense(normalizeExpense(updated));
+			setReceiptSheet(null);
+			setSnack(receiptDoneMessage(mode));
+		} catch (e) {
+			if (e instanceof ApiError && e.status === 409) {
+				// A despesa mudou enquanto isso: fecha e mostra como está agora.
+				setReceiptSheet(null);
+				setSnack(e.message);
+				setReloadKey((k) => k + 1);
+			} else if (e instanceof ApiError && e.status === 422 && e.field === "file") {
+				setReceiptFileError(e.message);
+			} else {
+				setReceiptError(e instanceof ApiError ? e.message : "Não foi possível enviar. Tente de novo.");
+			}
+		} finally {
+			setReceiptBusy(false);
 		}
 	}
 
@@ -810,7 +937,45 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 				}}
 				onShare={() => setShareOpen("manual")}
 				onHelp={openHelp}
+				onPaid={(uid) => openReceiptSheet(uid, "pay")}
+				onViewReceipt={(uid) => void viewReceipt(uid)}
+				onAttachReceipt={(uid) => openReceiptSheet(uid, "attach")}
 			/>
+
+			<Sheet
+				open={!!receiptSheet}
+				onClose={() => {
+					if (!receiptBusy) setReceiptSheet(null);
+				}}
+				title={receiptSheet ? receiptSheetCopy(receiptSheet.mode, expense.pix.payeeName).title : ""}
+			>
+				{receiptSheet && (
+					<ReceiptSheetBody
+						key={`${receiptSheet.uid}-${receiptSheet.mode}`}
+						mode={receiptSheet.mode}
+						payeeName={expense.pix.payeeName}
+						busy={receiptBusy}
+						error={receiptError}
+						fileError={receiptFileError}
+						onSubmit={(f) => void submitReceipt(f)}
+						onCancel={() => setReceiptSheet(null)}
+					/>
+				)}
+			</Sheet>
+
+			<Sheet open={!!receiptView} onClose={() => setReceiptView(null)} title="Comprovante">
+				{receiptView?.url ? (
+					// eslint-disable-next-line @next/next/no-img-element
+					<img src={receiptView.url} alt={receiptView.name} className="max-h-[65dvh] w-full rounded-shape-md bg-surface-container-high object-contain" />
+				) : (
+					<p role="status" className="py-8 text-center text-body-large text-on-surface-variant">
+						Abrindo...
+					</p>
+				)}
+				<Button variant="tonal" fullWidth onClick={() => setReceiptView(null)} className="mt-4">
+					Fechar
+				</Button>
+			</Sheet>
 
 			<Sheet
 				open={helpOpen}
@@ -891,6 +1056,7 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 				{shareAction && shareTarget && (
 					<SharePaidContent
 						mode={shareAction.mode}
+						selfReported={shareTarget.method === "self"}
 						busy={shareBusy}
 						error={shareError}
 						onConfirm={() => void confirmShare()}

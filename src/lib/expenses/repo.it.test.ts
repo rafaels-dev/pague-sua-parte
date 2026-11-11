@@ -413,6 +413,87 @@ describe.skipIf(!ENABLED)("integração: despesas no MongoDB real", () => {
 		expect(list.slice(2).map((i) => i.id)).toEqual([eNewSettled, ePast, eOldSettled]); // mesma data (2026-03-01): a criada por último vem primeiro
 	}, 120_000);
 
+	it("comprovantes: já paguei com e sem arquivo, troca, desfazer do dono, proibido, responsável por pessoa sem login", async () => {
+		const PIX = { type: "cpf", key: "52998224725" };
+		const objects = new Map<string, Uint8Array>();
+		const mem = {
+			put: async (k: string, b: Uint8Array) => void objects.set(k, b),
+			get: async () => null,
+			delete: async (ks: string[]) => void ks.forEach((k) => objects.delete(k)),
+		} as never;
+		const png = (n: number) => ({ name: `pix${n}.png`, contentType: "image/png" as const, bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, n]) });
+		const g = await newGroup("comprovantes", [OWNER, A, B]);
+		const added = await groupsRepo.addManagedMember(db, g, OWNER, { name: "Benjamim", managedBy: A, pixKey: PIX as never });
+		if (added.status !== "ok") throw new Error("addManagedMember: " + added.status);
+		const BEN = added.uid;
+		const e = ok(await repo.createExpense(db, mem, { groupId: g, uid: OWNER, input: { description: "Pizza", amountCents: 4000, date: "2026-11-10", participantUids: [OWNER, A, B, BEN] }, files: [] })).expense;
+		const pay = (uid_: string, target: string, file?: ReturnType<typeof png>) => repo.markSelfPaid(db, mem, { groupId: g, eid: e.id, uid: uid_, targetUid: target, file });
+		const raw = async () => (await rawDocs(g))[0].shares;
+		const viewAs = async (u: string) => ok((await repo.getExpenseDetail(db, g, e.id, u)) as never) as unknown as { expense: import("./repo").ExpenseDetail };
+
+		// 1. sem arquivo: quita como self; detalhe diz que pode anexar comprovante
+		let d = ok(await pay(A, A)).expense;
+		expect(d.shares.find((s) => s.uid === A)).toMatchObject({ status: "paid", method: "self", receipt: null, canPay: false, canAddReceipt: true });
+		expect(objects.size).toBe(0);
+		// 2. quem não age pela pessoa é barrado; dono e quem pagou não são alvo
+		expect((await pay(B, A, png(1))).status).toBe("forbidden");
+		expect((await pay(OWNER, A, png(1))).status).toBe("forbidden");
+		expect((await pay(OWNER, OWNER)).status).toBe("no_share");
+		expect((await pay(B, uid("ninguem"))).status).toBe("forbidden");
+		expect(objects.size).toBe(0);
+		// 3. anexa depois (cota já quitada): mantém method/paidAt e guarda o objeto em receipts/
+		const paidAt = (await raw()).find((s) => s.uid === A)!.paidAt;
+		d = ok(await pay(A, A, png(2))).expense;
+		const first = (await raw()).find((s) => s.uid === A)!;
+		expect(first).toMatchObject({ method: "self", markedBy: A, paidAt });
+		expect(first.receipt!.key.startsWith(`receipts/${g}/${e.id}/`)).toBe(true);
+		expect(objects.has(first.receipt!.key)).toBe(true);
+		expect(d.shares.find((s) => s.uid === A)!.receipt).toEqual({ name: "pix2.png", contentType: "image/png", size: 5 });
+		// 4. visibilidade: dono vê, outro membro não; a chave nunca sai
+		expect((await viewAs(OWNER)).expense.shares.find((s) => s.uid === A)!.receipt).not.toBeNull();
+		expect((await viewAs(B)).expense.shares.find((s) => s.uid === A)!.receipt).toBeNull();
+		expect(JSON.stringify(await viewAs(A))).not.toContain("receipts/");
+		expect(await repo.getReceiptRef(db, g, e.id, A, OWNER)).toMatchObject({ status: "ok", key: first.receipt!.key });
+		expect((await repo.getReceiptRef(db, g, e.id, A, B)).status).toBe("not_found");
+		// 5. troca: o objeto antigo some
+		ok(await pay(A, A, png(3)));
+		const second = (await raw()).find((s) => s.uid === A)!;
+		expect(second.receipt!.id).not.toBe(first.receipt!.id);
+		expect(objects.has(first.receipt!.key)).toBe(false);
+		expect(objects.has(second.receipt!.key)).toBe(true);
+		expect(objects.size).toBe(1);
+		// 6. responsável (A) paga por Benjamim com comprovante; B não pode
+		expect((await pay(B, BEN, png(4))).status).toBe("forbidden");
+		d = ok(await pay(A, BEN, png(4))).expense;
+		expect(d.shares.find((s) => s.uid === BEN)).toMatchObject({ status: "paid", method: "self" });
+		expect((await raw()).find((s) => s.uid === BEN)).toMatchObject({ markedBy: A, method: "self" });
+		expect(objects.size).toBe(2);
+		expect((await repo.getReceiptRef(db, g, e.id, BEN, A)).status).toBe("ok");
+		// 7. dono desfaz A: some o comprovante (dado e objeto); B segue pendente e paga com arquivo
+		ok(await repo.setSharePaid(db, g, e.id, OWNER, A, "pending", undefined, mem));
+		expect((await raw()).find((s) => s.uid === A)).toEqual({ uid: A, amountCents: 1000, paidCents: 0 });
+		expect(objects.has(second.receipt!.key)).toBe(false);
+		expect(objects.size).toBe(1);
+		ok(await pay(B, B, png(5)));
+		expect(objects.size).toBe(2);
+		// 8. saiu da divisão: a cota de B vira reembolso e mantém o comprovante; devolver o reembolso apaga o objeto
+		ok(await repo.updateParticipants(db, g, e.id, OWNER, [OWNER, A, BEN], "this", undefined, mem));
+		const refund = (await raw()).find((s) => s.uid === B)!;
+		expect(refund).toMatchObject({ amountCents: 0, paidCents: expect.any(Number), method: "self" });
+		expect(objects.has(refund.receipt!.key)).toBe(true);
+		expect((await pay(B, B, png(6))).status).toBe("no_share");
+		ok(await repo.setSharePaid(db, g, e.id, OWNER, B, "paid", undefined, mem));
+		expect((await raw()).some((s) => s.uid === B)).toBe(false);
+		expect(objects.has(refund.receipt!.key)).toBe(false);
+		// 9. os saldos continuam batendo com a referência
+		const docs = await rawDocs(g);
+		for (const u of [OWNER, A, B]) {
+			const ref = shares.balanceOf(docs, u);
+			const got = (await groupsRepo.listGroups(db, u)).find((x) => x.id === g)!;
+			expect([got.toReceiveCents, got.toPayCents]).toEqual([ref.toReceiveCents, ref.toPayCents]);
+		}
+	}, 120_000);
+
 	it("Quero ajudar (membro e pessoa sem login) e relatório de contribuições", async () => {
 		const reports = await import("@/lib/reports/repo");
 		const compute = await import("@/lib/reports/compute");

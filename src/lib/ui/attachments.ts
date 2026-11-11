@@ -54,8 +54,9 @@ export function sizeProblem(file: FileLike): string | null {
 }
 
 /** Mensagem se já não cabe mais um anexo; null se cabe. */
-export function countProblem(currentCount: number): string | null {
-	return currentCount >= MAX_FILES ? `Você pode anexar até ${MAX_FILES} arquivos. Remova um para adicionar outro.` : null;
+export function countProblem(currentCount: number, max: number = MAX_FILES): string | null {
+	if (currentCount < max) return null;
+	return max === 1 ? "Só dá para enviar 1 arquivo. Remova o atual para escolher outro." : `Você pode anexar até ${max} arquivos. Remova um para adicionar outro.`;
 }
 
 export type DownscalePlan = { action: "keep" } | { action: "resize"; width: number; height: number };

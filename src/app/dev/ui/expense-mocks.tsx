@@ -3,6 +3,9 @@
 import { useState } from "react";
 import { AppShellView } from "@/components/app-shell";
 import { AttachmentPicker } from "@/components/expenses/attachment-picker";
+import { ReceiptSheetContent } from "@/components/expenses/receipt-sheet";
+import type { ReceiptMode } from "@/lib/ui/receipts";
+import type { PickedFile } from "@/components/expenses/use-attachments";
 import { ExpenseDetailView, SharePaidContent, sharePaidTitle } from "@/components/expenses/expense-detail";
 import { ShareExpenseContent } from "@/components/expenses/expense-share";
 import { ResplitContent } from "@/components/expenses/resplit-sheet";
@@ -387,7 +390,7 @@ const ATTACHMENTS: AttachmentView[] = [
 ];
 
 type RawDetail = Omit<ExpenseDetailData, "canHelp" | "helpAsUids" | "helpShareCents" | "ownerAlone">;
-export type MockMode = "help-alone" | "help-split" | "helped" | "help-care" | "installment" | "overdue" | "owner-installment" | "debtor" | "payer" | "partial" | "refund" | "owner-return" | "recalc" | "two-parts" | "care-paid";
+export type MockMode = "help-alone" | "help-split" | "helped" | "help-care" | "installment" | "overdue" | "owner-installment" | "debtor" | "payer" | "partial" | "refund" | "owner-return" | "recalc" | "two-parts" | "care-paid" | "self-owner" | "self-debtor";
 const isCare = (mode: MockMode) => mode === "two-parts" || mode === "care-paid" || mode === "help-care";
 
 type MS = Partial<ExpenseShare> & Pick<ExpenseShare, "uid" | "name" | "amountCents" | "status">;
@@ -397,6 +400,9 @@ const share = (s: MS): ExpenseShare => ({
 	isYou: false,
 	paidAt: null,
 	method: null,
+	receipt: null,
+	canPay: s.status === "pending" && !!(s.isYou || s.youManage),
+	canAddReceipt: false,
 	paidCents: s.status === "paid" || s.status === "payer" ? s.amountCents : 0,
 	dueCents: s.status === "pending" ? s.amountCents : 0,
 	refundCents: 0,
@@ -595,7 +601,7 @@ function rawDetail(mode: MockMode): RawDetail {
 	if (mode === "installment" || mode === "overdue") return installmentDetail(mode);
 	if (mode === "owner-installment") return ownerInstallmentDetail();
 	if (isCare(mode)) return careDetail(mode as "two-parts" | "care-paid");
-	const youOwner = mode === "payer" || mode === "owner-return" || mode === "recalc";
+	const youOwner = mode === "payer" || mode === "owner-return" || mode === "recalc" || mode === "self-owner";
 	const owner = youOwner ? { ...A, picture: null, isYou: true, kind: "user" as const, youManage: false } : { ...B, picture: null, isYou: false, kind: "user" as const, youManage: false };
 	const base = {
 		id: "e1",
@@ -617,7 +623,23 @@ function rawDetail(mode: MockMode): RawDetail {
 		shares,
 		participantUids: shares.filter((s) => s.participates).map((s) => s.uid),
 	});
+	const RECEIPT = { name: "comprovante-pix.png", contentType: "image/png", size: 210_000 };
 	switch (mode) {
+		case "self-owner":
+			// Rafael pagou a conta: Maria avisou que pagou (com comprovante); José ainda não.
+			return out("Consulta com a cardiologista", 45000, 1, [
+				share({ ...A, amountCents: 15000, status: "payer", isYou: true }),
+				share({ ...B, amountCents: 15000, status: "paid", paidAt: PAID_AT, method: "self", receipt: RECEIPT }),
+				share({ uid: "c", name: "José", amountCents: 15000, status: "pending" }),
+			]);
+		case "self-debtor":
+			// Rafael avisou que pagou, sem comprovante: ainda pode anexar.
+			return out("Remédios da farmácia", 28990, 0, [
+				share({ ...B, amountCents: 7247, status: "payer" }),
+				share({ ...A, amountCents: 7248, status: "paid", isYou: true, paidAt: PAID_AT, method: "self", canAddReceipt: true }),
+				share({ uid: "c", name: "José", amountCents: 7248, status: "paid", paidAt: PAID_AT, method: "manual" }),
+				share({ uid: "d", name: "Ana Paula", amountCents: 7247, status: "pending" }),
+			]);
 		case "debtor":
 			return out("Remédios da farmácia", 28990, 0, [
 				share({ ...B, amountCents: 7247, status: "payer" }),
@@ -674,8 +696,11 @@ export function MockExpense({
 	shareSheet = false,
 	scopeSheet,
 	helpSheet = false,
+	receiptSheet,
 }: Readonly<{
 	mode: MockMode;
+	/** Abre o sheet "Já paguei" (pay) ou "Anexar comprovante" (attach), vazio ou com um arquivo escolhido. */
+	receiptSheet?: { mode: ReceiptMode; filled?: boolean };
 	/** Abre o sheet "Quero ajudar". */
 	helpSheet?: boolean;
 	/** Abre a pergunta "só esta parcela ou esta e as próximas" (ao apagar ou ao mudar quem divide). */
@@ -698,6 +723,13 @@ export function MockExpense({
 	const [resplitOpen, setResplitOpen] = useState(!!resplit);
 	const [scopeStep, setScopeStep] = useState<"delete" | "resplit" | null>(scopeSheet ?? null);
 	const [scope, setScope] = useState<InstallmentScope>("this");
+	const [receiptOpen, setReceiptOpen] = useState<ReceiptMode | null>(receiptSheet?.mode ?? null);
+	const [receiptItems, setReceiptItems] = useState<PickedFile[]>(() =>
+		receiptSheet?.filled
+			? [{ id: "r1", file: new File([new Blob(["x".repeat(210_000)])], "comprovante-pix.png", { type: "image/png" }), kind: "image", previewUrl: svgReceipt("#e6eef7") }]
+			: [],
+	);
+	const [receiptView, setReceiptView] = useState(false);
 	const expense = detail(mode);
 	const members = (isCare(mode) ? CARE_GROUP : MOCK_GROUP).members.map(({ uid, name, picture, isYou, kind }) => ({ uid, name, picture, isYou, kind }));
 	const who = useWhoSplits(members.map((m) => m.uid), resplit ?? expense.participantUids);
@@ -722,7 +754,39 @@ export function MockExpense({
 				onEditParticipants={() => (expense.installment ? setScopeStep("resplit") : setResplitOpen(true))}
 				onShare={() => setShareOpen(true)}
 				onHelp={() => setHelpOpen(true)}
+				onPaid={() => setReceiptOpen("pay")}
+				onViewReceipt={() => setReceiptView(true)}
+				onAttachReceipt={() => setReceiptOpen("attach")}
 			/>
+			<Sheet open={receiptOpen !== null} onClose={() => setReceiptOpen(null)} title={receiptOpen === "attach" ? "Anexar comprovante" : "Já paguei"}>
+				{receiptOpen && (
+					<ReceiptSheetContent
+						mode={receiptOpen}
+						payeeName={expense.pix.payeeName}
+						items={receiptItems}
+						problems={[]}
+						processing={false}
+						dragging={false}
+						canPaste
+						busy={false}
+						error={null}
+						fileError={null}
+						onPick={noop}
+						onRemove={() => setReceiptItems([])}
+						onPaste={noop}
+						onSend={() => setReceiptOpen(null)}
+						onSkip={() => setReceiptOpen(null)}
+						onCancel={() => setReceiptOpen(null)}
+					/>
+				)}
+			</Sheet>
+			<Sheet open={receiptView} onClose={() => setReceiptView(false)} title="Comprovante">
+				{/* eslint-disable-next-line @next/next/no-img-element */}
+				<img src={svgReceipt("#e6eef7")} alt="Comprovante" className="max-h-[65dvh] w-full rounded-shape-md bg-surface-container-high object-contain" />
+				<Button variant="tonal" fullWidth onClick={() => setReceiptView(false)} className="mt-4">
+					Fechar
+				</Button>
+			</Sheet>
 			<Sheet open={helpOpen} onClose={() => setHelpOpen(false)} title="Quero ajudar">
 				<HelpContent
 					expense={expense}

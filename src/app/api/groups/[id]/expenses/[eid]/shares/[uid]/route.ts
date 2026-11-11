@@ -3,6 +3,7 @@ import { handleError, jsonError } from "@/lib/api/http";
 import { requireUser } from "@/lib/auth/server";
 import { getDb } from "@/lib/db/client";
 import { setSharePaid } from "@/lib/expenses/repo";
+import { getAttachmentStore } from "@/lib/storage/attachments";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +27,7 @@ export async function PATCH(request: Request, { params }: Ctx) {
 		const parsed = bodySchema.safeParse(json);
 		if (!parsed.success) return jsonError("Pedido inválido.", 422);
 
-		const res = await setSharePaid(await getDb(), id, eid, user.uid, uid, parsed.data.status);
+		const res = await setSharePaid(await getDb(), id, eid, user.uid, uid, parsed.data.status, undefined, getAttachmentStore());
 		switch (res.status) {
 			case "no_group":
 				return jsonError("Grupo não encontrado.", 404);

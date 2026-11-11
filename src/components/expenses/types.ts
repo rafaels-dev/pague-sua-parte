@@ -43,6 +43,8 @@ export type InstallmentRef = { seriesId: string; number: number; count: number }
 export type SeriesItem = { id: string; number: number; dueDate: string | null; settled: boolean };
 export type ExpenseSeries = { count: number; items: SeriesItem[] };
 
+export type ShareReceipt = { name: string; contentType: string; size: number };
+
 export type ExpenseShare = {
 	uid: string;
 	name: string;
@@ -65,7 +67,14 @@ export type ExpenseShare = {
 	youManage: boolean;
 	managedByName: string | null;
 	paidAt: string | null;
-	method: "manual" | null;
+	/** "self" = a própria pessoa avisou que pagou; "manual" = quem pagou a conta marcou. */
+	method: "manual" | "self" | null;
+	/** Comprovante de pagamento; só vem preenchido se você pode vê-lo. */
+	receipt: ShareReceipt | null;
+	/** Você pode tocar em "Já paguei" nesta parte. */
+	canPay: boolean;
+	/** A parte está paga e você ainda pode anexar ou trocar o comprovante. */
+	canAddReceipt: boolean;
 	/** Entrou na divisão depois, pelo "Quero ajudar". */
 	helped: boolean;
 };
@@ -123,6 +132,14 @@ function normalizeSeries(raw: unknown): ExpenseSeries | null {
 	return { count: typeof r.count === "number" ? r.count : items.length, items };
 }
 
+/** Comprovante vindo da API; qualquer coisa sem nome vira "sem comprovante". */
+export function normalizeReceipt(raw: unknown): ShareReceipt | null {
+	if (!raw || typeof raw !== "object") return null;
+	const r = raw as Record<string, unknown>;
+	if (typeof r.name !== "string" || !r.name) return null;
+	return { name: r.name, contentType: typeof r.contentType === "string" ? r.contentType : "", size: typeof r.size === "number" ? r.size : 0 };
+}
+
 const dueOrNull = (v: unknown): string | null => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null);
 
 const helpShare = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null);
@@ -150,7 +167,10 @@ export function normalizeExpense(raw: Loose<Omit<ExpenseDetailData, "shares">> &
 			participates: s.participates ?? true,
 			status,
 			paidAt: s.paidAt ?? null,
-			method: s.method ?? null,
+			method: s.method === "self" || s.method === "manual" ? s.method : null,
+			receipt: normalizeReceipt(s.receipt),
+			canPay: !!s.canPay,
+			canAddReceipt: !!s.canAddReceipt,
 			helped: !!s.helped,
 		};
 	});

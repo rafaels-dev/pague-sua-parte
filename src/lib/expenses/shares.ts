@@ -1,4 +1,5 @@
 import { isDueNow, isPastDue, todayInSaoPaulo } from "./dates";
+import type { AttachmentMeta } from "@/lib/storage/attachments";
 import { splitEqually } from "./split";
 
 /**
@@ -6,7 +7,10 @@ import { splitEqually } from "./split";
  * Situação, valor em aberto e reembolso são sempre derivados daqui, nunca gravados.
  */
 export type ShareStatus = "payer" | "pending" | "paid" | "refund";
-export type ShareMethod = "manual";
+/** "manual": o dono marcou como pago; "self": a própria pessoa avisou que pagou. */
+export type ShareMethod = "manual" | "self";
+/** Comprovante de pagamento da cota (mesmo formato de um anexo). `key` nunca sai da API. */
+export type ShareReceipt = AttachmentMeta;
 export type ExpenseShare = {
 	uid: string;
 	amountCents: number;
@@ -15,6 +19,7 @@ export type ExpenseShare = {
 	paidAt?: Date;
 	markedBy?: string;
 	method?: ShareMethod;
+	receipt?: ShareReceipt;
 	/** "Quero ajudar": a pessoa entrou na divisão por conta própria (pela ação de ajudar), não por escolha do dono. */
 	helped?: boolean;
 	helpedAt?: Date;
@@ -131,7 +136,7 @@ export function undoShare(shares: ExpenseShare[], paidBy: string, targetUid: str
 	const i = shares.findIndex((s) => s.uid === targetUid);
 	if (i < 0 || targetUid === paidBy) return null;
 	const s = shares[i];
-	if (s.paidCents === 0 && s.paidAt === undefined && s.markedBy === undefined && s.method === undefined) {
+	if (s.paidCents === 0 && s.paidAt === undefined && s.markedBy === undefined && s.method === undefined && s.receipt === undefined) {
 		return { shares, changed: false };
 	}
 	if (s.amountCents === 0) return { shares: shares.filter((_, j) => j !== i), changed: true };
@@ -142,6 +147,37 @@ export function undoShare(shares: ExpenseShare[], paidBy: string, targetUid: str
 		...(s.helped ? { helped: true, ...(s.helpedAt ? { helpedAt: s.helpedAt } : {}) } : {}),
 	};
 	return { shares: shares.map((x, j) => (j === i ? { ...rest, paidCents: 0 } : x)), changed: true };
+}
+
+/** Quem deve avisa que pagou (com comprovante opcional). null: alvo é quem pagou, não tem cota ou ela é só reembolso. */
+export type SelfPayChange = ShareChange;
+export function payShare(
+	shares: ExpenseShare[],
+	paidBy: string,
+	targetUid: string,
+	now: Date,
+	actorUid: string,
+	receipt?: ShareReceipt,
+): SelfPayChange | null {
+	const i = shares.findIndex((s) => s.uid === targetUid);
+	if (i < 0 || targetUid === paidBy || shares[i].amountCents <= 0) return null;
+	const s = shares[i];
+	const put = (next: ExpenseShare): ShareChange => ({ shares: shares.map((x, j) => (j === i ? next : x)), changed: true });
+	if (s.paidCents < s.amountCents) {
+		const paid: ExpenseShare = { ...s, paidCents: s.amountCents, paidAt: now, markedBy: actorUid, method: "self" };
+		if (receipt) paid.receipt = receipt;
+		else delete paid.receipt;
+		return put(paid);
+	}
+	// Já quitada: só troca o comprovante (mantém paidAt, markedBy e method). Sem arquivo não muda nada.
+	if (s.paidCents === s.amountCents && receipt) return put({ ...s, receipt });
+	return { shares, changed: false };
+}
+
+/** Chaves de comprovante que existiam em `before` e não existem mais em `after` (para apagar do armazenamento). */
+export function droppedReceiptKeys(before: ExpenseShare[], after: ExpenseShare[]): string[] {
+	const keep = new Set(after.flatMap((s) => (s.receipt ? [s.receipt.key] : [])));
+	return before.flatMap((s) => (s.receipt && !keep.has(s.receipt.key) ? [s.receipt.key] : []));
 }
 
 /** Ordem de exibição: dono, depois participantes por nome, depois linhas de reembolso (não participam). */

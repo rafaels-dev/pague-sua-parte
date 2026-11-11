@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth/server";
 import { getDb } from "@/lib/db/client";
 import { updateParticipants } from "@/lib/expenses/repo";
 import { parseParticipantsInput } from "@/lib/expenses/validation";
+import { getAttachmentStore } from "@/lib/storage/attachments";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,7 @@ export async function PUT(request: Request, { params }: Ctx) {
 		const input = parseParticipantsInput(json);
 		if (!input.ok) return jsonError(input.error, input.status, input.field);
 
-		const res = await updateParticipants(await getDb(), id, eid, user.uid, input.value, input.scope);
+		const res = await updateParticipants(await getDb(), id, eid, user.uid, input.value, input.scope, undefined, getAttachmentStore());
 		switch (res.status) {
 			case "no_group":
 				return jsonError("Grupo não encontrado.", 404);

@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
 	balanceOf,
 	dueCents,
+	droppedReceiptKeys,
 	hasPayments,
+	normalizeShare,
 	orderShares,
 	participantUidsOf,
+	payShare,
 	recalcShares,
 	refundCents,
 	settleShare,
@@ -250,5 +253,58 @@ describe("balanceOf: agora x depois x atrasado (fixture calculada à mão, hoje 
 		const e = [owned("u1", "2026-12-01", sh("u2", 100, 0))];
 		expect(balanceOf(e, "u2", new Date("2026-12-01T02:59:59Z")).toPayNowCents).toBe(0); // ainda 30/11 em SP
 		expect(balanceOf(e, "u2", new Date("2026-12-01T03:00:00Z")).toPayNowCents).toBe(100);
+	});
+});
+
+describe("comprovantes: payShare, undoShare, recalcShares", () => {
+	const R = { id: "r1", key: "receipts/g/e/r1", name: "pix.png", contentType: "image/png", size: 4 };
+	const R2 = { ...R, id: "r2", key: "receipts/g/e/r2" };
+	const base = [sh(OWNER, 1000), sh("a", 1000), sh("b", 1000)];
+
+	it("pendente: quita como self com comprovante opcional", () => {
+		const r = payShare(base, OWNER, "a", NOW, "a", R)!;
+		expect(r.changed).toBe(true);
+		expect(r.shares[1]).toEqual({ uid: "a", amountCents: 1000, paidCents: 1000, paidAt: NOW, markedBy: "a", method: "self", receipt: R });
+		const plain = payShare(base, OWNER, "a", NOW, "a")!;
+		expect(plain.shares[1]).not.toHaveProperty("receipt");
+		expect(plain.shares[1].method).toBe("self");
+	});
+	it("quitada: com arquivo só troca o comprovante; sem arquivo é no-op", () => {
+		const paid = payShare(base, OWNER, "a", NOW, "a", R)!.shares;
+		const later = new Date("2026-12-01T00:00:00Z");
+		const swap = payShare(paid, OWNER, "a", later, "outro", R2)!;
+		expect(swap.shares[1]).toMatchObject({ paidAt: NOW, markedBy: "a", method: "self", receipt: R2 });
+		expect(droppedReceiptKeys(paid, swap.shares)).toEqual([R.key]);
+		expect(payShare(paid, OWNER, "a", later, "a")).toEqual({ shares: paid, changed: false });
+	});
+	it("quitada pelo dono (manual) e depois comprovante: mantém method manual", () => {
+		const manual = settleShare(base, OWNER, "a", NOW, OWNER)!.shares;
+		expect(payShare(manual, OWNER, "a", NOW, "a", R)!.shares[1]).toMatchObject({ method: "manual", markedBy: OWNER, receipt: R });
+	});
+	it("null para dono, sem cota e cota só de reembolso", () => {
+		expect(payShare(base, OWNER, OWNER, NOW, OWNER)).toBeNull();
+		expect(payShare(base, OWNER, "zz", NOW, "zz")).toBeNull();
+		expect(payShare([sh(OWNER, 1500), sh("a", 0, 500)], OWNER, "a", NOW, "a", R)).toBeNull();
+	});
+	it("undoShare descarta o comprovante e é idempotente depois", () => {
+		const paid = payShare(base, OWNER, "a", NOW, "a", R)!.shares;
+		const undone = undoShare(paid, OWNER, "a")!;
+		expect(undone.shares[1]).toEqual(sh("a", 1000, 0));
+		expect(droppedReceiptKeys(paid, undone.shares)).toEqual([R.key]);
+		expect(undoShare(undone.shares, OWNER, "a")!.changed).toBe(false);
+	});
+	it("recalcShares mantém receipt e method de quem fica, também como reembolso", () => {
+		const paid = payShare(base, OWNER, "a", NOW, "a", R)!.shares;
+		const more = recalcShares(paid, OWNER, 3000, [OWNER, "a", "b", "c"]);
+		expect(more.find((s) => s.uid === "a")).toMatchObject({ amountCents: 750, paidCents: 1000, method: "self", receipt: R });
+		const left = recalcShares(paid, OWNER, 3000, [OWNER, "b"]);
+		expect(left.find((s) => s.uid === "a")).toMatchObject({ amountCents: 0, paidCents: 1000, method: "self", receipt: R });
+		expect(droppedReceiptKeys(paid, left)).toEqual([]);
+		expect(droppedReceiptKeys(paid, settleShare(left, OWNER, "a", NOW, OWNER)!.shares)).toEqual([R.key]);
+	});
+	it("normalizeShare não mexe em receipt de cota nova", () => {
+		const s = { ...sh("a", 1000, 1000), receipt: R };
+		expect(normalizeShare(s)).toBe(s);
+		expect(normalizeShare({ uid: "a", amountCents: 1000, status: "paid" } as never)).toEqual({ uid: "a", amountCents: 1000, paidCents: 1000 });
 	});
 });

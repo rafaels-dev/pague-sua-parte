@@ -41,12 +41,27 @@ export function attachmentKey(groupId: string, expenseId: string, attachmentId: 
 	return `groups/${groupId}/${expenseId}/${attachmentId}`;
 }
 
+/** Comprovante de pagamento de uma cota: prefixo próprio, separado dos anexos da despesa. */
+export function receiptKey(groupId: string, expenseId: string, receiptId: string): string {
+	return `receipts/${groupId}/${expenseId}/${receiptId}`;
+}
+
 export async function putAttachment(
 	store: AttachmentStore,
 	args: { groupId: string; expenseId: string; bytes: Uint8Array; name: string; contentType: string },
 ): Promise<AttachmentMeta> {
 	const id = randomId();
 	const key = attachmentKey(args.groupId, args.expenseId, id);
+	await store.put(key, args.bytes, args.contentType);
+	return { id, key, name: args.name, contentType: args.contentType, size: args.bytes.byteLength };
+}
+
+export async function putReceipt(
+	store: AttachmentStore,
+	args: { groupId: string; expenseId: string; bytes: Uint8Array; name: string; contentType: string },
+): Promise<AttachmentMeta> {
+	const id = randomId();
+	const key = receiptKey(args.groupId, args.expenseId, id);
 	await store.put(key, args.bytes, args.contentType);
 	return { id, key, name: args.name, contentType: args.contentType, size: args.bytes.byteLength };
 }

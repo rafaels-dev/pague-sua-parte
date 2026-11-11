@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeExpense, normalizeSummary } from "./types";
+import { normalizeExpense, normalizeReceipt, normalizeSummary } from "./types";
 
 describe("normalizeExpense", () => {
 	it("completa o formato antigo sem quebrar", () => {
@@ -87,5 +87,29 @@ describe("Quero ajudar", () => {
 		expect(e).toMatchObject({ canHelp: true, helpAsUids: ["m1"], helpShareCents: 2500, ownerAlone: true });
 		expect(e.shares[0].helped).toBe(true);
 		expect(normalizeSummary({ canHelp: true, ownerAlone: true, helpShareCents: 900 })).toMatchObject({ canHelp: true, ownerAlone: true, helpShareCents: 900 });
+	});
+});
+
+describe("comprovantes", () => {
+	it("formato antigo: sem método, comprovante nem permissões", () => {
+		const e = normalizeExpense({ shares: [{ uid: "b", name: "B", amountCents: 1000, status: "paid" }] });
+		expect(e.shares[0]).toMatchObject({ method: null, receipt: null, canPay: false, canAddReceipt: false });
+	});
+	it("mantém o que o servidor manda", () => {
+		const receipt = { name: "pix.jpg", contentType: "image/jpeg", size: 1234 };
+		const e = normalizeExpense({
+			shares: [{ uid: "b", name: "B", amountCents: 1000, status: "paid", method: "self", receipt, canAddReceipt: true, canPay: false, paidAt: "2026-01-02T10:00:00.000Z" }],
+		});
+		expect(e.shares[0]).toMatchObject({ method: "self", receipt, canAddReceipt: true, canPay: false, paidAt: "2026-01-02T10:00:00.000Z" });
+	});
+	it("ignora método desconhecido", () => {
+		const e = normalizeExpense({ shares: [{ uid: "b", name: "B", amountCents: 1, status: "paid", method: "outro" as never }] });
+		expect(e.shares[0].method).toBeNull();
+	});
+	it("normalizeReceipt rejeita lixo", () => {
+		expect(normalizeReceipt(null)).toBeNull();
+		expect(normalizeReceipt("x")).toBeNull();
+		expect(normalizeReceipt({ contentType: "image/png" })).toBeNull();
+		expect(normalizeReceipt({ name: "a.pdf" })).toEqual({ name: "a.pdf", contentType: "", size: 0 });
 	});
 });
