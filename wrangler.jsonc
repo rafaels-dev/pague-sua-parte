@@ -10,6 +10,8 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "pague-sua-parte",
 	"main": ".open-next/worker.js",
+	// Domínio do site. Quem fizer um fork troca pelo seu (ou remove para usar o endereço workers.dev).
+	"routes": [{ "pattern": "paguesuaparte.com.br", "custom_domain": true }],
 	"compatibility_date": "2026-11-10",
 	"compatibility_flags": [
 		"nodejs_compat",
