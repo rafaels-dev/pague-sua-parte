@@ -74,3 +74,18 @@ describe("vencimentos e parcelas", () => {
 		expect(normalizeSummary({ id: "x", installment: "oi" as never }).installment).toBeNull();
 	});
 });
+
+describe("Quero ajudar", () => {
+	it("formato antigo: ninguém pode ajudar", () => {
+		const e = normalizeExpense({ id: "e", shares: [{ uid: "a", name: "A", amountCents: 1, status: "payer" }] });
+		expect(e).toMatchObject({ canHelp: false, helpAsUids: [], helpShareCents: null, ownerAlone: false });
+		expect(e.shares[0].helped).toBe(false);
+		expect(normalizeSummary({ id: "x" })).toMatchObject({ canHelp: false, ownerAlone: false, helpShareCents: null });
+	});
+	it("mantém os valores do servidor", () => {
+		const e = normalizeExpense({ canHelp: true, helpAsUids: ["m1", 3], helpShareCents: 2500, ownerAlone: true, shares: [{ uid: "b", name: "B", helped: true }] } as never);
+		expect(e).toMatchObject({ canHelp: true, helpAsUids: ["m1"], helpShareCents: 2500, ownerAlone: true });
+		expect(e.shares[0].helped).toBe(true);
+		expect(normalizeSummary({ canHelp: true, ownerAlone: true, helpShareCents: 900 })).toMatchObject({ canHelp: true, ownerAlone: true, helpShareCents: 900 });
+	});
+});

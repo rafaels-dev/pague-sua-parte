@@ -30,6 +30,12 @@ export type ExpenseSummary = {
 	overdue: boolean;
 	/** Nada mais a pagar nem a devolver (vai para "Quitadas"). */
 	settled: boolean;
+	/** Você pode entrar na divisão ("Quero ajudar"). */
+	canHelp: boolean;
+	/** Quem pagou está arcando com a despesa sozinho. */
+	ownerAlone: boolean;
+	/** Quanto ficaria a parte de quem entrar na divisão. */
+	helpShareCents: number | null;
 };
 
 export type InstallmentRef = { seriesId: string; number: number; count: number };
@@ -60,6 +66,8 @@ export type ExpenseShare = {
 	managedByName: string | null;
 	paidAt: string | null;
 	method: "manual" | null;
+	/** Entrou na divisão depois, pelo "Quero ajudar". */
+	helped: boolean;
 };
 
 export type ExpenseAttachment = { id: string; name: string; contentType: string; size: number };
@@ -84,6 +92,14 @@ export type ExpenseDetailData = {
 	overdue: boolean;
 	/** Todas as parcelas da compra (só quando é parcelada). */
 	series: ExpenseSeries | null;
+	/** Você pode entrar na divisão ("Quero ajudar"). */
+	canHelp: boolean;
+	/** Pessoas sem celular que você cuida e que também poderiam ajudar. */
+	helpAsUids: string[];
+	/** Quanto ficaria a parte de quem entrar na divisão. */
+	helpShareCents: number | null;
+	/** Quem pagou está arcando com a despesa sozinho. */
+	ownerAlone: boolean;
 };
 
 function normalizeInstallment(raw: unknown): InstallmentRef | null {
@@ -109,6 +125,8 @@ function normalizeSeries(raw: unknown): ExpenseSeries | null {
 
 const dueOrNull = (v: unknown): string | null => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null);
 
+const helpShare = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null);
+
 type Loose<T> = { [K in keyof T]?: T[K] };
 
 /** Aceita uma despesa no formato antigo (sem os campos de devolução) e completa o que falta, para a tela nunca quebrar. */
@@ -133,6 +151,7 @@ export function normalizeExpense(raw: Loose<Omit<ExpenseDetailData, "shares">> &
 			status,
 			paidAt: s.paidAt ?? null,
 			method: s.method ?? null,
+			helped: !!s.helped,
 		};
 	});
 	const paidBy = (raw.paidBy ?? { uid: "", name: "", picture: null, isYou: false }) as Loose<ExpenseDetailData["paidBy"]>;
@@ -152,6 +171,10 @@ export function normalizeExpense(raw: Loose<Omit<ExpenseDetailData, "shares">> &
 		installment: normalizeInstallment(raw.installment),
 		overdue: !!raw.overdue,
 		series: normalizeSeries(raw.series),
+		helpAsUids: Array.isArray(raw.helpAsUids) ? (raw.helpAsUids as unknown[]).filter((u): u is string => typeof u === "string") : [],
+		canHelp: !!raw.canHelp,
+		helpShareCents: helpShare(raw.helpShareCents),
+		ownerAlone: !!raw.ownerAlone,
 		canDelete: !!raw.canDelete,
 		canMarkPaid: !!raw.canMarkPaid,
 		canEditParticipants: raw.canEditParticipants ?? false,
@@ -181,6 +204,9 @@ export function normalizeSummary(raw: Loose<ExpenseSummary> & Record<string, unk
 		dueDate: dueOrNull(raw.dueDate),
 		installment: normalizeInstallment(raw.installment),
 		overdue: !!raw.overdue,
+		canHelp: !!raw.canHelp,
+		ownerAlone: !!raw.ownerAlone,
+		helpShareCents: helpShare(raw.helpShareCents),
 		// Servidor antigo: quitada = ninguém deve nem recebe de volta.
 		settled: typeof raw.settled === "boolean" ? raw.settled : pendingCount === 0 && refundCount === 0 && yourStatus !== "pending" && yourStatus !== "refund",
 	};

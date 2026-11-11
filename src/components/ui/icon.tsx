@@ -48,6 +48,10 @@ const STROKES = {
 	expand_more: "M300-600 480-420 660-600",
 	remove: "M260-480H700",
 	expand_less: "M300-420 480-600 660-420",
+	chevron_left: "M580-300 400-480 580-660",
+	bar_chart: "M200-160V-440M480-160V-800M760-160V-600",
+	favorite:
+		"M480-200C220-380 180-560 270-650 340-720 440-700 480-620 520-700 620-720 690-650 780-560 740-380 480-200Z",
 } as const;
 
 export type IconName = keyof typeof PATHS | keyof typeof STROKES;

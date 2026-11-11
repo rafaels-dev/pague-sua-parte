@@ -16,6 +16,7 @@ import { isImageType } from "@/lib/ui/attachments";
 import { buildExpenseLink, buildExpenseShareText, shareIntro } from "@/lib/ui/expense-share";
 import { paidByLabel, shareStatusChip } from "@/lib/ui/expense-status";
 import { managedCaption } from "@/lib/ui/managed";
+import { HelpCard, HelpContent, canHelpOn, helperOptions } from "./help";
 import { ExpenseAttachments, type AttachmentView } from "./expense-attachments";
 import { DeleteInstallmentContent, ResplitScopeContent, type InstallmentScope } from "./installment-scope";
 import { InstallmentsSection } from "./installments-section";
@@ -76,6 +77,12 @@ function ShareRow({
 					</div>
 					<span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
 						<StatusChip tone={chip.tone}>{chip.text}</StatusChip>
+						{s.helped && s.participates && (
+							<StatusChip tone="ok">
+								<Icon name="favorite" size={14} className="mr-1" />
+								Ajudou
+							</StatusChip>
+						)}
 						{canAct && s.status === "pending" && (
 							<ActionChip icon="check" onClick={() => onMarkPaid(s.uid)}>
 								Marcar como pago
@@ -156,6 +163,7 @@ export function ExpenseDetailView({
 	onGiveBack,
 	onEditParticipants,
 	onShare,
+	onHelp,
 }: Readonly<{
 	expense: ExpenseDetailData;
 	attachments: AttachmentView[];
@@ -179,6 +187,8 @@ export function ExpenseDetailView({
 	onEditParticipants: () => void;
 	/** Abre o sheet de avisar o grupo (WhatsApp). */
 	onShare: () => void;
+	/** Abre o sheet "Quero ajudar". */
+	onHelp: () => void;
 }>) {
 	// Contas que a pessoa controla nesta despesa: a dela e as das pessoas sem celular que ela cuida (a dela primeiro).
 	const accounts = expense.shares
@@ -222,6 +232,8 @@ export function ExpenseDetailView({
 					Avisar no WhatsApp
 				</Button>
 			</header>
+
+			{canHelpOn(expense) && <HelpCard expense={expense} onHelp={onHelp} />}
 
 			{accounts.map((s) => {
 				const headingId = `conta-${s.uid}`;
@@ -490,6 +502,11 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 	const [shareAction, setShareAction] = useState<{ uid: string; mode: "paid" | "pending" | "refund" } | null>(null);
 	const [shareBusy, setShareBusy] = useState(false);
 	const [shareError, setShareError] = useState<string | null>(null);
+	const [helpOpen, setHelpOpen] = useState(false);
+	const [helpWho, setHelpWho] = useState("");
+	const [helpBusy, setHelpBusy] = useState(false);
+	const [helpError, setHelpError] = useState<string | null>(null);
+	const [names, setNames] = useState<Record<string, { name: string; picture: string | null }>>({});
 	const urls = useRef<string[]>([]);
 
 	useEffect(() => {
@@ -512,6 +529,21 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 			cancelled = true;
 		};
 	}, [user, groupId, expenseId, reloadKey]);
+
+	// Nomes das pessoas que você cuida e poderiam ajudar (a API manda só os códigos).
+	const needNames = !!expense && expense.helpAsUids.length > 0;
+	useEffect(() => {
+		if (!needNames) return;
+		let cancelled = false;
+		apiFetch<Group>(`/api/groups/${encodeURIComponent(groupId)}`)
+			.then((g) => {
+				if (!cancelled) setNames(Object.fromEntries(normalizeGroupDetail(g).members.map((m) => [m.uid, { name: m.name, picture: m.picture }])));
+			})
+			.catch(() => {});
+		return () => {
+			cancelled = true;
+		};
+	}, [needNames, groupId]);
 
 	const attachmentUrl = useCallback(
 		(aid: string) => `/api/groups/${encodeURIComponent(groupId)}/expenses/${encodeURIComponent(expenseId)}/attachments/${encodeURIComponent(aid)}`,
@@ -615,6 +647,42 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 			setShareError(e instanceof ApiError ? e.message : "Não foi possível salvar. Tente de novo.");
 		} finally {
 			setShareBusy(false);
+		}
+	}
+
+	function openHelp() {
+		if (!expense) return;
+		setHelpError(null);
+		setHelpWho(helperOptions(expense, names)[0]?.uid ?? "");
+		setHelpOpen(true);
+	}
+
+	async function confirmHelp() {
+		if (!expense) return;
+		const options = helperOptions(expense, names);
+		const chosen = options.find((o) => o.uid === helpWho) ?? options[0];
+		if (!chosen) return;
+		setHelpBusy(true);
+		setHelpError(null);
+		try {
+			const updated = await apiFetch<ExpenseDetailData>(`/api/groups/${encodeURIComponent(groupId)}/expenses/${encodeURIComponent(expenseId)}/help`, {
+				method: "POST",
+				body: JSON.stringify(chosen.isYou ? {} : { forUid: chosen.uid }),
+			});
+			setExpense(normalizeExpense(updated));
+			setHelpOpen(false);
+			setSnack(chosen.isYou ? "Obrigado! Você entrou na divisão." : `Obrigado! ${chosen.name} entrou na divisão.`);
+		} catch (e) {
+			if (e instanceof ApiError && e.status === 409) {
+				// Já está na divisão: fecha e mostra a despesa como está agora.
+				setHelpOpen(false);
+				setSnack(e.message);
+				setReloadKey((k) => k + 1);
+			} else {
+				setHelpError(e instanceof ApiError ? e.message : "Não foi possível entrar na divisão. Tente de novo.");
+			}
+		} finally {
+			setHelpBusy(false);
 		}
 	}
 
@@ -741,7 +809,27 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 					else openResplit();
 				}}
 				onShare={() => setShareOpen("manual")}
+				onHelp={openHelp}
 			/>
+
+			<Sheet
+				open={helpOpen}
+				onClose={() => {
+					if (!helpBusy) setHelpOpen(false);
+				}}
+				title="Quero ajudar"
+			>
+				<HelpContent
+					expense={expense}
+					options={helperOptions(expense, names)}
+					who={helpWho}
+					busy={helpBusy}
+					error={helpError}
+					onWho={setHelpWho}
+					onConfirm={() => void confirmHelp()}
+					onCancel={() => setHelpOpen(false)}
+				/>
+			</Sheet>
 
 			<Sheet
 				open={shareOpen !== null}

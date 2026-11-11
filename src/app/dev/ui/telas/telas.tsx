@@ -2,7 +2,7 @@
 
 import { todayISO } from "@/lib/ui/dates";
 import { nextDayOfMonth } from "@/lib/ui/due-dates";
-import { DUE_GROUPS, MOCK_GROUP, MockExpense, MockGroup, MockHome, MockManagedSheet, MockNewExpense, MockNoPixKey } from "../expense-mocks";
+import { DUE_GROUPS, MOCK_GROUP, MockExpense, MockGroup, MockHome, MockManagedSheet, MockNewExpense, MockNoPixKey, MockReport } from "../expense-mocks";
 
 export function Telas({ tela }: Readonly<{ tela: string }>) {
 	switch (tela) {
@@ -43,7 +43,29 @@ export function Telas({ tela }: Readonly<{ tela: string }>) {
 		case "nova-sozinho":
 			return <MockNewExpense framed={false} initial={{ amountCents: 28990, description: "Remédios da farmácia" }} members={MOCK_GROUP.members.slice(0, 1)} />;
 		case "nova-so-eu":
+			return <MockNewExpense framed={false} initial={{ amountCents: 28990, description: "Remédios da farmácia" }} alone />;
+		case "nova-escolher-so-eu":
 			return <MockNewExpense framed={false} initial={{ amountCents: 28990, description: "Remédios da farmácia" }} choose={["a"]} />;
+		case "despesa-quero-ajudar":
+			return <MockExpense mode="help-alone" framed={false} />;
+		case "despesa-quero-ajudar-dividida":
+			return <MockExpense mode="help-split" framed={false} />;
+		case "despesa-quero-ajudar-confirmar":
+			return <MockExpense mode="help-alone" helpSheet framed={false} />;
+		case "despesa-quero-ajudar-cuidado":
+			return <MockExpense mode="help-care" helpSheet framed={false} />;
+		case "despesa-ajudou":
+			return <MockExpense mode="helped" framed={false} />;
+		case "grupo-esperando-ajuda":
+			return <MockGroup help framed={false} />;
+		case "relatorio":
+			return <MockReport variant="even" />;
+		case "relatorio-desigual":
+			return <MockReport variant="uneven" />;
+		case "relatorio-vazio":
+			return <MockReport variant="empty" />;
+		case "relatorio-indisponivel":
+			return <MockReport state={{ kind: "unavailable", onRetry: () => {} }} />;
 		case "recalcular":
 			return <MockExpense mode="recalc" resplit={["a", "b", "c"]} framed={false} />;
 		case "recalcular-entra":

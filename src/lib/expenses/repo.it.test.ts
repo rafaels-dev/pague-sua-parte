@@ -412,4 +412,97 @@ describe.skipIf(!ENABLED)("integração: despesas no MongoDB real", () => {
 		expect(list.slice(2).every((i) => i.settled)).toBe(true);
 		expect(list.slice(2).map((i) => i.id)).toEqual([eNewSettled, ePast, eOldSettled]); // mesma data (2026-03-01): a criada por último vem primeiro
 	}, 120_000);
+
+	it("Quero ajudar (membro e pessoa sem login) e relatório de contribuições", async () => {
+		const reports = await import("@/lib/reports/repo");
+		const compute = await import("@/lib/reports/compute");
+		const periods = await import("@/lib/reports/period");
+		const g = await newGroup("ajudar", [OWNER, A, B]);
+		const VO = `m_${RUN}`;
+		await groupsRepo.groupsCollection(db).updateOne(
+			{ _id: new ObjectId(g) },
+			{ $push: { members: { uid: VO, role: "member" as const, joinedAt: new Date(), kind: "managed" as const, name: "Vó IT", managedBy: B } } } as never,
+		);
+		const mk = async (uid_: string, description: string, amountCents: number, date: string, participantUids: string[]) =>
+			ok(await repo.createExpense(db, store, { groupId: g, uid: uid_, input: { description, amountCents, date, participantUids }, files: [] })).expense;
+
+		// 1. dono lança sozinho; os outros veem que podem ajudar
+		const e = await mk(OWNER, "Luz", 3000, "2026-11-10", [OWNER]);
+		expect(e).toMatchObject({ ownerAlone: true, canHelp: false, helpShareCents: null });
+		const asA = ok(await repo.getExpenseDetail(db, g, e.id, A) as never) as unknown as { expense: import("./repo").ExpenseDetail };
+		expect(asA.expense).toMatchObject({ ownerAlone: true, canHelp: true, helpAsUids: [], helpShareCents: 1500 });
+		const asB = ok(await repo.getExpenseDetail(db, g, e.id, B) as never) as unknown as { expense: import("./repo").ExpenseDetail };
+		expect(asB.expense).toMatchObject({ canHelp: true, helpAsUids: [VO], helpShareCents: 1500 });
+		expect((await repo.listExpenses(db, g, A))![0]).toMatchObject({ canHelp: true, ownerAlone: true, helpShareCents: 1500 });
+
+		// 2. o dono não ajuda; A ajuda: 1500 / 1500, marcado
+		expect(await repo.helpExpense(db, g, e.id, OWNER)).toEqual({ status: "payer" });
+		let d = ok(await repo.helpExpense(db, g, e.id, A)).expense;
+		expect(d.shares.map((x) => [x.uid, x.amountCents, x.helped])).toEqual([[OWNER, 1500, false], [A, 1500, true]]);
+		expect(d).toMatchObject({ ownerAlone: false, canHelp: false });
+		expect(await repo.helpExpense(db, g, e.id, A)).toEqual({ status: "already", name: null });
+		const raw = (await rawDocs(g)).find((x) => x._id.toHexString() === e.id)!;
+		expect(raw.version).toBe(1);
+		expect(raw.shares.find((x) => x.uid === A)).toMatchObject({ helped: true });
+		expect(raw.shares.find((x) => x.uid === A)!.helpedAt).toBeInstanceOf(Date);
+
+		// 3. A paga; B ajuda pela Vó (forUid) -> 1000 cada, A passa a ter reembolso de 500; quem não cuida dela é rejeitado
+		ok(await repo.setSharePaid(db, g, e.id, OWNER, A, "paid"));
+		expect(await repo.helpExpense(db, g, e.id, A, VO)).toMatchObject({ status: "invalid", field: "forUid" });
+		expect(await repo.helpExpense(db, g, e.id, B, A)).toMatchObject({ status: "invalid", field: "forUid" });
+		d = ok(await repo.helpExpense(db, g, e.id, B, VO)).expense;
+		const by = (u: string) => d.shares.find((x) => x.uid === u);
+		expect(d.shares).toHaveLength(3);
+		expect([OWNER, A, VO].map((u) => [by(u)!.amountCents, by(u)!.paidCents, by(u)!.helped])).toEqual([[1000, 0, false], [1000, 1500, true], [1000, 0, true]]);
+		expect(d.shares.find((x) => x.uid === A)).toMatchObject({ status: "refund", refundCents: 500 });
+		expect(await repo.helpExpense(db, g, e.id, B, VO)).toEqual({ status: "already", name: "Vó IT" });
+
+		// 4. B entra como ele mesmo: 750 cada
+		d = ok(await repo.helpExpense(db, g, e.id, B)).expense;
+		expect(d.shares.map((x) => x.amountCents).sort()).toEqual([750, 750, 750, 750]);
+		expect(d.shares.reduce((t, x) => t + x.amountCents, 0)).toBe(3000);
+
+		// 5. dono tira B da divisão: some cota e marca de B (sem pagamento); a de A segue marcada
+		d = ok(await repo.updateParticipants(db, g, e.id, OWNER, [OWNER, A, VO])).expense;
+		expect(d.shares.some((x) => x.uid === B)).toBe(false);
+		expect(d.shares.filter((x) => x.helped).map((x) => x.uid).sort()).toEqual([A, VO].sort());
+
+		// 6. outras despesas: A lança sozinho em outubro; o dono lança com Vó e um parcial
+		await mk(A, "Gás", 1200, "2026-10-05", [A]);
+		const e3 = await mk(OWNER, "Mercado", 2000, "2026-11-20", [OWNER, B, VO]);
+		ok(await repo.setSharePaid(db, g, e3.id, OWNER, B, "paid"));
+		// ex-membro: A sai do grupo depois de ter gasto
+		const docsAll = await rawDocs(g);
+
+		// 7. relatório == referência pura, para all e para o mês
+		for (const [period, include] of [["all", () => true], ["month:2026-11", (x: { date: string }) => periods.inPeriod(x.date, { kind: "month", month: "2026-11" })]] as const) {
+			const res = await reports.getGroupReport(db, g, OWNER, periods.parsePeriod(period)!);
+			const rep = ok(res as never) as unknown as { report: import("@/lib/reports/repo").Report };
+			const ref = compute.referenceFacet(docsAll.filter(include));
+			expect(rep.report.totalCents).toBe(ref.totals[0].total);
+			expect(rep.report.expenseCount).toBe(ref.totals[0].count);
+			expect(rep.report.months).toEqual(ref.months.map((m) => ({ month: m._id, totalCents: m.total })));
+			for (const p of rep.report.people) {
+				const r = ref.people.find((x) => x._id === p.uid);
+				expect([p.advancedCents, p.shareCents, p.bornCents, p.pendingCents, p.owedBackCents, p.helpedCount, p.expensesPaidCount]).toEqual(
+					r ? [r.advanced, r.share, r.born, r.pending, r.owedBack, r.helped, r.paidCount] : [0, 0, 0, 0, 0, 0, 0],
+				);
+			}
+			expect(rep.report.people.reduce((t, p) => t + p.bornCents, 0)).toBe(rep.report.totalCents);
+			expect(rep.report.people.map((p) => p.uid).sort()).toEqual([OWNER, A, B, VO].sort());
+			expect(rep.report.people.find((p) => p.uid === VO)).toMatchObject({ kind: "managed", name: "Vó IT", youManage: false });
+			expect(rep.report.people.find((p) => p.uid === A)!.helpedCount).toBe(1);
+			expect(JSON.stringify(rep.report)).not.toMatch(/example\.invalid|pixKey/);
+		}
+		const nov = ok((await reports.getGroupReport(db, g, B, { kind: "month", month: "2026-11" })) as never) as unknown as { report: import("@/lib/reports/repo").Report };
+		expect(nov.report.totalCents).toBe(5000);
+		expect(nov.report.people.find((p) => p.uid === VO)).toMatchObject({ youManage: true });
+
+		// 8. ex-membro: remove A do grupo; continua no relatório, sem estar mais no grupo
+		await groupsRepo.groupsCollection(db).updateOne({ _id: new ObjectId(g) }, { $pull: { members: { uid: A } } } as never);
+		const after = ok((await reports.getGroupReport(db, g, OWNER, { kind: "all" })) as never) as unknown as { report: import("@/lib/reports/repo").Report };
+		expect(after.report.people.find((p) => p.uid === A)).toMatchObject({ stillMember: false, expensesPaidCount: 1, helpedCount: 1 });
+		expect(after.report.people.reduce((t, p) => t + p.bornCents, 0)).toBe(after.report.totalCents);
+		expect(after.report.people).toHaveLength(4);
+	}, 120_000);
 });

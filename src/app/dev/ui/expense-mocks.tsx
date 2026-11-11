@@ -11,6 +11,7 @@ import { ChooseGroupSheet, GroupsListView, type GroupSummary } from "@/component
 import { HomeSummary } from "@/components/home-summary";
 import { buildExpenseShareText, shareIntro } from "@/lib/ui/expense-share";
 import type { AttachmentView } from "@/components/expenses/expense-attachments";
+import { HelpContent, helperOptions } from "@/components/expenses/help";
 import { ExpenseListView } from "@/components/expenses/expense-list";
 import { NewExpenseFormView, NoPixKeyBlock, type FormErrors } from "@/components/expenses/new-expense-form";
 import type { ExpenseDetailData, ExpenseShare, ExpenseSummary } from "@/components/expenses/types";
@@ -19,6 +20,8 @@ import { AddManagedButton, GroupDetailView, type Group } from "@/components/grou
 import { carersOf, ChangeCarerContent, ManagedFormContent, ManagedOptionsContent } from "@/components/groups/managed-sheet";
 import { normalizeMember, type Member } from "@/components/groups/types";
 import { ManagedSummaryCards } from "@/components/home-summary";
+import { ReportView, type ReportState } from "@/components/reports/group-report";
+import type { ReportData } from "@/lib/ui/report";
 import { Button, Sheet } from "@/components/ui";
 import { todayISO } from "@/lib/ui/dates";
 import { addMonthsClamped, nextDayOfMonth } from "@/lib/ui/due-dates";
@@ -69,8 +72,8 @@ const daysAgo = (n: number) => {
 	d.setUTCDate(d.getUTCDate() - n);
 	return d.toISOString().slice(0, 10);
 };
-type SumInput = Omit<ExpenseSummary, "yourDueCents" | "yourRefundCents" | "refundCount" | "managed" | "ownerView" | "paidBy" | "dueDate" | "installment" | "overdue" | "settled" | "attachmentCount"> &
-	Partial<Pick<ExpenseSummary, "attachmentCount" | "yourDueCents" | "yourRefundCents" | "refundCount" | "managed" | "ownerView" | "dueDate" | "installment" | "overdue" | "settled">> & {
+type SumInput = Omit<ExpenseSummary, "canHelp" | "ownerAlone" | "helpShareCents" | "yourDueCents" | "yourRefundCents" | "refundCount" | "managed" | "ownerView" | "paidBy" | "dueDate" | "installment" | "overdue" | "settled" | "attachmentCount"> &
+	Partial<Pick<ExpenseSummary, "canHelp" | "ownerAlone" | "helpShareCents" | "attachmentCount" | "yourDueCents" | "yourRefundCents" | "refundCount" | "managed" | "ownerView" | "dueDate" | "installment" | "overdue" | "settled">> & {
 		paidBy: { uid: string; name: string; isYou: boolean; youManage?: boolean };
 	};
 const sum = (o: SumInput): ExpenseSummary => ({
@@ -80,6 +83,9 @@ const sum = (o: SumInput): ExpenseSummary => ({
 	managed: [],
 	ownerView: null,
 	attachmentCount: 0,
+	canHelp: false,
+	ownerAlone: false,
+	helpShareCents: null,
 	dueDate: null,
 	installment: null,
 	overdue: false,
@@ -165,12 +171,22 @@ const DUE_EXPENSES: ExpenseSummary[] = [
 	),
 ];
 
+/** Despesas em que o Rafael pode ajudar: duas em que quem pagou está sozinho. */
+const HELP_EXPENSES: ExpenseSummary[] = EXPENSES.map((e) =>
+	e.id === "e1"
+		? { ...e, yourStatus: "none", yourShareCents: 0, yourDueCents: 0, canHelp: true, ownerAlone: true, helpShareCents: 14495, pendingCount: 0 }
+		: e.id === "e7"
+			? { ...e, yourStatus: "none", yourShareCents: 0, yourDueCents: 0, canHelp: true, ownerAlone: true, helpShareCents: 31000, pendingCount: 0 }
+			: e,
+);
+
 export function MockGroup({
 	empty = false,
 	framed = true,
 	care = false,
 	due = false,
-}: Readonly<{ empty?: boolean; framed?: boolean; care?: boolean; due?: boolean }>) {
+	help = false,
+}: Readonly<{ empty?: boolean; framed?: boolean; care?: boolean; due?: boolean; help?: boolean }>) {
 	const group = care ? CARE_GROUP : MOCK_GROUP;
 	return (
 		<Shell pathname="/app/grupos/1" framed={framed} user={care ? CARE_USER : USER}>
@@ -183,7 +199,7 @@ export function MockGroup({
 					</Button>
 				}
 				addManaged={care ? <AddManagedButton onClick={noop} /> : undefined}
-				expenses={<ExpenseListView groupId="1" state={{ kind: "ready", expenses: empty ? [] : care ? CARE_EXPENSES : due ? DUE_EXPENSES : EXPENSES }} />}
+				expenses={<ExpenseListView groupId="1" state={{ kind: "ready", expenses: empty ? [] : care ? CARE_EXPENSES : due ? DUE_EXPENSES : help ? HELP_EXPENSES : EXPENSES }} />}
 			/>
 		</Shell>
 	);
@@ -263,10 +279,13 @@ export function MockNewExpense({
 	initial,
 	members = MOCK_GROUP.members,
 	choose,
+	alone = false,
 	care = false,
 	payer,
 	pay,
 }: Readonly<{
+	/** Começa em "Só eu". */
+	alone?: boolean;
 	/** Como foi pago ao abrir (à vista por padrão). */
 	pay?: { payment: PaymentKind; dueDate?: string; installments?: number };
 	/** Cenário da Renata, que cuida de Benjamim e do tio Carlos. */
@@ -288,9 +307,13 @@ export function MockNewExpense({
 	const [dueDate, setDueDate] = useState(pay?.dueDate ?? "");
 	const [installments, setInstallments] = useState(pay?.installments ?? 6);
 	const list = care ? CARE_GROUP.members : members;
-	const who = useWhoSplits(list.map((m) => m.uid));
 	const [payerUid, setPayerUid] = useState(payer ?? list.find((m) => m.isYou)?.uid ?? "");
+	const who = useWhoSplits(list.map((m) => m.uid), undefined, payerUid);
 	const [started, setStarted] = useState(false);
+	if (!started && alone) {
+		setStarted(true);
+		who.setMode("alone");
+	}
 	if (!started && choose) {
 		setStarted(true);
 		who.setMode("choose");
@@ -363,11 +386,13 @@ const ATTACHMENTS: AttachmentView[] = [
 	{ id: "x3", name: "nota-da-consulta.pdf", contentType: "application/pdf", size: 1_200_000, url: null, state: "ready" },
 ];
 
-export type MockMode = "installment" | "overdue" | "owner-installment" | "debtor" | "payer" | "partial" | "refund" | "owner-return" | "recalc" | "two-parts" | "care-paid";
-const isCare = (mode: MockMode) => mode === "two-parts" || mode === "care-paid";
+type RawDetail = Omit<ExpenseDetailData, "canHelp" | "helpAsUids" | "helpShareCents" | "ownerAlone">;
+export type MockMode = "help-alone" | "help-split" | "helped" | "help-care" | "installment" | "overdue" | "owner-installment" | "debtor" | "payer" | "partial" | "refund" | "owner-return" | "recalc" | "two-parts" | "care-paid";
+const isCare = (mode: MockMode) => mode === "two-parts" || mode === "care-paid" || mode === "help-care";
 
 type MS = Partial<ExpenseShare> & Pick<ExpenseShare, "uid" | "name" | "amountCents" | "status">;
 const share = (s: MS): ExpenseShare => ({
+	helped: false,
 	picture: null,
 	isYou: false,
 	paidAt: null,
@@ -396,7 +421,7 @@ function seriesMock(count: number, firstDue: string, paid: number): ExpenseSerie
 }
 
 /** Despesas do cenário da Renata (que cuida do avô Benjamim). */
-function careDetail(mode: "two-parts" | "care-paid"): ExpenseDetailData {
+function careDetail(mode: "two-parts" | "care-paid"): RawDetail {
 	const R = { uid: "a", name: "Renata Souza" };
 	const BEN = { uid: "m1", name: "Benjamim", kind: "managed" as const, managedByName: "Renata Souza", youManage: true };
 	const common = { groupId: "1", createdAt: new Date().toISOString(), attachments: [] as ExpenseDetailData["attachments"], ...NO_DUE };
@@ -447,7 +472,7 @@ function careDetail(mode: "two-parts" | "care-paid"): ExpenseDetailData {
 }
 
 /** Parcela de uma compra parcelada, vista por quem deve (o dono é a Maria). */
-function installmentDetail(mode: "installment" | "overdue"): ExpenseDetailData {
+function installmentDetail(mode: "installment" | "overdue"): RawDetail {
 	const overdue = mode === "overdue";
 	// "Em dia": parcela 2 de 6, a primeira venceu no dia 10 e já foi paga. "Vencida": parcela 2 de 4, venceu há 8 dias.
 	const count = overdue ? 4 : 6;
@@ -482,7 +507,7 @@ function installmentDetail(mode: "installment" | "overdue"): ExpenseDetailData {
 }
 
 /** Parcela 2 de 6 vista por quem lançou (dono): pode mudar a divisão e apagar, e a pergunta "só esta ou as próximas" aparece. */
-function ownerInstallmentDetail(): ExpenseDetailData {
+function ownerInstallmentDetail(): RawDetail {
 	const d = installmentDetail("installment");
 	const shares = [
 		share({ ...A, amountCents: 3000, status: "payer", isYou: true }),
@@ -503,7 +528,70 @@ function ownerInstallmentDetail(): ExpenseDetailData {
 	};
 }
 
+const NO_HELP = { canHelp: false, helpAsUids: [] as string[], helpShareCents: null, ownerAlone: false };
+
+/** "Quero ajudar": quem pagou está sozinho (ou com poucos), e a pessoa que olha pode entrar na divisão. */
+function helpDetail(mode: "help-alone" | "help-split" | "helped" | "help-care"): ExpenseDetailData {
+	const care = mode === "help-care";
+	const viewer = care ? { uid: "a", name: "Renata Souza" } : A;
+	const owner = { ...B, picture: null, isYou: false, kind: "user" as const, youManage: false };
+	const base = {
+		id: "e1",
+		groupId: "1",
+		description: "Remédios da farmácia",
+		amountCents: 28990,
+		date: daysAgo(0),
+		createdAt: new Date().toISOString(),
+		canDelete: false,
+		canMarkPaid: false,
+		canEditParticipants: false,
+		paidBy: owner,
+		pix: { type: "cpf" as const, key: "52998224725", payeeName: owner.name },
+		attachments: [],
+		...NO_DUE,
+	};
+	const finish = (shares: ExpenseShare[], extra: Partial<ExpenseDetailData>): ExpenseDetailData => ({
+		...base,
+		...NO_HELP,
+		shares,
+		participantUids: shares.filter((s) => s.participates).map((s) => s.uid),
+		...extra,
+	});
+	switch (mode) {
+		case "help-split":
+			return finish(
+				[
+					share({ ...B, amountCents: 9663, status: "payer" }),
+					share({ uid: "c", name: "José", amountCents: 9663, status: "paid", paidAt: PAID_AT, method: "manual" }),
+					share({ uid: "d", name: "Ana Paula", amountCents: 9664, status: "pending" }),
+				],
+				{ canHelp: true, helpShareCents: 7248 },
+			);
+		case "helped":
+			return finish(
+				[
+					share({ ...B, amountCents: 9663, status: "payer" }),
+					share({ uid: "c", name: "José", amountCents: 9663, status: "paid", paidAt: PAID_AT, method: "manual", helped: true }),
+					share({ ...viewer, amountCents: 9664, status: "pending", isYou: true, helped: true }),
+				],
+				{},
+			);
+		default:
+			return finish([share({ ...B, amountCents: 28990, status: "payer" })], {
+				canHelp: true,
+				ownerAlone: true,
+				helpShareCents: 14495,
+				...(care ? { helpAsUids: ["m1", "m3"] } : {}),
+			});
+	}
+}
+
 function detail(mode: MockMode): ExpenseDetailData {
+	if (mode === "help-alone" || mode === "help-split" || mode === "helped" || mode === "help-care") return helpDetail(mode);
+	return { ...NO_HELP, ...rawDetail(mode) };
+}
+
+function rawDetail(mode: MockMode): RawDetail {
 	if (mode === "installment" || mode === "overdue") return installmentDetail(mode);
 	if (mode === "owner-installment") return ownerInstallmentDetail();
 	if (isCare(mode)) return careDetail(mode as "two-parts" | "care-paid");
@@ -521,7 +609,7 @@ function detail(mode: MockMode): ExpenseDetailData {
 		attachments: ATTACHMENTS.map(({ id, name, contentType, size }) => ({ id, name, contentType, size })),
 		...NO_DUE,
 	};
-	const out = (description: string, amountCents: number, dayAgo: number, shares: ExpenseShare[]): ExpenseDetailData => ({
+	const out = (description: string, amountCents: number, dayAgo: number, shares: ExpenseShare[]): RawDetail => ({
 		...base,
 		description,
 		amountCents,
@@ -585,8 +673,11 @@ export function MockExpense({
 	resplit,
 	shareSheet = false,
 	scopeSheet,
+	helpSheet = false,
 }: Readonly<{
 	mode: MockMode;
+	/** Abre o sheet "Quero ajudar". */
+	helpSheet?: boolean;
 	/** Abre a pergunta "só esta parcela ou esta e as próximas" (ao apagar ou ao mudar quem divide). */
 	scopeSheet?: "delete" | "resplit";
 	qrOpen?: boolean;
@@ -602,6 +693,8 @@ export function MockExpense({
 	const [qrOpen, setQrOpen] = useState<string | null>(qrInitial ? "a" : null);
 	const [action, setAction] = useState(confirm ?? null);
 	const [shareOpen, setShareOpen] = useState(shareSheet);
+	const [helpOpen, setHelpOpen] = useState(helpSheet);
+	const [helpWho, setHelpWho] = useState("eu");
 	const [resplitOpen, setResplitOpen] = useState(!!resplit);
 	const [scopeStep, setScopeStep] = useState<"delete" | "resplit" | null>(scopeSheet ?? null);
 	const [scope, setScope] = useState<InstallmentScope>("this");
@@ -628,7 +721,20 @@ export function MockExpense({
 				onGiveBack={(uid) => setAction({ uid, mode: "refund" })}
 				onEditParticipants={() => (expense.installment ? setScopeStep("resplit") : setResplitOpen(true))}
 				onShare={() => setShareOpen(true)}
+				onHelp={() => setHelpOpen(true)}
 			/>
+			<Sheet open={helpOpen} onClose={() => setHelpOpen(false)} title="Quero ajudar">
+				<HelpContent
+					expense={expense}
+					options={helperOptions(expense, Object.fromEntries(CARE_GROUP.members.map((m) => [m.uid, { name: m.name, picture: m.picture }])))}
+					who={helpWho}
+					busy={false}
+					error={null}
+					onWho={setHelpWho}
+					onConfirm={() => setHelpOpen(false)}
+					onCancel={() => setHelpOpen(false)}
+				/>
+			</Sheet>
 			<Sheet open={!!(action && target)} onClose={() => setAction(null)} title={action && target ? sharePaidTitle(action.mode, target) : ""}>
 				{action && <SharePaidContent mode={action.mode} busy={false} error={null} onConfirm={() => setAction(null)} onCancel={() => setAction(null)} />}
 			</Sheet>
@@ -731,6 +837,92 @@ export function MockHome({
 				<GroupsListView state={{ kind: "ready", groups }} onPostExpense={() => setOpen(true)} />
 				<ChooseGroupSheet open={open} onClose={() => setOpen(false)} groups={groups} />
 			</div>
+		</Shell>
+	);
+}
+
+
+const P = (o: Partial<ReportData["people"][number]> & Pick<ReportData["people"][number], "uid" | "name" | "bornCents">): ReportData["people"][number] => ({
+	picture: null,
+	kind: "user",
+	isYou: false,
+	youManage: false,
+	stillMember: true,
+	advancedCents: 0,
+	shareCents: 0,
+	pendingCents: 0,
+	owedBackCents: 0,
+	helpedCount: 0,
+	expensesPaidCount: 0,
+	bornPercent: 0,
+	...o,
+});
+const withPercent = (people: ReturnType<typeof P>[]): ReturnType<typeof P>[] => {
+	const total = people.reduce((s, p) => s + p.bornCents, 0) || 1;
+	return people.map((p) => ({ ...p, bornPercent: Math.round((p.bornCents / total) * 10000) }));
+};
+const MONTHS = [
+	{ month: "2026-06", totalCents: 82000 },
+	{ month: "2026-07", totalCents: 61500 },
+	{ month: "2026-08", totalCents: 140000 },
+	{ month: "2026-09", totalCents: 97000 },
+	{ month: "2026-10", totalCents: 123000 },
+	{ month: "2026-11", totalCents: 88500 },
+];
+/** Seis pessoas, bem divididas. */
+const REPORT_EVEN: ReportData = {
+	period: "all",
+	groupName: "Despesas da vó",
+	expenseCount: 23,
+	totalCents: 592000,
+	equalShareCents: 98667,
+	fairnessPercent: 91,
+	months: MONTHS,
+	people: withPercent([
+		P({ uid: "b", name: "Maria das Dores Silva", bornCents: 112000, advancedCents: 160000, expensesPaidCount: 9, pendingCents: 0, helpedCount: 2 }),
+		P({ uid: "a", name: "Rafael Schettino", isYou: true, bornCents: 104000, advancedCents: 120000, expensesPaidCount: 6, pendingCents: 9800 }),
+		P({ uid: "c", name: "José", bornCents: 98000, advancedCents: 90000, expensesPaidCount: 5, helpedCount: 1 }),
+		P({ uid: "d", name: "Ana Paula", bornCents: 96000, pendingCents: 12000 }),
+		P({ uid: "m1", name: "Benjamim", kind: "managed", bornCents: 94000, advancedCents: 40000, expensesPaidCount: 2 }),
+		P({ uid: "e", name: "Tio Carlos", stillMember: false, bornCents: 88000 }),
+	]),
+};
+/** Seis pessoas, uma carregando quase tudo, com nomes longos. */
+const REPORT_UNEVEN: ReportData = {
+	period: "all",
+	groupName: "Despesas da vó",
+	expenseCount: 31,
+	totalCents: 1264000,
+	equalShareCents: 210667,
+	fairnessPercent: 42,
+	months: MONTHS,
+	people: withPercent([
+		P({ uid: "b", name: "Maria das Dores Silva de Albuquerque Santos", bornCents: 690000, advancedCents: 820000, expensesPaidCount: 19, pendingCents: 0 }),
+		P({ uid: "a", name: "Rafael Schettino", isYou: true, bornCents: 310000, advancedCents: 350000, expensesPaidCount: 8, helpedCount: 3, pendingCents: 21000 }),
+		P({ uid: "c", name: "José", bornCents: 130000, advancedCents: 94000, expensesPaidCount: 4 }),
+		P({ uid: "d", name: "Ana Paula", bornCents: 64000, pendingCents: 86000 }),
+		P({ uid: "m1", name: "Benjamim", kind: "managed", bornCents: 50000, pendingCents: 31000 }),
+		P({ uid: "e", name: "Tio Carlos Eduardo da Silva", kind: "managed", stillMember: false, bornCents: 20000 }),
+	]),
+};
+const REPORT_EMPTY: ReportData = { period: "month:2026-11", groupName: "Despesas da vó", expenseCount: 0, totalCents: 0, equalShareCents: 0, fairnessPercent: 0, people: [], months: [] };
+
+export function MockReport({
+	variant = "even",
+	state: stateOverride,
+}: Readonly<{ variant?: "even" | "uneven" | "empty"; state?: ReportState }>) {
+	const [period, setPeriod] = useState<import("@/lib/ui/report").ReportPeriod>(variant === "empty" ? "month:2026-11" : "all");
+	const data = variant === "even" ? REPORT_EVEN : variant === "uneven" ? REPORT_UNEVEN : REPORT_EMPTY;
+	return (
+		<Shell pathname="/app/grupos/1/relatorio" framed={false}>
+			<ReportView
+				groupId="1"
+				state={stateOverride ?? { kind: "ready", data }}
+				period={period}
+				onPeriod={setPeriod}
+				waitingCount={variant === "uneven" ? 2 : 0}
+				today="2026-11-11"
+			/>
 		</Shell>
 	);
 }

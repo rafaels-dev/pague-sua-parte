@@ -177,3 +177,13 @@ export function sniffFiles(files: { name: string; bytes: Uint8Array }[]): { ok: 
 	}
 	return { ok: true, files: out };
 }
+
+/** Corpo de "Quero ajudar": `forUid` opcional (texto não vazio). Corpo que não é objeto também é rejeitado. */
+export function parseHelpInput(raw: unknown): { ok: true; forUid?: string } | Invalid {
+	const bad: Invalid = { ok: false, status: 422, error: "Escolha por quem você quer ajudar.", field: "forUid" };
+	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return bad;
+	const forUid = (raw as { forUid?: unknown }).forUid;
+	if (forUid === undefined || forUid === null) return { ok: true };
+	if (typeof forUid !== "string" || forUid.trim() === "" || forUid.length > 100) return bad;
+	return { ok: true, forUid };
+}

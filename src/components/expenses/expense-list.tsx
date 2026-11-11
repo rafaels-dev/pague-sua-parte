@@ -49,6 +49,11 @@ function ExpenseRow({ groupId, e, today }: Readonly<{ groupId: string; e: Expens
 							))}
 						</span>
 					)}
+					{e.canHelp && (
+						<span className="block font-medium text-primary">
+							{e.ownerAlone ? `${e.paidBy.name} pagou sozinho(a) · Quero ajudar` : "Dá para ajudar a dividir · Quero ajudar"}
+						</span>
+					)}
 					{status && <span className={cx("block font-medium", STATUS_COLOR[status.tone])}>{status.text}</span>}
 					{extra.map((l) => (
 						<span key={l.text} className={cx("block font-medium", STATUS_COLOR[l.tone])}>
@@ -72,6 +77,9 @@ function ExpenseRow({ groupId, e, today }: Readonly<{ groupId: string; e: Expens
 		/>
 	);
 }
+
+/** Quantas despesas esperam a sua ajuda. */
+export const helpCount = (expenses: ExpenseSummary[]): number => expenses.filter((e) => e.canHelp).length;
 
 /** Quitadas acima disto começam recolhidas. */
 export const SETTLED_COLLAPSE_AFTER = 5;
@@ -136,8 +144,24 @@ export function ExpenseGroups({ groupId, expenses }: Readonly<{ groupId: string;
 	);
 }
 
+/** Faixa "N despesas esperando ajuda": mostra só essas ou volta a mostrar todas. */
+export function HelpBanner({ count, active, onToggle }: Readonly<{ count: number; active: boolean; onToggle: () => void }>) {
+	return (
+		<section id="esperando-ajuda" aria-label="Despesas esperando ajuda" className="flex flex-col gap-3 rounded-shape-md bg-primary-container p-4 text-on-primary-container sm:flex-row sm:items-center">
+			<div className="flex min-w-0 flex-1 items-center gap-3">
+				<Icon name="favorite" className="shrink-0" />
+				<p className="min-w-0 flex-1 text-title-medium">{count === 1 ? "1 despesa esperando ajuda" : `${count} despesas esperando ajuda`}</p>
+			</div>
+			<Button variant="tonal" size="md" onClick={onToggle} aria-pressed={active} className="bg-surface! text-primary!">
+				{active ? "Ver todas" : "Ver só essas"}
+			</Button>
+		</section>
+	);
+}
+
 /** Seção "Despesas" da tela do grupo: lista, estado vazio e a ação "Lançar despesa" (botão em telas largas, FAB no celular). */
-export function ExpenseListView({ groupId, state }: Readonly<{ groupId: string; state: ExpenseListState }>) {
+export function ExpenseListView({ groupId, state, initialHelpOnly = false }: Readonly<{ groupId: string; state: ExpenseListState; initialHelpOnly?: boolean }>) {
+	const [helpOnly, setHelpOnly] = useState(initialHelpOnly);
 	const newHref = `/app/grupos/${encodeURIComponent(groupId)}/despesas/nova`;
 	const hasItems = state.kind === "ready" && state.expenses.length > 0;
 	return (
@@ -189,7 +213,17 @@ export function ExpenseListView({ groupId, state }: Readonly<{ groupId: string; 
 				</EmptyState>
 			) : (
 				<>
-					<ExpenseGroups groupId={groupId} expenses={state.expenses} />
+					{helpCount(state.expenses) > 0 && (
+						<HelpBanner
+							count={helpCount(state.expenses)}
+							active={helpOnly}
+							onToggle={() => {
+								setHelpOnly((x) => !x);
+								document.getElementById("esperando-ajuda")?.scrollIntoView({ block: "start", behavior: "smooth" });
+							}}
+						/>
+					)}
+					<ExpenseGroups groupId={groupId} expenses={helpOnly && helpCount(state.expenses) > 0 ? state.expenses.filter((e) => e.canHelp) : state.expenses} />
 					<Fab href={newHref} icon="add" className="md:hidden">
 						Lançar despesa
 					</Fab>
@@ -229,5 +263,7 @@ export function ExpenseList({ groupId }: Readonly<{ groupId: string }>) {
 		};
 	}, [user, groupId, reloadKey]);
 
-	return <ExpenseListView groupId={groupId} state={state} />;
+	// Vindo do relatório (?ajuda=1): já mostra só as despesas esperando ajuda.
+	const [fromReport] = useState(() => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("ajuda") === "1");
+	return <ExpenseListView groupId={groupId} state={state} initialHelpOnly={fromReport} />;
 }

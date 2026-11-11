@@ -13,8 +13,10 @@ import { usersCollection, type UserDoc } from "@/lib/users/repo";
 import { getBalancesForUids, sumBalances, ZERO_BALANCE } from "./balances";
 import { installmentDueDates, isPastDue, todayInSaoPaulo } from "./dates";
 import {
+	addHelper,
 	dueCents,
 	hasPayments,
+	isHelper,
 	normalizeShares,
 	orderShares,
 	participantUidsOf,
@@ -63,15 +65,15 @@ export function expensesCollection(db: Db) {
 const ATTACHMENT_ID_RE = /^[0-9a-f]{32}$/;
 const personName = (u?: Pick<UserDoc, "name" | "displayName">) => u?.displayName?.trim() || u?.name || "Participante";
 
-async function findMemberGroup(db: Db, id: string, uid: string): Promise<GroupDoc | null> {
+export async function findMemberGroup(db: Db, id: string, uid: string): Promise<GroupDoc | null> {
 	if (!isObjectIdHex(id)) return null;
 	return groupsCollection(db).findOne({ _id: new ObjectId(id), "members.uid": uid });
 }
 
-type PersonDoc = Pick<UserDoc, "_id" | "name" | "displayName" | "picture">;
+export type PersonDoc = Pick<UserDoc, "_id" | "name" | "displayName" | "picture">;
 
 /** Projeção explícita: e-mail e chave Pix de ninguém saem do banco aqui. Pessoas sem login não têm documento. */
-async function loadPeople(db: Db, uids: string[]): Promise<Map<string, PersonDoc>> {
+export async function loadPeople(db: Db, uids: string[]): Promise<Map<string, PersonDoc>> {
 	const real = uids.filter((u) => !isManagedUid(u));
 	if (real.length === 0) return new Map();
 	const users = await usersCollection(db)
@@ -81,7 +83,7 @@ async function loadPeople(db: Db, uids: string[]): Promise<Map<string, PersonDoc
 }
 
 /** Nomes, tipos e responsáveis, sempre pelo grupo ATUAL (quem saiu vira "Participante"). */
-type Directory = {
+export type Directory = {
 	name: (uid: string) => string;
 	picture: (uid: string) => string | null;
 	kind: (uid: string) => "user" | "managed";
@@ -89,7 +91,7 @@ type Directory = {
 	managedByName: (uid: string) => string | null;
 };
 
-function directory(group: GroupDoc, people: Map<string, PersonDoc>, caller: string): Directory {
+export function directory(group: GroupDoc, people: Map<string, PersonDoc>, caller: string): Directory {
 	const entry = (uid: string) => group.members.find((m) => m.uid === uid);
 	const kind = (uid: string): "user" | "managed" => (entry(uid)?.kind === "managed" || (!entry(uid) && isManagedUid(uid)) ? "managed" : "user");
 	const name = (uid: string) => (kind(uid) === "managed" ? entry(uid)?.name?.trim() || "Participante" : personName(people.get(uid)));
@@ -129,6 +131,14 @@ export type ExpenseDetail = {
 	canMarkPaid: boolean;
 	/** Só quem pagou pode mudar quem divide. */
 	canEditParticipants: boolean;
+	/** O usuário poderia entrar na divisão ("Quero ajudar") como ele mesmo. */
+	canHelp: boolean;
+	/** Pessoas sem login que o usuário cuida e poderiam entrar na divisão. */
+	helpAsUids: string[];
+	/** Quanto uma pessoa nova pagaria (divisão igual entre quem divide hoje + 1); null quando ninguém pode ajudar. */
+	helpShareCents: number | null;
+	/** Quem pagou é a única pessoa que divide a despesa. */
+	ownerAlone: boolean;
 	/** Quem divide agora (cotas com valor > 0). */
 	participantUids: string[];
 	paidBy: { uid: string; name: string; picture: string | null; isYou: boolean; kind: "user" | "managed"; youManage: boolean };
@@ -142,6 +152,8 @@ export type ExpenseDetail = {
 		dueCents: number;
 		refundCents: number;
 		participates: boolean;
+		/** Entrou pela ação "Quero ajudar" e ainda divide a despesa. */
+		helped: boolean;
 		status: ShareStatus;
 		isYou: boolean;
 		kind: "user" | "managed";
@@ -166,6 +178,33 @@ const fullySettled = (e: { paidBy: string; shares: ExpenseShare[] }) =>
 	e.shares.every((s) => dueCents(s, e.paidBy) === 0 && refundCents(s, e.paidBy) === 0);
 const isOverdue = (e: { paidBy: string; shares: ExpenseShare[]; dueDate?: string }, today: string) =>
 	isPastDue(e.dueDate, today) && !noDue(e);
+
+/**
+ * "Quero ajudar": quem poderia entrar na divisão. Ajuda quem é membro, não é quem pagou (nem age por quem pagou:
+ * o responsável pela pessoa sem login que pagou é, na prática, quem pagou) e ainda não divide.
+ * Só vale se o valor ainda se divide em mais uma parte.
+ */
+export function helpInfo(
+	e: { paidBy: string; amountCents: number; shares: ExpenseShare[] },
+	members: GroupDoc["members"],
+	uid: string,
+) {
+	const participants = participantUidsOf(e.shares);
+	const ownerAlone = participants.length === 1 && participants[0] === e.paidBy;
+	let helpShareCents: number | null = null;
+	let divisible = false;
+	try {
+		const probe = "\u0000novo";
+		helpShareCents = splitEqually(e.amountCents, [...participants, probe], e.paidBy).find((x) => x.uid === probe)!.amountCents;
+		divisible = true;
+	} catch {
+		/* pequeno demais para mais uma parte */
+	}
+	const eligible = (u: string) => divisible && u !== e.paidBy && members.some((m) => m.uid === u) && !participants.includes(u);
+	const canHelp = !actsFor(members, uid, e.paidBy) && eligible(uid);
+	const helpAsUids = members.filter((m) => m.kind === "managed" && m.managedBy === uid && eligible(m.uid)).map((m) => m.uid);
+	return { canHelp, helpAsUids, helpShareCents: canHelp || helpAsUids.length > 0 ? helpShareCents : null, ownerAlone };
+}
 
 /** Quem age pelo dono (ele mesmo ou o responsável por ele, no grupo de agora) ou administra o grupo. */
 function canDeleteExpense(e: ExpenseDoc, group: GroupDoc, uid: string) {
@@ -212,6 +251,7 @@ async function toDetail(db: Db, e: ExpenseDoc, group: GroupDoc, uid: string, now
 		canDelete: canDeleteExpense(e, group, uid),
 		canMarkPaid: owns,
 		canEditParticipants: owns,
+		...helpInfo(e, group.members, uid),
 		participantUids: participantUidsOf(e.shares),
 		paidBy: { ...view(e.paidBy), kind: dir.kind(e.paidBy), youManage: dir.youManage(e.paidBy) },
 		pix: { type: e.pix.type, key: e.pix.key, payeeName: e.pix.payeeName },
@@ -225,6 +265,7 @@ async function toDetail(db: Db, e: ExpenseDoc, group: GroupDoc, uid: string, now
 			dueCents: dueCents(s, e.paidBy),
 			refundCents: refundCents(s, e.paidBy),
 			participates: s.amountCents > 0,
+			helped: isHelper(s),
 			status: shareStatus(s, e.paidBy),
 			paidAt: s.paidCents > 0 && s.paidAt ? new Date(s.paidAt).toISOString() : null,
 			method: s.paidCents > 0 ? (s.method ?? null) : null,
@@ -384,6 +425,9 @@ export type ExpenseListItem = {
 	overdue: boolean;
 	/** Sem valor a receber nem a devolver para ninguém. */
 	settled: boolean;
+	canHelp: boolean;
+	ownerAlone: boolean;
+	helpShareCents: number | null;
 };
 
 export const LIST_LIMIT = 300;
@@ -457,6 +501,7 @@ export async function listExpenses(db: Db, groupId: string, uid: string, now: Da
 			installment: d.installment ?? null,
 			overdue: isOverdue(d, today),
 			settled: fullySettled(d),
+			...(({ canHelp, ownerAlone, helpShareCents }) => ({ canHelp, ownerAlone, helpShareCents }))(helpInfo(d, group.members, uid)),
 		};
 	});
 }
@@ -727,6 +772,61 @@ export async function updateParticipants(
 	}
 	const mine = written.find((w) => w.doc._id.equals(first._id))?.doc ?? first;
 	return { status: "ok", expense: await toDetail(db, mine, group, uid, now) };
+}
+
+// ---------- quero ajudar ----------
+
+export type HelpResult =
+	| { status: "ok"; expense: ExpenseDetail }
+	| { status: "no_group" }
+	| { status: "no_expense" }
+	/** Quem pagou (ou quem age por quem pagou) não ajuda na própria despesa. */
+	| { status: "payer" }
+	| { status: "already"; name: string | null }
+	| { status: "invalid"; error: string; field: string }
+	| { status: "conflict" };
+
+/**
+ * Entra na divisão ("Quero ajudar"): o ajudante é `uid` ou, com `forUid`, uma pessoa sem login que `uid` cuida.
+ * Divide o total igualmente entre quem já divide + o ajudante (regras de `recalcShares`) e marca a cota com
+ * `helped`/`helpedAt`. Vale só para esta despesa (também em parcelas). Mesma concorrência otimista de
+ * `updateParticipants`: uma nova tentativa e depois `conflict`.
+ */
+export async function helpExpense(
+	db: Db,
+	groupId: string,
+	eid: string,
+	uid: string,
+	forUid?: string,
+	now: Date = new Date(),
+): Promise<HelpResult> {
+	const group = await findMemberGroup(db, groupId, uid);
+	if (!group) return { status: "no_group" };
+	const helper = forUid ?? uid;
+	const forOther = helper !== uid;
+	if (forOther && (!isManagedMember(group.members, helper) || !actsFor(group.members, uid, helper))) {
+		return { status: "invalid", field: "forUid", error: "Você só pode ajudar por quem você cuida." };
+	}
+	const r = await mutateShares(db, groupId, eid, (e) => {
+		if (helper === e.paidBy || actsFor(group.members, helper, e.paidBy)) return { error: { status: "payer" } };
+		if (e.shares.some((s) => s.uid === helper && s.amountCents > 0)) return { error: { status: "already" } };
+		try {
+			return { shares: addHelper(e.shares, e.paidBy, e.amountCents, helper, now), changed: true };
+		} catch {
+			return { error: { status: "invalid", field: "amountCents", error: "Esse valor é pequeno demais para dividir entre tantas pessoas." } };
+		}
+	});
+	if (r.kind === "no_expense") return { status: "no_expense" };
+	if (r.kind === "conflict") return { status: "conflict" };
+	if (r.kind === "rejected") {
+		const err = r.error as { status: "payer" } | { status: "already" } | { status: "invalid"; error: string; field: string };
+		if (err.status === "already") {
+			const name = forOther ? group.members.find((m) => m.uid === helper)?.name?.trim() || "Participante" : null;
+			return { status: "already", name };
+		}
+		return err;
+	}
+	return { status: "ok", expense: await toDetail(db, r.doc, group, uid, now) };
 }
 
 // ---------- resumo ----------

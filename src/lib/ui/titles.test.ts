@@ -11,6 +11,9 @@ describe("screenInfo", () => {
 	it("lançar despesa volta ao grupo", () => {
 		expect(screenInfo("/app/grupos/abc/despesas/nova")).toMatchObject({ title: "Lançar despesa", back: "/app/grupos/abc", nav: "/app" });
 	});
+	it("relatório volta ao grupo", () => {
+		expect(screenInfo("/app/grupos/abc/relatorio")).toMatchObject({ title: "Relatório", back: "/app/grupos/abc", nav: "/app" });
+	});
 	it("despesa volta ao grupo", () => {
 		expect(screenInfo("/app/grupos/abc/despesas/e1")).toMatchObject({ title: "Despesa", back: "/app/grupos/abc" });
 	});

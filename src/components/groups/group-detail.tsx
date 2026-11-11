@@ -51,7 +51,12 @@ export function GroupDetailView({
 	const isAdmin = group.role === "admin";
 	return (
 		<div className="space-y-6">
-			<h1 className="break-words text-headline-medium md:text-headline-large">{group.name}</h1>
+			<div className="space-y-3">
+				<h1 className="break-words text-headline-medium md:text-headline-large">{group.name}</h1>
+				<Button href={`/app/grupos/${encodeURIComponent(group.id)}/relatorio`} variant="outlined" size="md" icon="bar_chart" fullWidth className="md:w-auto">
+					Relatório
+				</Button>
+			</div>
 
 			<div className="grid items-start gap-8 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
 				{expenses}

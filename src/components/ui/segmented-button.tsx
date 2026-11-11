@@ -35,7 +35,7 @@ export function SegmentedButton<T extends string>({
 							selected ? "bg-secondary-container text-on-secondary-container" : "bg-transparent text-on-surface",
 						)}
 					>
-						<span className="truncate">{o.label}</span>
+						<span className="line-clamp-2 break-words text-center leading-tight">{o.label}</span>
 					</button>
 				);
 			})}

@@ -15,6 +15,9 @@ export type ExpenseShare = {
 	paidAt?: Date;
 	markedBy?: string;
 	method?: ShareMethod;
+	/** "Quero ajudar": a pessoa entrou na divisão por conta própria (pela ação de ajudar), não por escolha do dono. */
+	helped?: boolean;
+	helpedAt?: Date;
 };
 
 /**
@@ -86,6 +89,24 @@ export function recalcShares(
 	return next;
 }
 
+/** Quem ajudou e ainda divide a despesa (a marca some da contagem quando a cota fica só para reembolso). */
+export const isHelper = (s: ExpenseShare) => s.helped === true && s.amountCents > 0;
+
+/**
+ * Entrada de `helper` na divisão ("Quero ajudar"): divide igualmente entre quem já divide + `helper`
+ * (regras de `recalcShares`) e marca a cota nova. Lança o erro de `splitEqually` se o valor for pequeno demais.
+ */
+export function addHelper(
+	prev: ExpenseShare[],
+	paidBy: string,
+	amountCents: number,
+	helper: string,
+	now: Date,
+): ExpenseShare[] {
+	const next = recalcShares(prev, paidBy, amountCents, [...participantUidsOf(prev), helper]);
+	return next.map((s) => (s.uid === helper ? { ...s, helped: true, helpedAt: now } : s));
+}
+
 export type ShareChange = { shares: ExpenseShare[]; changed: boolean };
 
 /** Dono quita a cota (pendente recebida ou reembolso devolvido). null: alvo é o dono ou não tem cota. */
@@ -114,7 +135,12 @@ export function undoShare(shares: ExpenseShare[], paidBy: string, targetUid: str
 		return { shares, changed: false };
 	}
 	if (s.amountCents === 0) return { shares: shares.filter((_, j) => j !== i), changed: true };
-	const rest: ExpenseShare = { uid: s.uid, amountCents: s.amountCents, paidCents: s.paidCents };
+	const rest: ExpenseShare = {
+		uid: s.uid,
+		amountCents: s.amountCents,
+		paidCents: s.paidCents,
+		...(s.helped ? { helped: true, ...(s.helpedAt ? { helpedAt: s.helpedAt } : {}) } : {}),
+	};
 	return { shares: shares.map((x, j) => (j === i ? { ...rest, paidCents: 0 } : x)), changed: true };
 }
 

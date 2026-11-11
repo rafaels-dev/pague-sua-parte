@@ -215,6 +215,8 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 					onMode={p.onSplitMode}
 					onToggle={p.onToggle}
 					error={p.errors.participants}
+					allowAlone
+					payerUid={payerUid}
 				/>
 				{preview.kind === "ok" && !onlyPayer && (
 					<Card tone="high" className="space-y-1 p-4" aria-live="polite">
@@ -459,6 +461,7 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 				selfNoPixKey={noPixKey}
 				onPayer={(uid) => {
 					setPayerUid(uid);
+					if (splitMode === "alone") setSelected([uid]);
 					setErrors({});
 				}}
 				amountCents={amountCents}
@@ -505,6 +508,7 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 				onSplitMode={(m) => {
 					setSplitMode(m);
 					if (m === "all") setSelected(group.members.map((x) => x.uid));
+					if (m === "alone") setSelected([payer]);
 					if (errors.participants) setErrors((x) => ({ ...x, participants: undefined }));
 				}}
 				onSubmit={() => void submit()}
