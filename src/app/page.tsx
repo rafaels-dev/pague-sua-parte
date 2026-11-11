@@ -1,4 +1,18 @@
+"use client";
+
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/components/auth/auth-provider";
+import { SignInButton } from "@/components/auth/sign-in-button";
+
 export default function Home() {
+	const router = useRouter();
+	const { user, loading } = useAuth();
+
+	useEffect(() => {
+		if (user) router.replace("/app");
+	}, [user, router]);
+
 	return (
 		<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center gap-8 px-5 py-10">
 			<div className="space-y-3">
@@ -8,13 +22,13 @@ export default function Home() {
 				</p>
 			</div>
 
-			{/* TODO(auth agent): ligar a signInWithGoogle() de src/lib/auth/client.ts e redirecionar para /app */}
-			<button
-				type="button"
-				className="min-h-14 w-full rounded-2xl bg-primary px-6 text-xl font-semibold text-primary-foreground active:opacity-80"
-			>
-				Entrar com Google
-			</button>
+			{loading || user ? (
+				<p className="text-center text-xl text-muted" role="status">
+					Carregando...
+				</p>
+			) : (
+				<SignInButton onSignedIn={() => router.replace("/app")} />
+			)}
 
 			<p className="text-center text-base text-muted">Usamos sua conta Google apenas para identificar você.</p>
 		</main>
