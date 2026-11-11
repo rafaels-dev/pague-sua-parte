@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth/auth-provider";
 import { ProfileFormView, ProfileSkeleton } from "@/components/profile-form";
 import { Button, EmptyState, Snackbar } from "@/components/ui";
 import { onUserChanged } from "@/lib/auth/client";
 import { apiFetch, ApiError } from "@/lib/api-client";
+import { setFlash } from "@/components/expenses/types";
 import { detectPixKeyType, PIX_KEY_LABELS } from "@/lib/pix/key";
+import { profileReturnPath } from "@/lib/ui/return-to";
 
 type Profile = {
 	uid: string;
@@ -17,6 +20,7 @@ type Profile = {
 };
 
 export default function PerfilPage() {
+	const router = useRouter();
 	const { user } = useAuth();
 	const [profile, setProfile] = useState<Profile | null>(null);
 	const [loadError, setLoadError] = useState<string | null>(null);
@@ -71,6 +75,13 @@ export default function PerfilPage() {
 			setProfile(p);
 			setDisplayName(p.displayName ?? p.name);
 			setPixKey(p.pixKey?.key ?? "");
+			// Quem veio de um aviso ("Configurar chave Pix") volta sozinho para onde estava, já com a chave salva.
+			const back = p.pixKey ? profileReturnPath(window.location.search) : null;
+			if (back) {
+				if (back === "/app") setFlash("Chave Pix salva!");
+				router.replace(back);
+				return;
+			}
 			setSaved(true);
 		} catch (err) {
 			const msg = err instanceof ApiError ? err.message : "Não foi possível salvar. Tente de novo.";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loginUrlFor, safeReturnPath } from "./return-to";
+import { loginUrlFor, profileReturnPath, profileUrlFor, safeReturnPath } from "./return-to";
 
 describe("safeReturnPath", () => {
 	it("aceita caminhos do app", () => {
@@ -26,5 +26,19 @@ describe("loginUrlFor", () => {
 	it("cai em / se não for aceito", () => {
 		expect(loginUrlFor("//evil.com")).toBe("/");
 		expect(loginUrlFor("/app")).toBe("/");
+	});
+});
+
+describe("volta do perfil", () => {
+	it("lembra a tela inicial e caminhos do app", () => {
+		expect(profileUrlFor("/app")).toBe("/app/perfil?voltar=%2Fapp");
+		expect(profileUrlFor("/app/grupos/1/despesas/nova")).toBe("/app/perfil?voltar=%2Fapp%2Fgrupos%2F1%2Fdespesas%2Fnova");
+		expect(profileUrlFor("//evil.com")).toBe("/app/perfil");
+	});
+	it("só volta para endereços do próprio app", () => {
+		expect(profileReturnPath("?voltar=%2Fapp")).toBe("/app");
+		expect(profileReturnPath("?voltar=%2Fapp%2Fgrupos%2F1")).toBe("/app/grupos/1");
+		expect(profileReturnPath("?voltar=https%3A%2F%2Fevil.com")).toBeNull();
+		expect(profileReturnPath("")).toBeNull();
 	});
 });

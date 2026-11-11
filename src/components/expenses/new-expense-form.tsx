@@ -9,6 +9,7 @@ import { normalizeGroupDetail } from "@/components/groups/types";
 import { Banner, Button, Card, EmptyState, Icon, MoneyField, SegmentedButton, Sheet, Skeleton, TextField } from "@/components/ui";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { formatBRL } from "@/lib/money";
+import { profileUrlFor } from "@/lib/ui/return-to";
 import { formatDateShort, isValidISODate, todayISO } from "@/lib/ui/dates";
 import { isValidDueDate } from "@/lib/ui/due-dates";
 import { installmentSplitLine, splitPreview } from "@/lib/ui/split-preview";
@@ -22,14 +23,14 @@ import { WhoSplits, type SplitMode } from "./who-splits";
 export type FormErrors = Partial<Record<"amount" | "description" | "date" | "dueDate" | "installments" | "participants" | "files" | "form", string>>;
 
 /** Aviso exibido no lugar do formulário quando a pessoa ainda não cadastrou a chave Pix. */
-export function NoPixKeyBlock() {
+export function NoPixKeyBlock({ returnTo }: Readonly<{ returnTo?: string }> = {}) {
 	return (
 		<Banner
 			title="Para receber, cadastre sua chave Pix"
 			icon="warning"
 			role="alert"
 			action={
-				<Button href="/app/perfil" size="lg" fullWidth className="md:w-auto">
+				<Button href={returnTo ? profileUrlFor(returnTo) : "/app/perfil"} size="lg" fullWidth className="md:w-auto">
 					Cadastrar chave Pix
 				</Button>
 			}
@@ -125,7 +126,7 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 			</fieldset>
 		) : null;
 	const blocker = p.selfNoPixKey && !payerIsManaged ? (
-		<NoPixKeyBlock />
+		<NoPixKeyBlock returnTo={`/app/grupos/${encodeURIComponent(p.groupId)}/despesas/nova`} />
 	) : payerIsManaged && payer.hasPixKey === false ? (
 		<ManagedNoPixKeyBlock groupId={p.groupId} uid={payer.uid} name={payer.name} />
 	) : null;
@@ -375,7 +376,7 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 	if (noPixKey && !hasManaged) {
 		return (
 			<div className="mx-auto max-w-xl">
-				<NoPixKeyBlock />
+				<NoPixKeyBlock returnTo={`/app/grupos/${encodeURIComponent(groupId)}/despesas/nova`} />
 			</div>
 		);
 	}

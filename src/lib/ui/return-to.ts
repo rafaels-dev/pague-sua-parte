@@ -15,3 +15,18 @@ export function loginUrlFor(path: string): string {
 	const safe = safeReturnPath(path);
 	return safe ? `/?voltar=${encodeURIComponent(safe)}` : "/";
 }
+
+/** Tela inicial do app (aceita como destino de volta, além dos caminhos "/app/..."). */
+const APP_HOME = "/app";
+
+/** Endereço do perfil que lembra para onde voltar depois de salvar. */
+export function profileUrlFor(path: string): string {
+	const safe = path === APP_HOME ? APP_HOME : safeReturnPath(path);
+	return safe ? `/app/perfil?voltar=${encodeURIComponent(safe)}` : "/app/perfil";
+}
+
+/** Para onde voltar depois de salvar o perfil; null quando a pessoa abriu o perfil direto. */
+export function profileReturnPath(search: string): string | null {
+	const raw = new URLSearchParams(search).get("voltar");
+	return raw === APP_HOME ? APP_HOME : safeReturnPath(raw);
+}

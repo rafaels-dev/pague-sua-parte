@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
-import { Banner, Button } from "@/components/ui";
+import { clearFlash, peekFlash } from "@/components/expenses/types";
+import { Banner, Button, Snackbar } from "@/components/ui";
 import { apiFetch } from "@/lib/api-client";
+import { profileUrlFor } from "@/lib/ui/return-to";
 
 /** Aviso (visual) de chave Pix ausente. */
 export function PixKeyWarningView() {
@@ -11,7 +13,7 @@ export function PixKeyWarningView() {
 		<Banner
 			title="Você não configurou sua chave Pix."
 			action={
-				<Button href="/app/perfil" size="md" fullWidth className="md:w-auto">
+				<Button href={profileUrlFor("/app")} size="md" fullWidth className="md:w-auto">
 					Configurar chave Pix
 				</Button>
 			}
@@ -25,6 +27,12 @@ export function PixKeyWarningView() {
 export function PixKeyWarning() {
 	const { user } = useAuth();
 	const [missing, setMissing] = useState(false);
+	// Recado de quem acabou de salvar a chave no perfil e voltou para cá.
+	const [snack, setSnack] = useState<string | null>(() => peekFlash());
+
+	useEffect(() => {
+		clearFlash();
+	}, []);
 
 	useEffect(() => {
 		if (!user) return;
@@ -40,6 +48,10 @@ export function PixKeyWarning() {
 		};
 	}, [user]);
 
-	if (!missing) return null;
-	return <PixKeyWarningView />;
+	return (
+		<>
+			{missing && <PixKeyWarningView />}
+			<Snackbar open={snack !== null} message={snack ?? ""} onClose={() => setSnack(null)} aboveNav />
+		</>
+	);
 }
