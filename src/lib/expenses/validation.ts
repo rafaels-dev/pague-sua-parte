@@ -2,7 +2,9 @@ import { z } from "zod";
 import { addDays, addMonthsClamped, isRealDate, todayInSaoPaulo } from "./dates";
 
 export const MAX_FILES = 3;
-export const MAX_FILE_BYTES = 5 * 1024 * 1024;
+/** A Vercel recusa corpo de requisição acima de 4,5 MB: os anexos de uma requisição somam no máximo 4 MB. */
+export const MAX_FILE_BYTES = 4 * 1024 * 1024;
+export const MAX_TOTAL_BYTES = 4 * 1024 * 1024;
 export const MAX_AMOUNT_CENTS = 100_000_000;
 export const MAX_DESCRIPTION = 80;
 export const MIN_DATE = "2000-01-01";
@@ -156,8 +158,8 @@ export function checkFileLimits(files: { size: number }[]): Invalid | null {
 	if (files.length > MAX_FILES) {
 		return { ok: false, status: 422, error: "Você pode anexar até 3 arquivos.", field: "files" };
 	}
-	if (files.some((f) => f.size > MAX_FILE_BYTES)) {
-		return { ok: false, status: 413, error: "Cada anexo pode ter no máximo 5 MB.", field: "files" };
+	if (files.some((f) => f.size > MAX_FILE_BYTES) || files.reduce((sum, f) => sum + f.size, 0) > MAX_TOTAL_BYTES) {
+		return { ok: false, status: 413, error: "Os anexos podem ter no máximo 4 MB no total.", field: "files" };
 	}
 	return null;
 }

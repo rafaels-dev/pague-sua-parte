@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { clipboardFileName, filesFromTransfer, pickClipboardType } from "@/lib/ui/clipboard-files";
-import { MAX_FILES, countProblem, effectiveType, isImageType, sizeProblem, typeProblem } from "@/lib/ui/attachments";
+import { MAX_FILES, countProblem, effectiveType, isImageType, sizeProblem, totalProblem, typeProblem } from "@/lib/ui/attachments";
 import { downscaleImage } from "@/lib/ui/image-downscale";
 
 export type PickedFile = {
@@ -79,6 +79,13 @@ export function useAttachments({ enabled = true, maxFiles = MAX_FILES }: { enabl
 					const big = sizeProblem(file);
 					if (big) {
 						msgs.push(big);
+						continue;
+					}
+					// Com um arquivo só, o novo substitui o atual; senão, a soma de todos precisa caber em 4 MB.
+					const keptBytes = maxFiles === 1 ? 0 : current.reduce((sum, it) => sum + it.file.size, 0);
+					const tooBig = totalProblem(keptBytes, file);
+					if (tooBig) {
+						msgs.push(tooBig);
 						continue;
 					}
 					const image = isImageType(effectiveType(file));

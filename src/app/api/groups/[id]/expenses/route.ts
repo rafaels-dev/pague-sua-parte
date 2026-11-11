@@ -1,15 +1,14 @@
-import { bodyTooLarge, handleError, jsonError } from "@/lib/api/http";
+import { MULTIPART_OVERHEAD_BYTES, bodyTooLarge, handleError, jsonError } from "@/lib/api/http";
 import { requireUser } from "@/lib/auth/server";
 import { getDb } from "@/lib/db/client";
 import { createExpense, listExpenses } from "@/lib/expenses/repo";
-import { MAX_FILE_BYTES, MAX_FILES, checkFileLimits, parseExpenseInput, sniffFiles } from "@/lib/expenses/validation";
+import { MAX_TOTAL_BYTES, checkFileLimits, parseExpenseInput, sniffFiles } from "@/lib/expenses/validation";
 import { getAttachmentStore } from "@/lib/storage/attachments";
 
 export const dynamic = "force-dynamic";
 
 const NOT_FOUND = "Grupo não encontrado.";
-/** Folga para o corpo multipart além dos arquivos. */
-const MAX_BODY_BYTES = MAX_FILES * MAX_FILE_BYTES + 256 * 1024;
+const MAX_BODY_BYTES = MAX_TOTAL_BYTES + MULTIPART_OVERHEAD_BYTES;
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -30,7 +29,7 @@ export async function POST(request: Request, { params }: Ctx) {
 		const user = await requireUser(request);
 		const { id } = await params;
 
-		if (bodyTooLarge(request, MAX_BODY_BYTES)) return jsonError("Cada anexo pode ter no máximo 5 MB.", 413, "files");
+		if (bodyTooLarge(request, MAX_BODY_BYTES)) return jsonError("Os anexos podem ter no máximo 4 MB no total.", 413, "files");
 
 		let form: FormData;
 		try {

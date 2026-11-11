@@ -70,10 +70,21 @@ describe("POST /api/groups/:id/expenses", () => {
 		expect(await res.json()).toEqual({ error: "Só aceitamos foto (JPG, PNG, WebP) ou PDF.", field: "files" });
 		expect(createExpense).not.toHaveBeenCalled();
 	});
-	it("413 para arquivo acima de 5 MB", async () => {
-		const res = await post(data, [{ name: "a.pdf", bytes: 5 * 1024 * 1024 + 1 }]);
+	it("413 para arquivo acima de 4 MB", async () => {
+		const res = await post(data, [{ name: "a.pdf", bytes: 4 * 1024 * 1024 + 1 }]);
 		expect(res.status).toBe(413);
-		expect(await res.json()).toEqual({ error: "Cada anexo pode ter no máximo 5 MB.", field: "files" });
+		expect(await res.json()).toEqual({ error: "Os anexos podem ter no máximo 4 MB no total.", field: "files" });
+	});
+	it("413 quando a soma de 3 arquivos passa de 4 MB", async () => {
+		const MB = 1024 * 1024;
+		const res = await post(data, [
+			{ name: "a.pdf", bytes: 2 * MB },
+			{ name: "b.pdf", bytes: 1 * MB },
+			{ name: "c.pdf", bytes: 1 * MB + 1 },
+		]);
+		expect(res.status).toBe(413);
+		expect(((await res.json()) as { field: string }).field).toBe("files");
+		expect(createExpense).not.toHaveBeenCalled();
 	});
 	it("422 para mais de 3 arquivos", async () => {
 		const res = await post(data, Array.from({ length: 4 }, () => ({ name: "a.pdf", bytes: PDF })));

@@ -44,8 +44,8 @@ describe("POST /expenses/:eid/shares/:uid/payment", () => {
 	});
 	it("422 em file para tipo não aceito, grande demais e mais de um arquivo, sem chamar o repo", async () => {
 		expect(await out(await upload([1, 2, 3, 4], "x.exe"))).toEqual([422, { error: "Só aceitamos foto (JPG, PNG, WebP) ou PDF.", field: "file" }]);
-		const big = await upload([...PNG, ...new Array(5 * 1024 * 1024).fill(0)]);
-		expect(await out(big)).toEqual([422, { error: "O comprovante pode ter no máximo 5 MB.", field: "file" }]);
+		const big = await upload([...PNG, ...new Array(4 * 1024 * 1024).fill(0)]);
+		expect(await out(big)).toEqual([422, { error: "O comprovante pode ter no máximo 4 MB.", field: "file" }]);
 		const form = new FormData();
 		form.append("file", new File([new Uint8Array(PNG)], "a.png"));
 		form.append("file", new File([new Uint8Array(PNG)], "b.png"));

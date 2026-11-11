@@ -37,21 +37,16 @@ yarn-error.log*
 # vercel
 .vercel
 
+# resto do setup antigo (Cloudflare): nunca versionar segredos locais
+.dev.vars*
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
 
-# OpenNext
-/.open-next
-
-# wrangler files
-.wrangler
-.dev.vars*
-!.dev.vars.example
-
-
-!.dev.vars.example
-
 # skills instaladas localmente (reinstale com: npx skills add nutlope/hallmark)
 /.agents/
 /.claude/skills/
+
+# armazenamento local de anexos (dev)
+/.data/

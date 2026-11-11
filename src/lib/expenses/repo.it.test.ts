@@ -3,10 +3,9 @@
  *   npm run db:it-expenses  (ou)  node --env-file=.env.local scripts/it-expenses.mjs
  * Cria grupos "__it__*" e usuários "__it__*" descartáveis e apaga tudo no final, mesmo se falhar.
  */
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, ObjectId, type Db } from "mongodb";
 
-vi.mock("@opennextjs/cloudflare", () => ({ getCloudflareContext: vi.fn() }));
 
 const ENABLED = process.env.IT_MONGO === "1" && Boolean(process.env.MONGODB_URI);
 const RUN = `__it__${Date.now().toString(36)}`;

@@ -1,4 +1,5 @@
-import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { createFsStore } from "./fs-store";
+import { createR2Store } from "./r2-s3-store";
 
 /** Anexo já gravado: o que fica no documento da despesa. `key` nunca sai da API. */
 export type AttachmentMeta = { id: string; key: string; name: string; contentType: string; size: number };
@@ -6,27 +7,30 @@ export type AttachmentMeta = { id: string; key: string; name: string; contentTyp
 /** Interface mínima do armazenamento; os testes usam uma implementação em memória. */
 export interface AttachmentStore {
 	put(key: string, bytes: Uint8Array, contentType: string): Promise<void>;
-	get(key: string): Promise<{ body: ReadableStream<Uint8Array>; size: number } | null>;
+	get(key: string): Promise<{ body: ReadableStream<Uint8Array>; size: number; contentType?: string } | null>;
+	/** Idempotente: apagar uma chave que não existe não é erro. */
 	delete(keys: string[]): Promise<void>;
 }
 
-/** Adaptador sobre o binding R2 `ATTACHMENTS` (wrangler.jsonc). */
+type StoreEnv = Record<string, string | undefined>;
+
+/**
+ * Escolhe o armazenamento: R2 (API S3) quando as quatro variáveis R2_* existem; senão, disco local
+ * (`.data/attachments/`), mas só fora de produção. Em produção sem R2 falha fechado, sem cair para o disco.
+ */
+export function resolveAttachmentStore(env: StoreEnv = process.env): AttachmentStore {
+	const { R2_ACCOUNT_ID: accountId, R2_ACCESS_KEY_ID: accessKeyId, R2_SECRET_ACCESS_KEY: secretAccessKey, R2_BUCKET: bucket } = env;
+	if (accountId && accessKeyId && secretAccessKey && bucket) {
+		return createR2Store({ accountId, accessKeyId, secretAccessKey, bucket });
+	}
+	if (env.NODE_ENV === "production") {
+		throw new Error("Armazenamento de anexos (R2) não está configurado.");
+	}
+	return createFsStore();
+}
+
 export function getAttachmentStore(): AttachmentStore {
-	const bucket = (getCloudflareContext().env as unknown as { ATTACHMENTS?: R2Bucket }).ATTACHMENTS;
-	if (!bucket) throw new Error("Binding ATTACHMENTS (R2) não está configurado.");
-	return {
-		async put(key, bytes, contentType) {
-			await bucket.put(key, bytes, { httpMetadata: { contentType } });
-		},
-		async get(key) {
-			const obj = await bucket.get(key);
-			if (!obj) return null;
-			return { body: obj.body as ReadableStream<Uint8Array>, size: obj.size };
-		},
-		async delete(keys) {
-			if (keys.length) await bucket.delete(keys);
-		},
-	};
+	return resolveAttachmentStore();
 }
 
 /** 128 bits aleatórios (Web Crypto) em hexadecimal. */

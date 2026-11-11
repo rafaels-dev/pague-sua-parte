@@ -43,7 +43,7 @@ export function AttachmentPicker({
 	const texts = copy ?? {
 		title: "Anexos",
 		optional: true,
-		hint: `Foto, print ou PDF da nota. Até ${maxFiles} arquivos.`,
+		hint: `Foto, print ou PDF da nota. Até ${maxFiles} arquivos, 4 MB no total.`,
 		pick: "Anexar foto ou PDF",
 		pickAgain: "Anexar foto ou PDF",
 		inputLabel: "Escolher arquivos para anexar",

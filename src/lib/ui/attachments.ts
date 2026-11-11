@@ -1,7 +1,9 @@
 /** Regras dos anexos de uma despesa (as mesmas do servidor) e decisões puras sobre eles. */
 
 export const MAX_FILES = 3;
-export const MAX_FILE_BYTES = 5 * 1024 * 1024;
+/** Mesmos limites do servidor: a Vercel recusa requisições acima de 4,5 MB, então os anexos somam no máximo 4 MB. */
+export const MAX_FILE_BYTES = 4 * 1024 * 1024;
+export const MAX_TOTAL_BYTES = 4 * 1024 * 1024;
 export const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/webp", "application/pdf"] as const;
 export const ACCEPT_ATTR = ACCEPTED_TYPES.join(",");
 
@@ -50,7 +52,13 @@ export function typeProblem(file: FileLike): string | null {
 }
 
 export function sizeProblem(file: FileLike): string | null {
-	return file.size > MAX_FILE_BYTES ? `"${shortName(file.name)}" é grande demais (${formatFileSize(file.size)}). O limite é 5 MB por arquivo.` : null;
+	return file.size > MAX_FILE_BYTES ? `"${shortName(file.name)}" é grande demais (${formatFileSize(file.size)}). O limite é 4 MB.` : null;
+}
+
+/** Mensagem se, somando este arquivo aos já escolhidos, passa de 4 MB no total; null se cabe. */
+export function totalProblem(currentBytes: number, file: FileLike, max: number = MAX_TOTAL_BYTES): string | null {
+	if (currentBytes + file.size <= max) return null;
+	return `"${shortName(file.name)}" não cabe: os anexos podem ter no máximo 4 MB no total (já escolhidos: ${formatFileSize(currentBytes)}). Remova algum ou escolha um arquivo menor.`;
 }
 
 /** Mensagem se já não cabe mais um anexo; null se cabe. */

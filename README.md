@@ -5,10 +5,10 @@ Divida despesas em grupo e receba por Pix: lance o gasto, cada um paga a sua par
 ## Stack
 
 - Next.js (App Router, TypeScript) + Tailwind CSS
-- Cloudflare Workers via `@opennextjs/cloudflare` (flag `nodejs_compat`)
+- Vercel (funções Node.js, plano Hobby, região São Paulo `gru1`)
 - MongoDB Atlas (M0) com o driver oficial `mongodb`
 - Firebase Authentication (Google) no cliente; o servidor valida o ID token com `jose`
-- Cloudflare R2 para os anexos das despesas (binding `ATTACHMENTS`)
+- Cloudflare R2 para os anexos das despesas, pela API S3 (`aws4fetch`)
 - Vitest para testes
 
 ## Rodando localmente
@@ -16,19 +16,21 @@ Divida despesas em grupo e receba por Pix: lance o gasto, cada um paga a sua par
 ```bash
 npm install
 cp .env.example .env.local      # preencha os valores
-cp .dev.vars.example .dev.vars  # usado pelo preview no runtime do Workers
 npm run dev                     # http://localhost:3000
 ```
 
-## Anexos (R2)
+## Anexos
 
-Os anexos (foto ou PDF, até 3 por despesa, 5 MB cada) ficam num bucket R2. Antes do primeiro deploy, crie o bucket:
+Os anexos (foto ou PDF, até 3 por despesa, 4 MB no total) e os comprovantes (4 MB) ficam num bucket do Cloudflare R2, acessado pela API S3. O limite de 4 MB existe porque as funções da Vercel recusam requisições acima de 4,5 MB.
 
-```bash
-npx wrangler r2 bucket create pague-sua-parte-anexos
-```
+Sem as variáveis `R2_*`, o `npm run dev` guarda os arquivos em disco, em `.data/attachments/` (ignorada pelo git). Em produção, sem elas o servidor responde erro 500: nunca grava em disco.
 
-No `npm run dev` o OpenNext simula o binding localmente (não precisa de conta Cloudflare); reinicie o servidor ao alterar o `wrangler.jsonc`.
+## Publicar na Vercel
+
+1. **Atlas**: crie o cluster e o usuário do banco; libere o acesso de rede para a Vercel (a Hobby não tem IP fixo, então use `0.0.0.0/0` com um usuário de senha forte). Depois rode uma vez `npm run db:indexes` (usa o `.env.local`).
+2. **R2**: crie um bucket e um API token do R2 com a permissão *Object Read & Write* restrita a esse bucket. Guarde o Account ID, o Access Key ID e o Secret Access Key.
+3. **Firebase**: ative o login Google e adicione o domínio do site em *Authentication > Settings > Authorized domains*.
+4. **Vercel**: importe o repositório (framework Next.js) e cadastre as variáveis de ambiente abaixo. A região das funções (`gru1`) já está no `vercel.json`.
 
 ## Variáveis de ambiente
 
@@ -41,19 +43,21 @@ No `npm run dev` o OpenNext simula o binding localmente (não precisa de conta C
 | `FIREBASE_PROJECT_ID` | servidor | Usado para validar o token (issuer/audience) |
 | `MONGODB_URI` | servidor (segredo) | String de conexão do Atlas |
 | `MONGODB_DB` | servidor | Nome do banco (padrão `despesas`) |
+| `R2_ACCOUNT_ID` | servidor | ID da conta Cloudflare dona do bucket |
+| `R2_ACCESS_KEY_ID` | servidor (segredo) | Access Key ID do token R2 |
+| `R2_SECRET_ACCESS_KEY` | servidor (segredo) | Secret Access Key do token R2 |
+| `R2_BUCKET` | servidor | Nome do bucket dos anexos |
 
-`NEXT_PUBLIC_*` são embutidas no bundle em tempo de build. Em produção, defina os segredos com `npx wrangler secret put MONGODB_URI` (e as demais variáveis no painel ou em `wrangler.jsonc`).
+`NEXT_PUBLIC_*` são embutidas no bundle em tempo de build. Nunca commite valores reais: use `.env.local` no desenvolvimento e as variáveis do projeto na Vercel.
 
 ## Comandos
 
 ```bash
-npm run dev       # servidor de desenvolvimento
-npm run lint      # ESLint
-npm test          # Vitest
-npm run build     # build do Next.js
-npm run preview   # build OpenNext + preview local no runtime do Workers
-npm run deploy    # build OpenNext + deploy (requer `wrangler login`)
-npm run cf-typegen  # regenera cloudflare-env.d.ts
+npm run dev          # servidor de desenvolvimento
+npm run lint         # ESLint
+npm test             # Vitest
+npm run build        # build do Next.js
+npm run db:indexes   # cria os índices no MongoDB (usa .env.local)
 ```
 
 ## Estrutura dos contratos

@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { attachmentKey, deleteAttachments, putAttachment, putReceipt, randomId, receiptKey, type AttachmentStore } from "./attachments";
+import { attachmentKey, deleteAttachments, getAttachmentStore, putAttachment, putReceipt, randomId, receiptKey, resolveAttachmentStore, type AttachmentStore } from "./attachments";
 
-vi.mock("@opennextjs/cloudflare", () => ({ getCloudflareContext: vi.fn() }));
 
 const fake = (): AttachmentStore & { put: ReturnType<typeof vi.fn>; delete: ReturnType<typeof vi.fn> } => ({
 	put: vi.fn().mockResolvedValue(undefined),
@@ -36,5 +35,50 @@ describe("attachments", () => {
 		await expect(deleteAttachments(store, ["k"])).resolves.toBeUndefined();
 		await deleteAttachments(store, []);
 		expect(store.delete).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("resolveAttachmentStore", () => {
+	const R2 = { R2_ACCOUNT_ID: "acct", R2_ACCESS_KEY_ID: "id", R2_SECRET_ACCESS_KEY: "secret", R2_BUCKET: "b" };
+
+	it("com as quatro variáveis R2 usa o R2 (também em produção)", async () => {
+		const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
+		vi.stubGlobal("fetch", fetchMock);
+		try {
+			for (const NODE_ENV of ["production", "development"]) {
+				await resolveAttachmentStore({ ...R2, NODE_ENV }).get("k");
+			}
+			expect(fetchMock).toHaveBeenCalledTimes(2);
+			expect(String(fetchMock.mock.calls[0][0].url ?? fetchMock.mock.calls[0][0])).toContain("acct.r2.cloudflarestorage.com");
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+	it("sem variáveis R2 e fora de produção usa o disco local", async () => {
+		for (const NODE_ENV of ["development", "test", undefined]) {
+			const store = resolveAttachmentStore({ NODE_ENV });
+			expect(await store.get("__nao_existe__/x")).toBeNull();
+		}
+	});
+	it("variável R2 faltando também cai no disco fora de produção", () => {
+		const { R2_BUCKET: _omit, ...partial } = R2;
+		void _omit;
+		expect(() => resolveAttachmentStore({ ...partial, NODE_ENV: "development" })).not.toThrow();
+	});
+	it("em produção sem R2 falha fechado, sem cair no disco e sem vazar detalhes", () => {
+		expect(() => resolveAttachmentStore({ NODE_ENV: "production" })).toThrow("Armazenamento de anexos (R2) não está configurado.");
+		const { R2_SECRET_ACCESS_KEY: _omit, ...partial } = R2;
+		void _omit;
+		expect(() => resolveAttachmentStore({ ...partial, NODE_ENV: "production" })).toThrow();
+		expect(() => resolveAttachmentStore({ ...R2, R2_BUCKET: "", NODE_ENV: "production" })).toThrow();
+	});
+	it("getAttachmentStore lê process.env", () => {
+		vi.stubEnv("NODE_ENV", "production");
+		for (const k of Object.keys(R2)) vi.stubEnv(k, "");
+		try {
+			expect(() => getAttachmentStore()).toThrow();
+		} finally {
+			vi.unstubAllEnvs();
+		}
 	});
 });

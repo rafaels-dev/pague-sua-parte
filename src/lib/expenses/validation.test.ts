@@ -33,18 +33,32 @@ describe("sniffFiles", () => {
 		const r = sniffFiles([{ name: "x.png", bytes: EXE }]);
 		expect(r).toEqual({ ok: false, status: 415, error: "Só aceitamos foto (JPG, PNG, WebP) ou PDF.", field: "files" });
 	});
-	it("413 acima de 5 MB e 422 acima de 3 arquivos", () => {
-		const big = new Uint8Array(5 * 1024 * 1024 + 1);
+	it("413 acima de 4 MB e 422 acima de 3 arquivos", () => {
+		const big = new Uint8Array(4 * 1024 * 1024 + 1);
 		big.set(PDF);
 		expect(sniffFiles([{ name: "a.pdf", bytes: big }])).toMatchObject({ ok: false, status: 413, field: "files" });
 		const four = Array.from({ length: 4 }, () => ({ name: "a.pdf", bytes: PDF }));
 		expect(sniffFiles(four)).toMatchObject({ ok: false, status: 422, field: "files" });
-		expect(checkFileLimits([{ size: 5 * 1024 * 1024 }])).toBeNull();
+		expect(checkFileLimits([{ size: 4 * 1024 * 1024 }])).toBeNull();
 	});
-	it("exatamente 5 MB e 3 arquivos passam", () => {
-		const edge = new Uint8Array(5 * 1024 * 1024);
+	it("exatamente 4 MB no total passa, mesmo dividido em 3 arquivos", () => {
+		const third = Math.floor((4 * 1024 * 1024) / 3);
+		const part = new Uint8Array(third);
+		part.set(PDF);
+		expect(sniffFiles([1, 2, 3].map(() => ({ name: "a.pdf", bytes: part })))).toMatchObject({ ok: true });
+		const edge = new Uint8Array(4 * 1024 * 1024);
 		edge.set(PDF);
-		expect(sniffFiles([1, 2, 3].map(() => ({ name: "a.pdf", bytes: edge })))).toMatchObject({ ok: true });
+		expect(sniffFiles([{ name: "a.pdf", bytes: edge }])).toMatchObject({ ok: true });
+	});
+	it("413 quando a soma passa de 4 MB, mesmo com cada arquivo abaixo do limite", () => {
+		const MB = 1024 * 1024;
+		expect(checkFileLimits([{ size: 2 * MB }, { size: 2 * MB + 1 }])).toEqual({
+			ok: false,
+			status: 413,
+			error: "Os anexos podem ter no máximo 4 MB no total.",
+			field: "files",
+		});
+		expect(checkFileLimits([{ size: 2 * MB }, { size: 2 * MB }])).toBeNull();
 	});
 });
 

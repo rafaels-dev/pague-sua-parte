@@ -7,6 +7,7 @@ import {
 	planDownscale,
 	shouldUseConverted,
 	sizeProblem,
+	totalProblem,
 	typeProblem,
 } from "./attachments";
 
@@ -29,8 +30,15 @@ describe("validação", () => {
 		expect(typeProblem({ name: "a.gif", type: "image/gif", size: 1 })).not.toBeNull();
 	});
 	it("tamanho", () => {
-		expect(sizeProblem({ name: "a.pdf", type: "application/pdf", size: 5 * MB })).toBeNull();
-		expect(sizeProblem({ name: "a.pdf", type: "application/pdf", size: 5 * MB + 1 })).toMatch(/5 MB/);
+		expect(sizeProblem({ name: "a.pdf", type: "application/pdf", size: 4 * MB })).toBeNull();
+		expect(sizeProblem({ name: "a.pdf", type: "application/pdf", size: 4 * MB + 1 })).toMatch(/4 MB/);
+	});
+	it("soma dos anexos", () => {
+		const f = (size: number) => ({ name: "a.pdf", type: "application/pdf", size });
+		expect(totalProblem(0, f(4 * MB))).toBeNull();
+		expect(totalProblem(3 * MB, f(1 * MB))).toBeNull();
+		expect(totalProblem(3 * MB, f(1 * MB + 1))).toMatch(/4 MB no total/);
+		expect(totalProblem(0, f(4 * MB + 1))).not.toBeNull();
 	});
 	it("quantidade", () => {
 		expect(countProblem(2)).toBeNull();

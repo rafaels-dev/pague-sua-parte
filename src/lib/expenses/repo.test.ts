@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ObjectId, type Db } from "mongodb";
 import type { AttachmentStore } from "@/lib/storage/attachments";
 
-vi.mock("@opennextjs/cloudflare", () => ({ getCloudflareContext: vi.fn() }));
 const { createExpense, deleteExpense, getAttachmentRef, getExpenseDetail, getReceiptRef, getSummary, listExpenses, markSelfPaid, setSharePaid, updateParticipants } = await import("./repo");
 const { listGroups } = await import("@/lib/groups/repo");
 

@@ -1,4 +1,4 @@
-import { bodyTooLarge, handleError, jsonError } from "@/lib/api/http";
+import { MULTIPART_OVERHEAD_BYTES, bodyTooLarge, handleError, jsonError } from "@/lib/api/http";
 import { requireUser } from "@/lib/auth/server";
 import { getDb } from "@/lib/db/client";
 import { markSelfPaid } from "@/lib/expenses/repo";
@@ -10,8 +10,7 @@ export const dynamic = "force-dynamic";
 type Ctx = { params: Promise<{ id: string; eid: string; uid: string }> };
 
 const CONFLICT = "Essa despesa acabou de ser alterada. Tente de novo.";
-/** Folga para o corpo multipart além do arquivo. */
-const MAX_BODY_BYTES = MAX_FILE_BYTES + 256 * 1024;
+const MAX_BODY_BYTES = MAX_FILE_BYTES + MULTIPART_OVERHEAD_BYTES;
 
 /** "Já paguei": a pessoa que deve (ou quem age por ela) quita a própria parte, com comprovante opcional (`file`). */
 export async function POST(request: Request, { params }: Ctx) {
@@ -21,7 +20,7 @@ export async function POST(request: Request, { params }: Ctx) {
 
 		let file: SniffedFile | undefined;
 		if ((request.headers.get("content-type") ?? "").toLowerCase().startsWith("multipart/form-data")) {
-			if (bodyTooLarge(request, MAX_BODY_BYTES)) return jsonError("O comprovante pode ter no máximo 5 MB.", 422, "file");
+			if (bodyTooLarge(request, MAX_BODY_BYTES)) return jsonError("O comprovante pode ter no máximo 4 MB.", 422, "file");
 			let form: FormData;
 			try {
 				form = await request.formData();
@@ -35,11 +34,11 @@ export async function POST(request: Request, { params }: Ctx) {
 				return jsonError("Envie um único comprovante.", 422, "file");
 			}
 			if (files.length === 1) {
-				if (files[0].size > MAX_FILE_BYTES) return jsonError("O comprovante pode ter no máximo 5 MB.", 422, "file");
+				if (files[0].size > MAX_FILE_BYTES) return jsonError("O comprovante pode ter no máximo 4 MB.", 422, "file");
 				const bytes = new Uint8Array(await files[0].arrayBuffer());
 				const sniffed = sniffFiles([{ name: files[0].name, bytes }]);
 				if (!sniffed.ok) {
-					const msg = sniffed.status === 415 ? "Só aceitamos foto (JPG, PNG, WebP) ou PDF." : "O comprovante pode ter no máximo 5 MB.";
+					const msg = sniffed.status === 415 ? "Só aceitamos foto (JPG, PNG, WebP) ou PDF." : "O comprovante pode ter no máximo 4 MB.";
 					return jsonError(msg, 422, "file");
 				}
 				file = sniffed.files[0];

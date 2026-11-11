@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ObjectId, type Db } from "mongodb";
 import type { AttachmentStore } from "@/lib/storage/attachments";
 
-vi.mock("@opennextjs/cloudflare", () => ({ getCloudflareContext: vi.fn() }));
 const { createExpense, deleteExpense, getExpenseDetail, listExpenses, updateParticipants } = await import("./repo");
 
 const GID = "507f1f77bcf86cd799439011";

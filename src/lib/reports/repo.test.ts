@@ -4,7 +4,6 @@ import { inPeriod, parsePeriod } from "./period";
 import { referenceFacet } from "./compute";
 import { FIXTURE } from "./compute.test";
 
-vi.mock("@opennextjs/cloudflare", () => ({ getCloudflareContext: vi.fn() }));
 const { getGroupReport } = await import("./repo");
 
 const GID = "507f1f77bcf86cd799439011";
