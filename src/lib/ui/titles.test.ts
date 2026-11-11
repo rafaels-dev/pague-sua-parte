@@ -10,6 +10,9 @@ describe("screenInfo", () => {
 	it("pagar tudo volta ao início", () => {
 		expect(screenInfo("/app/pagar")).toEqual({ title: "Pagar tudo", back: "/app", nav: "/app" });
 	});
+	it("quem me deve volta ao início", () => {
+		expect(screenInfo("/app/receber")).toEqual({ title: "Quem me deve", back: "/app", nav: "/app" });
+	});
 	it("grupo", () => expect(screenInfo("/app/grupos/abc")).toMatchObject({ title: "Grupo", back: "/app", nav: "/app" }));
 	it("lançar despesa volta ao grupo", () => {
 		expect(screenInfo("/app/grupos/abc/despesas/nova")).toMatchObject({ title: "Lançar despesa", back: "/app/grupos/abc", nav: "/app" });

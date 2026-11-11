@@ -6,6 +6,7 @@ export function screenInfo(pathname: string): ScreenInfo {
 		return { title: "Meu perfil", back: null, nav: "/app/perfil" };
 	}
 	if (pathname === "/app/pagar") return { title: "Pagar tudo", back: "/app", nav: "/app" };
+	if (pathname === "/app/receber") return { title: "Quem me deve", back: "/app", nav: "/app" };
 	if (pathname === "/app/grupos/novo") return { title: "Criar grupo", back: "/app", nav: "/app" };
 	const report = /^\/app\/grupos\/([^/]+)\/relatorio$/.exec(pathname);
 	if (report) return { title: "Relatório", back: `/app/grupos/${report[1]}`, nav: "/app" };

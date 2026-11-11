@@ -10,6 +10,7 @@ export function ShareExpenseContent({
 	canShare,
 	copyFailed,
 	dismissLabel = "Agora não",
+	whatsappLabel = "Avisar no WhatsApp",
 	onCopy,
 	onShare,
 	onClose,
@@ -19,6 +20,7 @@ export function ShareExpenseContent({
 	canShare: boolean;
 	copyFailed: boolean;
 	dismissLabel?: string;
+	whatsappLabel?: string;
 	onCopy: () => void;
 	onShare: () => void;
 	onClose: () => void;
@@ -28,7 +30,7 @@ export function ShareExpenseContent({
 			<p className="text-body-large text-on-surface-variant">{intro}</p>
 			<div className="flex flex-col gap-3">
 				<Button href={buildWhatsAppUrl(text)} target="_blank" rel="noopener noreferrer" icon="share" fullWidth>
-					Avisar no WhatsApp
+					{whatsappLabel}
 				</Button>
 				{canShare && (
 					<Button variant="outlined" icon="share" onClick={onShare} fullWidth>

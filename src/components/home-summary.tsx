@@ -22,6 +22,7 @@ export function HomeSummary({
 	payNowCents,
 	overdueCents = 0,
 	payAll = false,
+	receivable = false,
 	loading = false,
 }: Readonly<{
 	receiveCents: number | null;
@@ -33,6 +34,8 @@ export function HomeSummary({
 	overdueCents?: number;
 	/** Há algo a pagar agora (sua parte ou de quem você cuida): mostra "Pagar tudo de uma vez". */
 	payAll?: boolean;
+	/** Há algo a receber: o valor vira um link para "Quem me deve". */
+	receivable?: boolean;
 	loading?: boolean;
 }>) {
 	const today = todayISO();
@@ -53,11 +56,23 @@ export function HomeSummary({
 		);
 	return (
 		<Card as="section" tone="high" aria-label="Resumo" aria-busy={loading || undefined} className="grid grid-cols-2 gap-x-4 gap-y-3 p-5 md:p-8">
-			<div className="min-w-0">
-				<p className="text-body-large text-on-surface-variant">Você tem a receber</p>
-				{value(receiveCents, "text-receive")}
-				{receiveUntil && <p className="money mt-1 text-body-large text-on-surface-variant">{receiveUntil}</p>}
-			</div>
+			{receivable && !loading && receiveCents !== null && receiveCents > 0 ? (
+				<Link href="/app/receber" className="state-layer -m-2 block min-h-12 min-w-0 rounded-shape-md p-2 text-on-surface">
+					<p className="text-body-large text-on-surface-variant">Você tem a receber</p>
+					{value(receiveCents, "text-receive")}
+					{receiveUntil && <p className="money mt-1 text-body-large text-on-surface-variant">{receiveUntil}</p>}
+					<p className="mt-1 flex items-center text-title-medium text-primary">
+						Ver quem deve
+						<Icon name="chevron_right" size={22} />
+					</p>
+				</Link>
+			) : (
+				<div className="min-w-0">
+					<p className="text-body-large text-on-surface-variant">Você tem a receber</p>
+					{value(receiveCents, "text-receive")}
+					{receiveUntil && <p className="money mt-1 text-body-large text-on-surface-variant">{receiveUntil}</p>}
+				</div>
+			)}
 			<div className="min-w-0 border-l border-outline-variant pl-4 md:pl-8">
 				<p className="text-body-large text-on-surface-variant">Você tem a pagar</p>
 				{value(payCents, "text-pay")}
@@ -86,21 +101,33 @@ export function ManagedSummaryCards({ managed }: Readonly<{ managed: MeSummary["
 	return (
 		<section aria-label="Pessoas que você cuida" className="space-y-3">
 			{managed.map((m) => (
-				<Link
-					key={`${m.groupId}-${m.uid}`}
-					href={`/app/grupos/${encodeURIComponent(m.groupId)}`}
-					className="state-layer flex min-h-[4.5rem] items-center gap-4 rounded-shape-lg bg-surface-container-low px-4 py-3 text-on-surface"
-				>
-					<Avatar name={m.name} managed />
-					<span className="min-w-0 flex-1">
-						<span className="block break-words text-title-medium">
-							{m.name} <span className="whitespace-nowrap font-normal">· você cuida</span>
+				<div key={`${m.groupId}-${m.uid}`} className="rounded-shape-lg bg-surface-container-low">
+					<Link
+						href={`/app/grupos/${encodeURIComponent(m.groupId)}`}
+						className="state-layer flex min-h-[4.5rem] items-center gap-4 rounded-shape-lg px-4 py-3 text-on-surface"
+					>
+						<Avatar name={m.name} managed />
+						<span className="min-w-0 flex-1">
+							<span className="block break-words text-title-medium">
+								{m.name} <span className="whitespace-nowrap font-normal">· você cuida</span>
+							</span>
+							{m.groupName && <span className="block break-words text-body-large text-on-surface-variant">{m.groupName}</span>}
+							<GroupBalance group={m} />
 						</span>
-						{m.groupName && <span className="block break-words text-body-large text-on-surface-variant">{m.groupName}</span>}
-						<GroupBalance group={m} />
-					</span>
-					<Icon name="chevron_right" className="text-on-surface-variant" />
-				</Link>
+						<Icon name="chevron_right" className="text-on-surface-variant" />
+					</Link>
+					{m.toReceiveCents > 0 && (
+						<div className="px-4 pb-3">
+							<Link
+								href="/app/receber"
+								className="state-layer relative inline-flex min-h-7 items-center gap-1 whitespace-nowrap rounded-full bg-secondary-container px-3 text-sm font-medium text-on-secondary-container before:absolute before:-inset-x-1 before:-inset-y-[10px] before:content-['']"
+							>
+								Ver quem deve
+								<Icon name="chevron_right" size={16} />
+							</Link>
+						</div>
+					)}
+				</div>
 			))}
 		</section>
 	);
@@ -136,6 +163,7 @@ export function HomeSummaryLive() {
 				receiveNowCents={ready?.toReceiveNowCents}
 				payNowCents={ready?.toPayNowCents}
 				overdueCents={ready?.overdueToPayCents ?? 0}
+				receivable={!!ready && ready.toReceiveCents > 0}
 				payAll={!!ready && ready.toPayNowCents + ready.managed.reduce((sum, m) => sum + m.toPayNowCents, 0) > 0}
 			/>
 			{ready && <ManagedSummaryCards managed={ready.managed} />}

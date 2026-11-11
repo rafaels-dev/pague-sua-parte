@@ -5,6 +5,7 @@ import { LandingView } from "@/components/landing-view";
 import { todayISO } from "@/lib/ui/dates";
 import { nextDayOfMonth } from "@/lib/ui/due-dates";
 import { MockPayAll } from "../pay-all-mocks";
+import { MockReceivables } from "../receivables-mocks";
 import { DUE_GROUPS, MOCK_GROUP, MockExpense, MockGroup, MockHome, MockManagedSheet, MockNewExpense, MockNoPixKey, MockRecurrenceSheet, MockReport } from "../expense-mocks";
 
 export function Telas({ tela }: Readonly<{ tela: string }>) {
@@ -258,6 +259,29 @@ export function Telas({ tela }: Readonly<{ tela: string }>) {
 			return <MockPayAll framed={false} scene="erro" />;
 		case "pagar-tudo-indisponivel":
 			return <MockPayAll framed={false} scene="indisponivel" />;
+		case "receber-home":
+			return (
+				<MockHome
+					framed={false}
+					groups={DUE_GROUPS}
+					managed={[{ uid: "m1", name: "Benjamim", groupId: "1", groupName: "Despesas da família", toReceiveCents: 14500, toPayCents: 0, toReceiveNowCents: 14500, toPayNowCents: 0, overdueToPayCents: 0 }]}
+					summary={{ receiveNowCents: 30000, payNowCents: 45000, overdueCents: 12000, payAll: true, receivable: true }}
+				/>
+			);
+		case "receber":
+			return <MockReceivables framed={false} />;
+		case "receber-whatsapp":
+			return <MockReceivables framed={false} scene="whatsapp" />;
+		case "receber-whatsapp-cuidado":
+			return <MockReceivables framed={false} scene="whatsapp-cuidado" />;
+		case "receber-vazio":
+			return <MockReceivables framed={false} scene="vazio" />;
+		case "receber-carregando":
+			return <MockReceivables framed={false} scene="carregando" />;
+		case "receber-erro":
+			return <MockReceivables framed={false} scene="erro" />;
+		case "receber-indisponivel":
+			return <MockReceivables framed={false} scene="indisponivel" />;
 		case "despesa-pago-junto":
 			return <MockExpense mode="batch" framed={false} />;
 		default:

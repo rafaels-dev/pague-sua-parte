@@ -15,6 +15,7 @@ import { groupsCollection } from "@/lib/groups/repo";
 import { materializeSafely } from "@/lib/recurrences/materialize";
 import { putBatchReceipt, randomId, type AttachmentMeta, type AttachmentStore } from "@/lib/storage/attachments";
 import { buildPayables, recipientKey, type Payables } from "./payables";
+import { buildReceivables, EMPTY_RECEIVABLES, type Receivables } from "./receivables";
 
 /** Quantas contas cabem num pagamento em lote. */
 export const BATCH_MAX_ITEMS = 50;
@@ -47,6 +48,30 @@ export async function getPayables(db: Db, uid: string, now: Date = new Date()): 
 	}
 	const people = await loadPeople(db, [...uids]);
 	return buildPayables({ uid, today, groups, expenses, people });
+}
+
+// ---------- o que devem a você ----------
+
+/** Roda a geração das despesas fixas dos grupos de `uid` (falha não derruba) e devolve tudo o que ainda devem a ele. */
+export async function getReceivables(db: Db, uid: string, now: Date = new Date()): Promise<Receivables> {
+	const groups = await groupsCollection(db)
+		.find({ "members.uid": uid }, { projection: { _id: 1, name: 1, members: 1 } })
+		.toArray();
+	if (groups.length === 0) return EMPTY_RECEIVABLES;
+	await materializeSafely(db, groups.map((g) => g._id), now);
+
+	const acting = new Set([uid]);
+	for (const g of groups) for (const m of g.members) if (m.kind === "managed" && m.managedBy === uid) acting.add(m.uid);
+	const expenses = await expensesCollection(db)
+		.find({ groupId: { $in: groups.map((g) => g._id) }, paidBy: { $in: [...acting] } })
+		.toArray();
+	const uids = new Set<string>();
+	for (const e of expenses) {
+		uids.add(e.paidBy);
+		for (const s of e.shares) uids.add(s.uid);
+	}
+	const people = await loadPeople(db, [...uids]);
+	return buildReceivables({ uid, today: todayInSaoPaulo(now), groups, expenses, people });
 }
 
 // ---------- pagar tudo de uma vez ----------

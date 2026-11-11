@@ -590,6 +590,53 @@ describe.skipIf(!ENABLED)("integração: despesas no MongoDB real", () => {
 		expect((await repo.deleteExpense(db, mem, g1, e1.id, OWNER)).status).toBe("has_payment");
 	}, 120_000);
 
+	it("a receber: devedores entre grupos, quem recebe é pessoa que o dono cuida, cota paga fora, e o total confere com o resumo", async () => {
+		const payments = await import("@/lib/payments/repo");
+		const g1 = await newGroup("rec1", [OWNER, A, B]);
+		const g2 = await newGroup("rec2", [OWNER, A]);
+		const added = await groupsRepo.addManagedMember(db, g1, OWNER, { name: "Benjamim", managedBy: OWNER, pixKey: { type: "cpf", key: "52998224725" } as never });
+		if (added.status !== "ok") throw new Error("addManagedMember: " + added.status);
+		const BEN = added.uid;
+		const mk = async (g: string, by: string, description: string, amountCents: number, participantUids: string[], extra: Record<string, unknown> = {}, paidByUid?: string) =>
+			ok(await repo.createExpense(db, store, { groupId: g, uid: by, input: { description, amountCents, date: "2026-11-10", participantUids, ...extra, ...(paidByUid ? { paidByUid } : {}) } as never, files: [] })).expense;
+		await mk(g1, OWNER, "Mercado", 3000, [OWNER, A, B]); // A e B devem 1000
+		await mk(g2, OWNER, "Aluguel", 2000, [OWNER, A], { dueDate: "2099-01-01" }); // A deve 1000, ainda não venceu
+		await mk(g1, OWNER, "Remédio do Benjamim", 1500, [BEN, B], {}, BEN); // B deve 750 a Benjamim (o dono cuida dele)
+		const paid = await mk(g1, OWNER, "Já paga", 2000, [OWNER, B]);
+		ok(await repo.setSharePaid(db, g1, paid.id, OWNER, B, "paid"));
+
+		const full = await payments.getReceivables(db, OWNER);
+		// OWNER aparece em grupos "__it__" de outros testes desta rodada: só olha os destes dois grupos
+		const mine = full.debtors
+			.map((d) => ({ ...d, items: d.items.filter((i) => [g1, g2].includes(i.groupId)) }))
+			.filter((d) => d.items.length > 0)
+			.map((d) => ({ ...d, totalCents: d.items.reduce((t, i) => t + i.dueCents, 0) }))
+			.sort((x, y) => y.totalCents - x.totalCents);
+		expect(mine.map((d) => [d.uid, d.totalCents, d.items.length, d.kind])).toEqual([
+			[A, 2000, 2, "user"],
+			[B, 1750, 2, "user"],
+		]);
+		expect(mine[0].items.map((i) => [i.groupId, i.description, i.payeeIsYou]).sort()).toEqual([[g1, "Mercado", true], [g2, "Aluguel", true]].sort());
+		const forBen = mine[1].items.find((i) => i.description === "Remédio do Benjamim")!;
+		expect([forBen.payeeIsYou, forBen.payeeName, forBen.dueCents]).toEqual([false, "Benjamim", 750]);
+		expect(mine[1].items.some((i) => i.description === "Já paga")).toBe(false);
+		expect(JSON.stringify(full)).not.toContain("example.invalid");
+		expect(JSON.stringify(full)).not.toContain("52998224725");
+
+		// o total confere com o "a receber" do início: o que é do dono + o que é de quem ele cuida (cartão à parte)
+		const docs = [...(await rawDocs(g1)), ...(await rawDocs(g2))];
+		const ref = shares.balanceOf(docs, OWNER);
+		const refBen = shares.balanceOf(docs, BEN);
+		const all = mine.flatMap((d) => d.items);
+		expect(all.reduce((t, i) => t + i.dueCents, 0)).toBe(ref.toReceiveCents + refBen.toReceiveCents);
+		expect(all.filter((i) => i.dueDate === null).reduce((t, i) => t + i.dueCents, 0)).toBe(ref.toReceiveNowCents + refBen.toReceiveNowCents);
+		expect(all.filter((i) => !i.payeeIsYou).reduce((t, i) => t + i.dueCents, 0)).toBe(refBen.toReceiveCents);
+		const summary = await repo.getSummary(db, OWNER);
+		expect(summary.managed.find((m) => m.uid === BEN)!.toReceiveCents).toBe(refBen.toReceiveCents);
+		// quem deve vê a mesma cota como "a pagar", não como "a receber"
+		expect((await payments.getReceivables(db, A)).debtors.flatMap((d) => d.items).filter((i) => [g1, g2].includes(i.groupId))).toEqual([]);
+	}, 120_000);
+
 	it("Quero ajudar (membro e pessoa sem login) e relatório de contribuições", async () => {
 		const reports = await import("@/lib/reports/repo");
 		const compute = await import("@/lib/reports/compute");
