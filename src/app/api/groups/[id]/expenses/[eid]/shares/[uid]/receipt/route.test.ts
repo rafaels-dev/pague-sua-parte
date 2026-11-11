@@ -32,7 +32,7 @@ describe("GET /expenses/:eid/shares/:uid/receipt", () => {
 		expect(res.headers.get("content-disposition")).toContain("filename*=UTF-8''pix%20a%C3%A7a%C3%AD.png");
 		expect(res.headers.get("x-content-type-options")).toBe("nosniff");
 		expect(res.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
-		expect(res.headers.get("cache-control")).toBe("private, max-age=3600");
+		expect(res.headers.get("cache-control")).toBe("private, no-store");
 	});
 	it("404 sem permissão ou sem comprovante, sem tocar no armazenamento", async () => {
 		getReceiptRef.mockResolvedValue({ status: "not_found" });

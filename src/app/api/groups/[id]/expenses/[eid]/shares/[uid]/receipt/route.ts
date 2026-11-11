@@ -32,7 +32,7 @@ export async function GET(request: Request, { params }: Ctx) {
 				"Content-Disposition": contentDisposition(ref.name),
 				"X-Content-Type-Options": "nosniff",
 				"Content-Security-Policy": "default-src 'none'; sandbox",
-				"Cache-Control": "private, max-age=3600",
+				"Cache-Control": "private, no-store",
 			},
 		});
 	} catch (err) {

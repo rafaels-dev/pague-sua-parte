@@ -25,7 +25,7 @@ function post(d: unknown, files: { name: string; type?: string; bytes: Uint8Arra
 		if (typeof f.bytes === "number") bytes.set(PDF);
 		form.append("files", new File([bytes as BlobPart], f.name, { type: f.type ?? "application/octet-stream" }));
 	}
-	return POST(new Request("http://x/api/groups/" + GID + "/expenses", { method: "POST", body: form, headers }), ctx);
+	return POST(new Request("http://x/api/groups/" + GID + "/expenses", { method: "POST", body: form, headers: { "content-length": "1000", ...headers } }), ctx);
 }
 
 beforeEach(() => {

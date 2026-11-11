@@ -11,3 +11,13 @@ export function handleError(err: unknown, label: string) {
 	console.error(`${label} error:`, err instanceof Error ? err.name : "unknown");
 	return jsonError("Algo deu errado. Tente novamente em instantes.", 500);
 }
+
+/**
+ * O corpo declarado passa do limite? Sem `Content-Length` válido (envio em pedaços) também recusa: o corpo inteiro
+ * seria lido para a memória antes de qualquer conferência de tamanho.
+ */
+export function bodyTooLarge(request: Request, maxBytes: number): boolean {
+	const raw = request.headers.get("content-length");
+	const declared = raw === null ? Number.NaN : Number(raw);
+	return !Number.isFinite(declared) || declared < 0 || declared > maxBytes;
+}

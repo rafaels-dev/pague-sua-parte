@@ -17,7 +17,7 @@ const now = () => Math.floor(Date.now() / 1000);
 function sign(
 	over: { claims?: Record<string, unknown>; iss?: string; aud?: string; sub?: string; exp?: number; key?: CryptoKey } = {},
 ) {
-	return new SignJWT({ auth_time: now() - 10, email: "ana@example.com", name: "Ana", picture: "https://x/y.png", ...over.claims })
+	return new SignJWT({ auth_time: now() - 10, email: "ana@example.com", name: "Ana", picture: "https://x/y.png", firebase: { sign_in_provider: "google.com" }, ...over.claims })
 		.setProtectedHeader({ alg: "RS256", kid: "k1" })
 		.setIssuer(over.iss ?? `https://securetoken.google.com/${PROJECT}`)
 		.setAudience(over.aud ?? PROJECT)
@@ -54,6 +54,10 @@ describe("verifyIdToken", () => {
 	});
 	it("rejeita sub vazio", async () => {
 		await expect(verify(await sign({ sub: "" }))).rejects.toBeInstanceOf(UnauthorizedError);
+	});
+	it("rejeita login que não é do Google", async () => {
+		await expect(verify(await sign({ claims: { firebase: { sign_in_provider: "password" } } }))).rejects.toBeInstanceOf(UnauthorizedError);
+		await expect(verify(await sign({ claims: { firebase: undefined } }))).rejects.toBeInstanceOf(UnauthorizedError);
 	});
 	it("rejeita auth_time ausente ou no futuro", async () => {
 		await expect(verify(await sign({ claims: { auth_time: now() + 1000 } }))).rejects.toBeInstanceOf(UnauthorizedError);

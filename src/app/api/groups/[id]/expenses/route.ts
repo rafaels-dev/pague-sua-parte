@@ -1,4 +1,4 @@
-import { handleError, jsonError } from "@/lib/api/http";
+import { bodyTooLarge, handleError, jsonError } from "@/lib/api/http";
 import { requireUser } from "@/lib/auth/server";
 import { getDb } from "@/lib/db/client";
 import { createExpense, listExpenses } from "@/lib/expenses/repo";
@@ -30,8 +30,7 @@ export async function POST(request: Request, { params }: Ctx) {
 		const user = await requireUser(request);
 		const { id } = await params;
 
-		const declared = Number(request.headers.get("content-length"));
-		if (declared > MAX_BODY_BYTES) return jsonError("Cada anexo pode ter no máximo 5 MB.", 413, "files");
+		if (bodyTooLarge(request, MAX_BODY_BYTES)) return jsonError("Cada anexo pode ter no máximo 5 MB.", 413, "files");
 
 		let form: FormData;
 		try {

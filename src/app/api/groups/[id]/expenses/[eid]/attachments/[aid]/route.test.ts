@@ -32,7 +32,7 @@ describe("GET attachment", () => {
 		expect(res.headers.get("content-disposition")).toContain('inline; filename="nota fiscal.pdf"');
 		expect(res.headers.get("x-content-type-options")).toBe("nosniff");
 		expect(res.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
-		expect(res.headers.get("cache-control")).toBe("private, max-age=3600");
+		expect(res.headers.get("cache-control")).toBe("private, no-store");
 	});
 	it("nome com acentos não quebra o cabeçalho", async () => {
 		getAttachmentRef.mockResolvedValue({ status: "ok", key: "k", name: "açaí.png", contentType: "image/png" });

@@ -52,6 +52,9 @@ export async function verifyIdToken(
 	if (typeof authTime !== "number" || authTime > nowSec + tolerance) {
 		throw new UnauthorizedError("Token com auth_time inválido.");
 	}
+	// O app só aceita login com Google: um token de outro provedor (e-mail e senha, anônimo) é recusado mesmo que alguém o ative no Firebase.
+	const provider = (payload.firebase as { sign_in_provider?: unknown } | undefined)?.sign_in_provider;
+	if (provider !== "google.com") throw new UnauthorizedError("Login não aceito.");
 
 	const email = typeof payload.email === "string" ? payload.email : "";
 	const name = typeof payload.name === "string" && payload.name ? payload.name : email || "Usuário";

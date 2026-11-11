@@ -15,7 +15,7 @@ const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2];
 const upload = (bytes: number[] | null, name = "pix.png") => {
 	const form = new FormData();
 	if (bytes) form.append("file", new File([new Uint8Array(bytes)], name));
-	return POST(new Request("http://x", { method: "POST", body: form }), ctx);
+	return POST(new Request("http://x", { method: "POST", body: form, headers: { "content-length": "1000" } }), ctx);
 };
 const out = async (res: Response) => [res.status, await res.json()];
 
@@ -39,7 +39,7 @@ describe("POST /expenses/:eid/shares/:uid/payment", () => {
 		expect((await POST(new Request("http://x", { method: "POST" }), ctx)).status).toBe(200);
 		const form = new FormData();
 		form.append("file", new File([], ""));
-		expect((await POST(new Request("http://x", { method: "POST", body: form }), ctx)).status).toBe(200);
+		expect((await POST(new Request("http://x", { method: "POST", body: form, headers: { "content-length": "1000" } }), ctx)).status).toBe(200);
 		for (const c of markSelfPaid.mock.calls) expect(c[2].file).toBeUndefined();
 	});
 	it("422 em file para tipo não aceito, grande demais e mais de um arquivo, sem chamar o repo", async () => {
@@ -49,7 +49,7 @@ describe("POST /expenses/:eid/shares/:uid/payment", () => {
 		const form = new FormData();
 		form.append("file", new File([new Uint8Array(PNG)], "a.png"));
 		form.append("file", new File([new Uint8Array(PNG)], "b.png"));
-		const two = await POST(new Request("http://x", { method: "POST", body: form }), ctx);
+		const two = await POST(new Request("http://x", { method: "POST", body: form, headers: { "content-length": "1000" } }), ctx);
 		expect([two.status, ((await two.json()) as { field: string }).field]).toEqual([422, "file"]);
 		expect(markSelfPaid).not.toHaveBeenCalled();
 	});
@@ -72,5 +72,15 @@ describe("POST /expenses/:eid/shares/:uid/payment", () => {
 		requireUser.mockResolvedValue({ uid: "u1" });
 		markSelfPaid.mockRejectedValue(new Error("boom"));
 		expect((await upload(null)).status).toBe(500);
+	});
+});
+
+describe("tamanho do corpo", () => {
+	it("recusa multipart sem Content-Length (envio em pedaços) antes de ler o corpo", async () => {
+		const form = new FormData();
+		form.append("file", new File([new Uint8Array(PNG)], "a.png"));
+		const res = await POST(new Request("http://x", { method: "POST", body: form }), ctx);
+		expect(res.status).toBe(422);
+		expect(markSelfPaid).not.toHaveBeenCalled();
 	});
 });

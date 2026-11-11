@@ -1,4 +1,4 @@
-import { handleError, jsonError } from "@/lib/api/http";
+import { bodyTooLarge, handleError, jsonError } from "@/lib/api/http";
 import { requireUser } from "@/lib/auth/server";
 import { getDb } from "@/lib/db/client";
 import { markSelfPaid } from "@/lib/expenses/repo";
@@ -19,11 +19,9 @@ export async function POST(request: Request, { params }: Ctx) {
 		const user = await requireUser(request);
 		const { id, eid, uid } = await params;
 
-		const declared = Number(request.headers.get("content-length"));
-		if (declared > MAX_BODY_BYTES) return jsonError("O comprovante pode ter no máximo 5 MB.", 422, "file");
-
 		let file: SniffedFile | undefined;
 		if ((request.headers.get("content-type") ?? "").toLowerCase().startsWith("multipart/form-data")) {
+			if (bodyTooLarge(request, MAX_BODY_BYTES)) return jsonError("O comprovante pode ter no máximo 5 MB.", 422, "file");
 			let form: FormData;
 			try {
 				form = await request.formData();
