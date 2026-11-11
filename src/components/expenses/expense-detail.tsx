@@ -13,7 +13,7 @@ import { copyText } from "@/lib/ui/clipboard";
 import { formatDateLong, formatDateShort, todayISO } from "@/lib/ui/dates";
 import { deleteFlashMessage, dueLong, installmentLabel } from "@/lib/ui/due-dates";
 import { isImageType } from "@/lib/ui/attachments";
-import { buildExpenseLink, buildExpenseShareText, shareIntro } from "@/lib/ui/expense-share";
+import { buildExpenseLink, buildExpenseShareText, buildPaidShareText, shareIntro } from "@/lib/ui/expense-share";
 import { paidByLabel, shareStatusChip } from "@/lib/ui/expense-status";
 import { paidCaption, receiptActions, receiptDoneMessage, receiptSheetCopy, undoLabel, type ReceiptMode } from "@/lib/ui/receipts";
 import { managedCaption } from "@/lib/ui/managed";
@@ -548,7 +548,8 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 	const [qrOpen, setQrOpen] = useState<string | null>(null);
 	const [codeFallback, setCodeFallback] = useState<string | null>(null);
 	// Recém lançada: em vez do recadinho, abrimos o sheet "Avisar o grupo".
-	const [shareOpen, setShareOpen] = useState<"launched" | "manual" | null>(() => (peekFlash() === LAUNCHED_FLASH ? "launched" : null));
+	const [paidNotice, setPaidNotice] = useState<{ amountCents: number; forName: string | null; hasReceipt: boolean } | null>(null);
+	const [shareOpen, setShareOpen] = useState<"launched" | "manual" | "paid" | null>(() => (peekFlash() === LAUNCHED_FLASH ? "launched" : null));
 	const [snack, setSnack] = useState<string | null>(() => {
 		const f = peekFlash();
 		return f === LAUNCHED_FLASH ? null : f;
@@ -714,9 +715,16 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 				`/api/groups/${encodeURIComponent(groupId)}/expenses/${encodeURIComponent(expenseId)}/shares/${encodeURIComponent(uid)}/payment`,
 				{ method: "POST", body },
 			);
-			setExpense(normalizeExpense(updated));
+			const next = normalizeExpense(updated);
+			setExpense(next);
 			setReceiptSheet(null);
 			setSnack(receiptDoneMessage(mode));
+			// Oferece avisar no WhatsApp, com o link da despesa (onde quem recebe vê o pagamento e o comprovante).
+			const mine = next?.shares.find((x) => x.uid === uid);
+			if (mine) {
+				setPaidNotice({ amountCents: mine.amountCents, forName: mine.isYou ? null : mine.name, hasReceipt: !!mine.receipt });
+				setShareOpen("paid");
+			}
 		} catch (e) {
 			if (e instanceof ApiError && e.status === 409) {
 				// A despesa mudou enquanto isso: fecha e mostra como está agora.
@@ -886,7 +894,10 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 	const viewed = attachments.find((a) => a.id === viewing);
 	const shareTarget = shareAction ? expense.shares.find((s) => s.uid === shareAction.uid) : undefined;
 	const shareLink = buildExpenseLink(window.location.origin, groupId, expenseId);
-	const shareText = buildExpenseShareText(expense, shareLink);
+	const shareText =
+		shareOpen === "paid" && paidNotice
+			? buildPaidShareText({ ...paidNotice, description: expense.description }, shareLink)
+			: buildExpenseShareText(expense, shareLink);
 	const canNativeShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
 	const hasNext = !!expense.installment && expense.installment.number < expense.installment.count;
 	const closeShare = () => {
@@ -999,11 +1010,15 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 			<Sheet
 				open={shareOpen !== null}
 				onClose={closeShare}
-				title={shareOpen === "manual" ? "Avisar o grupo" : LAUNCHED_FLASH}
+				title={shareOpen === "paid" ? "Avisar no WhatsApp" : shareOpen === "manual" ? "Avisar o grupo" : LAUNCHED_FLASH}
 			>
 				<ShareExpenseContent
 					text={shareText}
-					intro={shareIntro(shareOpen === "manual" ? "manual" : "launched", expense.installment?.count)}
+					intro={
+						shareOpen === "paid"
+							? `Mande para ${expense.paidBy.name} saber que você pagou. O link abre a despesa${paidNotice?.hasReceipt ? " com o seu comprovante" : ""}.`
+							: shareIntro(shareOpen === "manual" ? "manual" : "launched", expense.installment?.count)
+					}
 					canShare={canNativeShare}
 					copyFailed={copyFailed}
 					dismissLabel={shareOpen === "manual" ? "Fechar" : "Agora não"}

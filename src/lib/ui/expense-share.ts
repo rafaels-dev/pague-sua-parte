@@ -28,3 +28,17 @@ export function shareIntro(kind: "launched" | "manual", installmentCount?: numbe
 		? `${installmentCount} parcelas lançadas, uma por mês. Avise o grupo para cada um pagar a sua parte.`
 		: "Avise o grupo para cada um pagar a sua parte.";
 }
+
+/**
+ * Mensagem de quem acabou de pagar a sua parte: o link leva à despesa, onde quem recebe vê o pagamento e o comprovante.
+ * `forName`: nome da pessoa sem celular, quando o responsável pagou por ela.
+ */
+export function buildPaidShareText(
+	p: { amountCents: number; description: string; forName?: string | null; hasReceipt: boolean },
+	link: string,
+): string {
+	const description = p.description.trim().replace(/[\s.]+$/, "");
+	const whose = p.forName ? `a parte de ${p.forName}` : "minha parte";
+	const see = p.hasReceipt ? "Veja o comprovante:" : "Confira aqui:";
+	return `Paguei ${whose}, ${formatBRL(p.amountCents)}, da despesa ${description}. ${see} ${link}`;
+}

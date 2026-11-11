@@ -33,3 +33,19 @@ describe("shareIntro", () => {
 	it("compra parcelada", () => expect(shareIntro("launched", 6)).toBe("6 parcelas lançadas, uma por mês. Avise o grupo para cada um pagar a sua parte."));
 	it("manual", () => expect(shareIntro("manual", 6)).toBe("Mande o link para cada um pagar a sua parte."));
 });
+
+describe("aviso de quem pagou", () => {
+	const link = "https://exemplo.test/app/grupos/1/despesas/2";
+	it("com comprovante, na própria parte", async () => {
+		const { buildPaidShareText } = await import("./expense-share");
+		const text = buildPaidShareText({ amountCents: 7248, description: "Remédios da farmácia. ", hasReceipt: true }, link);
+		expect(text).toContain("Paguei minha parte, R$");
+		expect(text).toContain("da despesa Remédios da farmácia. Veja o comprovante: " + link);
+	});
+	it("sem comprovante, por uma pessoa sem celular", async () => {
+		const { buildPaidShareText } = await import("./expense-share");
+		const text = buildPaidShareText({ amountCents: 5000, description: "Exame", forName: "Benjamim", hasReceipt: false }, link);
+		expect(text).toContain("Paguei a parte de Benjamim, R$");
+		expect(text).toContain("Confira aqui: " + link);
+	});
+});
