@@ -1,4 +1,5 @@
 import { Greeting } from "@/components/greeting";
+import { PixKeyWarning } from "@/components/pix-key-warning";
 import { formatBRL } from "@/lib/money";
 
 export const metadata = { title: "Início" };
@@ -8,6 +9,8 @@ export default function AppHome() {
 	return (
 		<div className="space-y-5">
 			<Greeting />
+
+			<PixKeyWarning />
 
 			<div className="grid gap-5 md:grid-cols-2">
 				<section className="rounded-2xl border border-border bg-card p-5 md:p-7">
