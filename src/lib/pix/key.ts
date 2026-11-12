@@ -71,6 +71,8 @@ export function normalizePixKey(input: string): PixKey | null {
 	}
 	if (digits.length === 14) return isValidCnpj(digits) ? { type: "cnpj", key: digits } : null;
 	if (digits.length === 11) {
+		// Com parênteses ("(52) 99822-4725") é celular, mesmo que os dígitos também formem um CPF.
+		if (/[()]/.test(raw) && isMobileNational(digits)) return { type: "phone", key: `+55${digits}` };
 		if (isValidCpf(digits)) return { type: "cpf", key: digits };
 		if (isMobileNational(digits)) return { type: "phone", key: `+55${digits}` };
 		return null;
@@ -83,4 +85,24 @@ export function normalizePixKey(input: string): PixKey | null {
 
 export function detectPixKeyType(input: string): PixKeyType | null {
 	return normalizePixKey(input)?.type ?? null;
+}
+
+export type AmbiguousKeyChoice = "cpf" | "phone";
+
+/**
+ * 11 dígitos que são, ao mesmo tempo, um CPF válido e um celular válido (ex.: 52998224725). `normalizePixKey` guarda como
+ * CPF; só o dono da chave sabe qual é. Com formatação inequívoca ("(11) 9...", "529.982.247-25", "+55...") não é ambíguo.
+ */
+export function isCpfPhoneAmbiguous(input: string): boolean {
+	const raw = input.trim();
+	if (!raw || /[()+.@]/.test(raw) || !NUMERIC_FORMAT_RE.test(raw)) return false;
+	const digits = raw.replace(/\D/g, "");
+	return digits.length === 11 && isValidCpf(digits) && isMobileNational(digits);
+}
+
+/** Texto a enviar ao servidor: no caso ambíguo, "celular" vira +55…; "CPF" fica só com os dígitos. */
+export function applyPixKeyChoice(input: string, choice: AmbiguousKeyChoice | null): string {
+	if (!isCpfPhoneAmbiguous(input) || !choice) return input;
+	const digits = input.replace(/\D/g, "");
+	return choice === "phone" ? `+55${digits}` : digits;
 }

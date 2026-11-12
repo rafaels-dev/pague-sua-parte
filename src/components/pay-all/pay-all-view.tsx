@@ -159,7 +159,7 @@ export function RecipientCardView({
 						amountCents={total}
 						payeeName={recipient.pix.payeeName}
 						pix={recipient.pix}
-						payload={payAllPayload(recipient, total)}
+						payload={payAllPayload(recipient, total, chosen)}
 						qrOpen={card.qrOpen}
 						codeFallback={card.codeFallback}
 						onToggleQr={onToggleQr}

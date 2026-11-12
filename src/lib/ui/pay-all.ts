@@ -1,5 +1,6 @@
 import { formatBRL } from "@/lib/money";
-import { buildPixPayload } from "@/lib/pix/brcode";
+import { buildPixPayload, descriptionBudget } from "@/lib/pix/brcode";
+import { batchMessage } from "@/lib/pix/message";
 import type { PixKeyType } from "@/lib/pix/key";
 
 /** "Pagar tudo de uma vez": o que a pessoa tem a pagar agora, por quem recebe (formato de `GET /api/me/payables`). */
@@ -139,9 +140,9 @@ export function toggleUnchecked(unchecked: readonly string[], key: string): stri
 }
 
 /** Código Pix Copia e Cola do total marcado; null se os dados não permitem gerar. */
-export function payAllPayload(r: Pick<PayableRecipient, "pix">, amountCents: number): string | null {
+export function payAllPayload(r: Pick<PayableRecipient, "pix">, amountCents: number, items?: readonly PayableItem[]): string | null {
 	try {
-		return buildPixPayload({ key: r.pix.key, payeeName: r.pix.payeeName, amountCents, txid: "RPAGARTUDO" });
+		return buildPixPayload({ key: r.pix.key, payeeName: r.pix.payeeName, amountCents, ...(items && items.length > 0 ? { description: batchMessage(items, descriptionBudget(r.pix.key)) } : {}) });
 	} catch {
 		return null;
 	}

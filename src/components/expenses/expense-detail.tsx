@@ -8,7 +8,8 @@ import type { Group } from "@/components/groups/group-detail";
 import { normalizeGroupDetail } from "@/components/groups/types";
 import { apiFetch, apiFetchBlob, ApiError } from "@/lib/api-client";
 import { formatBRL } from "@/lib/money";
-import { buildPixPayload } from "@/lib/pix/brcode";
+import { buildPixPayload, descriptionBudget } from "@/lib/pix/brcode";
+import { refundMessage, shareMessage } from "@/lib/pix/message";
 import { copyText } from "@/lib/ui/clipboard";
 import { formatDateLong, formatDateShort, todayISO } from "@/lib/ui/dates";
 import { deleteFlashMessage, dueLong, installmentLabel } from "@/lib/ui/due-dates";
@@ -38,7 +39,7 @@ export const LAUNCHED_FLASH = "Despesa lançada!";
 export function refundPayload(expense: ExpenseDetailData, share: ExpenseShare): string | null {
 	if (!share.refundPix) return null;
 	try {
-		return buildPixPayload({ key: share.refundPix.key, payeeName: share.refundPix.payeeName, amountCents: share.refundCents, txid: `D${expense.id}` });
+		return buildPixPayload({ key: share.refundPix.key, payeeName: share.refundPix.payeeName, amountCents: share.refundCents, description: refundMessage(expense.description, expense.installment, descriptionBudget(share.refundPix.key)) });
 	} catch {
 		return null;
 	}
@@ -48,7 +49,7 @@ export function refundPayload(expense: ExpenseDetailData, share: ExpenseShare): 
 export function payloadFor(expense: ExpenseDetailData, shareCents: number): string | null {
 	if (!expense.pix) return null;
 	try {
-		return buildPixPayload({ key: expense.pix.key, payeeName: expense.pix.payeeName, amountCents: shareCents, txid: `R${expense.id}` });
+		return buildPixPayload({ key: expense.pix.key, payeeName: expense.pix.payeeName, amountCents: shareCents, description: shareMessage(expense.description, expense.installment, descriptionBudget(expense.pix.key)) });
 	} catch {
 		return null;
 	}

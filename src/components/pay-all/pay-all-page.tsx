@@ -157,7 +157,7 @@ export function PayAllPage() {
 				onToggleQr={(id) => patch(id, { qrOpen: !card(id).qrOpen })}
 				onCopyCode={(id) => {
 					const r = find(id);
-					const code = r ? payAllPayload(r, selectedTotal(r.items, card(id).unchecked)) : null;
+					const code = r ? payAllPayload(r, selectedTotal(r.items, card(id).unchecked), selectedItems(r.items, card(id).unchecked)) : null;
 					if (!code) return;
 					void copyText(code).then((ok) => {
 						patch(id, { codeFallback: !ok });

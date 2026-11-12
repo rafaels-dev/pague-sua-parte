@@ -1,5 +1,6 @@
 import { Avatar, Banner, Button, TextField } from "@/components/ui";
-import { PIX_KEY_LABELS, detectPixKeyType } from "@/lib/pix/key";
+import { PixKeyChoice } from "@/components/pix-key-choice";
+import { PIX_KEY_LABELS, detectPixKeyType, type AmbiguousKeyChoice } from "@/lib/pix/key";
 import { cx } from "@/lib/ui/cx";
 import { managedCaption } from "@/lib/ui/managed";
 import type { Member } from "./types";
@@ -81,6 +82,9 @@ export function ManagedFormContent({
 	onName,
 	onCarer,
 	onPixKey,
+	ambiguous = false,
+	keyChoice = null,
+	onKeyChoice,
 	onSubmit,
 	onCancel,
 }: Readonly<{
@@ -94,6 +98,10 @@ export function ManagedFormContent({
 	onName: (v: string) => void;
 	onCarer: (uid: string) => void;
 	onPixKey: (v: string) => void;
+	/** O número pode ser CPF ou celular: pede a escolha. */
+	ambiguous?: boolean;
+	keyChoice?: AmbiguousKeyChoice | null;
+	onKeyChoice?: (v: AmbiguousKeyChoice) => void;
 	onSubmit: () => void;
 	onCancel: () => void;
 }>) {
@@ -138,6 +146,7 @@ export function ManagedFormContent({
 				onChange={(e) => onPixKey(e.target.value)}
 				className="[--field-bg:var(--md-surface-container-low)]"
 			/>
+			{ambiguous && onKeyChoice && <PixKeyChoice value={keyChoice} onChange={onKeyChoice} />}
 			{errors.form && (
 				<Banner tone="error" icon="error" role="alert">
 					{errors.form}

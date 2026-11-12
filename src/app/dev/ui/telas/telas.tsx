@@ -1,5 +1,6 @@
 "use client";
 
+import { MockPixRefused } from "../pix-mocks";
 import { GoogleButtonView } from "@/components/auth/sign-in-button";
 import { LandingView } from "@/components/landing-view";
 import { todayISO } from "@/lib/ui/dates";
@@ -80,6 +81,8 @@ export function Telas({ tela }: Readonly<{ tela: string }>) {
 			return <MockExpense mode="self-debtor" receiptSheet={{ mode: "attach" }} framed={false} />;
 		case "devo-qr":
 			return <MockExpense mode="debtor" qrOpen framed={false} />;
+		case "pix-recusado":
+			return <MockPixRefused />;
 		case "devo-sem-copiar":
 			return <MockExpense mode="debtor" codeFallback framed={false} />;
 		case "paguei":

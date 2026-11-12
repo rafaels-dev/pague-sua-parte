@@ -12,6 +12,8 @@ export type PixPayloadInput = {
 	amountCents: number;
 	/** Referência opcional (somente [A-Za-z0-9], até 25). */
 	txid?: string;
+	/** Mensagem opcional que o app do banco mostra no pagamento (subcampo 26/02); cortada para caber. */
+	description?: string;
 	/** Cidade opcional (padrão "BRASIL"). */
 	city?: string;
 };
@@ -51,6 +53,31 @@ function sanitizeText(input: string, max: number, fallback: string): string {
 	return cleaned || fallback;
 }
 
+/** Espaço que sobra para a mensagem no campo 26 (máx. 99): 18 (GUI) + 4 + chave + 4 (cabeçalho do subcampo 02). */
+export function descriptionBudget(key: string): number {
+	return 99 - 18 - 4 - key.length - 4;
+}
+
+/** Menor mensagem que vale a pena enviar; abaixo disso, o subcampo 02 é omitido. */
+const MIN_DESCRIPTION = 8;
+
+/** Só letras, números e espaços; corta no limite, de preferência numa palavra inteira. Vazio = sem mensagem. */
+export function sanitizeDescription(input: string | undefined, budget: number): string {
+	if (!input || budget < MIN_DESCRIPTION) return "";
+	const cleaned = input
+		.normalize("NFD")
+		.replace(/[̀-ͯ]/g, "")
+		.replace(/[^A-Za-z0-9 ]/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+	if (cleaned.length <= budget) return cleaned;
+	const cut = cleaned.slice(0, budget);
+	const space = cut.lastIndexOf(" ");
+	const atWord = cleaned[budget] === " " ? cut : space > 0 ? cut.slice(0, space) : "";
+	// Se a primeira palavra sozinha já estoura, corta no meio dela em vez de perder a mensagem.
+	return (atWord.trim() || cut).trim();
+}
+
 function sanitizeTxid(txid: string | undefined): string {
 	const cleaned = (txid ?? "").replace(/[^A-Za-z0-9]/g, "").slice(0, 25);
 	return cleaned || "***";
@@ -64,7 +91,8 @@ export function buildPixPayload(input: PixPayloadInput): string {
 	if (amountCents > MAX_AMOUNT_CENTS) throw new Error("Valor acima do permitido pelo Pix");
 
 	const amount = `${Math.floor(amountCents / 100)}.${String(amountCents % 100).padStart(2, "0")}`;
-	const merchantAccount = tlv("00", "br.gov.bcb.pix") + tlv("01", key);
+	const description = sanitizeDescription(input.description, descriptionBudget(key));
+	const merchantAccount = tlv("00", "br.gov.bcb.pix") + tlv("01", key) + (description ? tlv("02", description) : "");
 
 	const body =
 		tlv("00", "01") +

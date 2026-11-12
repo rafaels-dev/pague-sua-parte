@@ -17,7 +17,7 @@ import {
 import { normalizeRecurrences, type Recurrence } from "@/components/recurrences/types";
 import { todayISO } from "@/lib/ui/dates";
 import { endPeriodProblem, firstDueDate, periodOf } from "@/lib/ui/recurrences";
-import { detectPixKeyType } from "@/lib/pix/key";
+import { applyPixKeyChoice, detectPixKeyType, isCpfPhoneAmbiguous, type AmbiguousKeyChoice } from "@/lib/pix/key";
 import { managedCaption } from "@/lib/ui/managed";
 import { GroupSummaryLive } from "@/components/home-summary";
 import { ShareExpenseContent } from "@/components/expenses/expense-share";
@@ -178,6 +178,7 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 	const [name, setName] = useState("");
 	const [carerUid, setCarerUid] = useState("");
 	const [pixKey, setPixKey] = useState("");
+	const [keyChoice, setKeyChoice] = useState<AmbiguousKeyChoice | null>(null);
 	const [formErrors, setFormErrors] = useState<ManagedFormErrors>({});
 	// Começa com o recado deixado pela tela anterior (ex.: "Despesa apagada."), se houver.
 	const [snack, setSnack] = useState<string | null>(() => peekFlash());
@@ -318,6 +319,7 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 	function resetForm(member?: Member) {
 		setName(member?.name ?? "");
 		setPixKey(member?.pixKey?.key ?? "");
+		setKeyChoice(null);
 		setCarerUid(member?.managedBy?.uid ?? group?.members.find((m) => m.isYou)?.uid ?? "");
 		setFormErrors({});
 		setActionError(null);
@@ -353,8 +355,12 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 		}
 	}
 
+	/** Só pergunta quando o número foi digitado/mudado; a chave já salva não pergunta de novo. */
+	const keyAmbiguous = pixKey !== (selected?.pixKey?.key ?? "") && isCpfPhoneAmbiguous(pixKey);
+
 	/** Valida a chave Pix como no perfil; devolve a mensagem de erro ou null. */
 	function pixProblem(): string | null {
+		if (keyAmbiguous && !keyChoice) return "Escolha se a chave é CPF ou celular.";
 		return pixKey.trim() && !detectPixKeyType(pixKey) ? "Chave Pix inválida. Confira o número ou e-mail digitado." : null;
 	}
 
@@ -371,13 +377,13 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 			const base = `/api/groups/${encodeURIComponent(id)}/managed-members`;
 			if (mode === "add") {
 				const body: Record<string, unknown> = { name: name.trim(), managedBy: carerUid };
-				if (pixKey.trim()) body.pixKey = pixKey.trim();
+				if (pixKey.trim()) body.pixKey = applyPixKeyChoice(pixKey.trim(), keyChoice);
 				await apiFetch(base, { method: "POST", body: JSON.stringify(body) });
 				setSnack(`${name.trim()} foi adicionado ao grupo.`);
 			} else if (selected) {
 				await apiFetch(`${base}/${encodeURIComponent(selected.uid)}`, {
 					method: "PATCH",
-					body: JSON.stringify({ name: name.trim(), pixKey: pixKey.trim() ? pixKey.trim() : null }),
+					body: JSON.stringify({ name: name.trim(), pixKey: pixKey.trim() ? applyPixKeyChoice(pixKey.trim(), keyChoice) : null }),
 				});
 				setSnack("Salvo!");
 			}
@@ -569,6 +575,13 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 						}}
 						onPixKey={(v) => {
 							setPixKey(v);
+							setKeyChoice(null);
+							setFormErrors((e) => ({ ...e, pixKey: undefined }));
+						}}
+						ambiguous={keyAmbiguous}
+						keyChoice={keyChoice}
+						onKeyChoice={(v) => {
+							setKeyChoice(v);
 							setFormErrors((e) => ({ ...e, pixKey: undefined }));
 						}}
 						onSubmit={() => void submitManaged("add")}
@@ -591,6 +604,13 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 						onCarer={setCarerUid}
 						onPixKey={(v) => {
 							setPixKey(v);
+							setKeyChoice(null);
+							setFormErrors((e) => ({ ...e, pixKey: undefined }));
+						}}
+						ambiguous={keyAmbiguous}
+						keyChoice={keyChoice}
+						onKeyChoice={(v) => {
+							setKeyChoice(v);
 							setFormErrors((e) => ({ ...e, pixKey: undefined }));
 						}}
 						onSubmit={() => void submitManaged("edit")}

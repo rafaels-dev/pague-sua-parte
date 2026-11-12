@@ -8,7 +8,7 @@ import { Button, EmptyState, Snackbar } from "@/components/ui";
 import { onUserChanged } from "@/lib/auth/client";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { setFlash } from "@/components/expenses/types";
-import { detectPixKeyType, PIX_KEY_LABELS } from "@/lib/pix/key";
+import { applyPixKeyChoice, detectPixKeyType, isCpfPhoneAmbiguous, PIX_KEY_LABELS, type AmbiguousKeyChoice } from "@/lib/pix/key";
 import { profileReturnPath } from "@/lib/ui/return-to";
 
 type Profile = {
@@ -27,6 +27,7 @@ export default function PerfilPage() {
 	const [reloadKey, setReloadKey] = useState(0);
 	const [displayName, setDisplayName] = useState("");
 	const [pixKey, setPixKey] = useState("");
+	const [keyChoice, setKeyChoice] = useState<AmbiguousKeyChoice | null>(null);
 	const [saving, setSaving] = useState(false);
 	const [saved, setSaved] = useState(false);
 	const [pixError, setPixError] = useState<string | null>(null);
@@ -55,6 +56,8 @@ export default function PerfilPage() {
 	}, [reloadKey]);
 
 	const detected = pixKey.trim() ? detectPixKeyType(pixKey) : null;
+	// Só pergunta quando a pessoa digitou/mudou o número; a chave já salva não pergunta de novo.
+	const ambiguous = pixKey !== (profile?.pixKey?.key ?? "") && isCpfPhoneAmbiguous(pixKey);
 	const showInvalidHint = pixKey.trim().length > 0 && !detected;
 
 	async function onSubmit(e: React.FormEvent) {
@@ -66,11 +69,15 @@ export default function PerfilPage() {
 			setPixError("Chave Pix inválida. Confira o número ou e-mail digitado.");
 			return;
 		}
+		if (ambiguous && !keyChoice) {
+			setPixError("Escolha se a chave é CPF ou celular.");
+			return;
+		}
 		setSaving(true);
 		try {
 			const p = await apiFetch<Profile>("/api/me", {
 				method: "PUT",
-				body: JSON.stringify({ displayName, pixKey }),
+				body: JSON.stringify({ displayName, pixKey: applyPixKeyChoice(pixKey, keyChoice) }),
 			});
 			setProfile(p);
 			setDisplayName(p.displayName ?? p.name);
@@ -127,6 +134,12 @@ export default function PerfilPage() {
 				pixKey={pixKey}
 				detectedType={detected}
 				showInvalidHint={showInvalidHint}
+				ambiguous={ambiguous}
+				keyChoice={keyChoice}
+				onKeyChoice={(v) => {
+					setKeyChoice(v);
+					setPixError(null);
+				}}
 				pixError={pixError}
 				formError={formError}
 				saving={saving}
@@ -136,6 +149,7 @@ export default function PerfilPage() {
 				}}
 				onPixKey={(v) => {
 					setPixKey(v);
+					setKeyChoice(null);
 					setSaved(false);
 					setPixError(null);
 				}}

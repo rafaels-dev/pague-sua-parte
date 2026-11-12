@@ -1,6 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { Avatar, Banner, Button, Card, Icon, QrCode } from "@/components/ui";
+import { copyText } from "@/lib/ui/clipboard";
 import { formatBRL } from "@/lib/money";
 import { PIX_KEY_LABELS, type PixKeyType } from "@/lib/pix/key";
 
@@ -31,6 +33,38 @@ export function AccountHeader({ id, name, managed }: Readonly<{ id: string; name
 	);
 }
 
+/** "155,00": o valor como o banco pede para digitar. */
+function amountToType(cents: number): string {
+	return `${Math.floor(cents / 100)},${String(cents % 100).padStart(2, "0")}`;
+}
+
+/** Ajuda recolhida para quando o banco recusa o Pix: pagar pela chave e o que fazer se isso também falhar. */
+function PixRefusedHelp({ payeeName, defaultOpen }: Readonly<{ payeeName: string; defaultOpen: boolean }>) {
+	const steps = [
+		"Pague pela chave Pix mostrada abaixo: digite o valor no app do banco.",
+		"Confira com quem recebe se a chave está certa e ativa no banco dele.",
+		`Se pagar pela chave também não der, o problema está na conta de quem recebe. Peça para ${payeeName} falar com o banco ou cadastrar outra chave Pix no app. Enquanto isso, combine outro jeito de pagar e toque em “Já paguei”.`,
+	];
+	return (
+		<details open={defaultOpen} className="group rounded-shape-md bg-surface-container-low">
+			<summary className="state-layer flex min-h-14 cursor-pointer list-none items-center gap-3 rounded-shape-md px-4 text-title-medium [&::-webkit-details-marker]:hidden">
+				<span className="flex-1">O banco recusou o código?</span>
+				<Icon name="expand_more" className="text-on-surface-variant transition-transform group-open:rotate-180" />
+			</summary>
+			<ol className="space-y-3 px-4 pb-4 pt-1">
+				{steps.map((t, i) => (
+					<li key={t} className="flex items-start gap-3 text-body-large">
+						<span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary-container text-sm font-bold text-on-secondary-container">
+							{i + 1}
+						</span>
+						<span className="pt-0.5">{t}</span>
+					</li>
+				))}
+			</ol>
+		</details>
+	);
+}
+
 /**
  * Parte de baixo do pagamento por Pix: copiar o código "Copia e Cola", passo a passo, QR Code e a chave como alternativa.
  * Usado tanto pela parte de uma despesa quanto por "Pagar tudo de uma vez".
@@ -45,7 +79,10 @@ export function PixCodeBlock({
 	onToggleQr,
 	onCopyCode,
 	onCopyKey,
+	helpOpen = false,
 }: Readonly<{
+	/** Só para as telas de exemplo: ajuda "O banco recusou o código?" já aberta. */
+	helpOpen?: boolean;
 	amountCents: number;
 	payeeName: string;
 	pix: { type: PixKeyType; key: string };
@@ -58,6 +95,7 @@ export function PixCodeBlock({
 	onCopyCode: () => void;
 	onCopyKey: () => void;
 }>) {
+	const [amountCopied, setAmountCopied] = useState(false);
 	return (
 		<div className="space-y-5">
 				{payload ? (
@@ -115,6 +153,8 @@ export function PixCodeBlock({
 								</div>
 							)}
 						</div>
+
+						<PixRefusedHelp payeeName={payeeName} defaultOpen={helpOpen} />
 					</>
 				) : (
 					<Banner tone="error" icon="error" role="alert">
@@ -129,6 +169,25 @@ export function PixCodeBlock({
 					</div>
 					<Button variant="text" size="md" onClick={onCopyKey} className="shrink-0">
 						Copiar chave
+					</Button>
+				</div>
+				<div className="flex items-center gap-3">
+					<div className="min-w-0 flex-1">
+						<p className="text-body-large text-on-surface-variant">Valor</p>
+						<p className="money text-body-large font-medium">{formatBRL(amountCents)}</p>
+					</div>
+					<Button
+						variant="text"
+						size="md"
+						onClick={() => {
+							void copyText(amountToType(amountCents)).then((ok) => {
+								setAmountCopied(ok);
+								if (ok) setTimeout(() => setAmountCopied(false), 2500);
+							});
+						}}
+						className="shrink-0"
+					>
+						{amountCopied ? "Valor copiado" : "Copiar valor"}
 					</Button>
 				</div>
 		</div>
@@ -153,7 +212,9 @@ export function PixPayCard({
 	due,
 	canPay = false,
 	onPaid,
+	helpOpen,
 }: Readonly<{
+	helpOpen?: boolean;
 	/** "Vence em 10 de dezembro" (em vermelho quando venceu e está em aberto). */
 	due?: { text: string; overdue: boolean } | null;
 	/** Identificador do título (único quando há mais de um cartão na tela). */
@@ -220,6 +281,7 @@ export function PixPayCard({
 					onToggleQr={onToggleQr}
 					onCopyCode={onCopyCode}
 					onCopyKey={onCopyKey}
+					helpOpen={helpOpen}
 				/>
 			) : (
 				<p className="text-body-large text-on-surface-variant">Ainda não há chave Pix de {payeeName} no app.</p>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPixPayload, crc16ccitt } from "./brcode";
+import { buildPixPayload, crc16ccitt, descriptionBudget, sanitizeDescription } from "./brcode";
 
 /** Implementação independente (tabela de 256 entradas) para cruzar com a bit a bit. */
 function crcTable(s: string): string {
@@ -138,5 +138,81 @@ describe("buildPixPayload", () => {
 		expect(() => buildPixPayload({ ...base, key: "" })).toThrow();
 		expect(() => buildPixPayload({ ...base, key: "   " })).toThrow();
 		expect(() => buildPixPayload({ ...base, key: "a".repeat(78) })).toThrow();
+	});
+});
+
+describe("payload conhecido (montado à mão)", () => {
+	it("CPF 52998224725, MARIA SILVA, R$ 155,00, txid ***", () => {
+		// Campo a campo (id + tamanho + valor). O CRC foi conferido por outro algoritmo (python binascii.crc_hqx, init 0xFFFF).
+		const body =
+			"000201" +
+			"26" + "33" + "0014br.gov.bcb.pix" + "0111" + "52998224725" +
+			"52040000" +
+			"5303986" +
+			"5406155.00" +
+			"5802BR" +
+			"5911MARIA SILVA" +
+			"6006BRASIL" +
+			"62070503***" +
+			"6304";
+		const p = buildPixPayload({ key: "52998224725", payeeName: "Maria Silva", amountCents: 15500 });
+		expect(p).toBe(body + "148F");
+	});
+});
+
+describe("mensagem (subcampo 26/02)", () => {
+	it("payload com mensagem montado à mão; CRC conferido por binascii.crc_hqx", () => {
+		const f26 = "0014br.gov.bcb.pix" + "0111" + "52998224725" + "0222" + "Despesa Mercado do mes";
+		expect(f26).toHaveLength(59);
+		const body = "000201" + "26" + "59" + f26 + "52040000" + "5303986" + "5406155.00" + "5802BR" + "5911MARIA SILVA" + "6006BRASIL" + "62070503***" + "6304";
+		const p = buildPixPayload({ key: "52998224725", payeeName: "Maria Silva", amountCents: 15500, description: "Despesa Mercado do mês" });
+		expect(p).toBe(body + "9F0F");
+		expect(crcTable(body)).toBe("9F0F");
+	});
+
+	it("orçamento por tipo de chave", () => {
+		expect(descriptionBudget("52998224725")).toBe(62);
+		expect(descriptionBudget("11222333000181")).toBe(59);
+		expect(descriptionBudget("+5511987654321")).toBe(59);
+		expect(descriptionBudget("123e4567-e12b-42d1-a456-426655440000")).toBe(37);
+	});
+
+	it("campo 26 nunca passa de 99, em qualquer chave", () => {
+		const keys = ["52998224725", "+5511987654321", "123e4567-e12b-42d1-a456-426655440000", "a".repeat(40) + "@" + "b".repeat(30) + ".com"];
+		for (const key of keys) {
+			const f = parseTlv(buildPixPayload({ ...base, key, description: "Despesa ".repeat(30) }));
+			expect(f["26"].length).toBeLessThanOrEqual(99);
+			expect(parseTlv(f["26"])["01"]).toBe(key);
+		}
+	});
+
+	it("e-mail longo sem espaço: omite o subcampo 02", () => {
+		const key = "a".repeat(60) + "@exemplo.com"; // 72 -> sobram 1
+		const f = parseTlv(parseTlv(buildPixPayload({ ...base, key, description: "Despesa Mercado" }))["26"]);
+		expect(f["02"]).toBeUndefined();
+	});
+
+	it("remove acentos e símbolos, junta espaços, sem espaço no fim", () => {
+		expect(sanitizeDescription("  Despesa   Padaria São João!!  ", 59)).toBe("Despesa Padaria Sao Joao");
+		expect(sanitizeDescription("Café & Pão", 59)).toBe("Cafe Pao");
+	});
+
+	it("corta em palavra inteira, ou no meio se a primeira palavra estoura", () => {
+		expect(sanitizeDescription("Despesa Mercado do mes", 16)).toBe("Despesa Mercado");
+		expect(sanitizeDescription("Despesa Mercado do mes", 15)).toBe("Despesa Mercado");
+		expect(sanitizeDescription("Despesa Mercado do mes", 14)).toBe("Despesa");
+		expect(sanitizeDescription("Supermercadissimo", 10)).toBe("Supermerca");
+	});
+
+	it("vazia, só símbolos ou orçamento pequeno: omite", () => {
+		expect(sanitizeDescription("", 59)).toBe("");
+		expect(sanitizeDescription("!!! 😀", 59)).toBe("");
+		expect(sanitizeDescription("Despesa Mercado", 7)).toBe("");
+		const f = parseTlv(parseTlv(buildPixPayload({ ...base, description: "???" }))["26"]);
+		expect(f["02"]).toBeUndefined();
+	});
+
+	it("sem description o payload não muda", () => {
+		expect(buildPixPayload(base)).toBe(buildPixPayload({ ...base, description: undefined }));
 	});
 });

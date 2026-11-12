@@ -66,3 +66,21 @@ describe("detectPixKeyType", () => {
 		expect(detectPixKeyType("xyz")).toBeNull();
 	});
 });
+
+describe("ambiguidade CPF x celular", () => {
+	it("detecta só o caso ambíguo", async () => {
+		const { isCpfPhoneAmbiguous, applyPixKeyChoice, normalizePixKey } = await import("./key");
+		expect(isCpfPhoneAmbiguous("52998224725")).toBe(true);
+		expect(isCpfPhoneAmbiguous("(52) 99822-4725")).toBe(false);
+		expect(normalizePixKey("(52) 99822-4725")).toEqual({ type: "phone", key: "+5552998224725" });
+		expect(normalizePixKey("529.982.247-25")).toEqual({ type: "cpf", key: "52998224725" });
+		expect(normalizePixKey("52998224725")).toEqual({ type: "cpf", key: "52998224725" });
+		expect(normalizePixKey("+55 52 99822-4725")).toEqual({ type: "phone", key: "+5552998224725" });
+		expect(isCpfPhoneAmbiguous("529.982.247-25")).toBe(false);
+		expect(isCpfPhoneAmbiguous("+5552998224725")).toBe(false);
+		expect(isCpfPhoneAmbiguous("11987654321")).toBe(false);
+		expect(isCpfPhoneAmbiguous("a@b.co")).toBe(false);
+		expect(normalizePixKey(applyPixKeyChoice("52998224725", "phone"))).toEqual({ type: "phone", key: "+5552998224725" });
+		expect(normalizePixKey(applyPixKeyChoice("52998224725", "cpf"))).toEqual({ type: "cpf", key: "52998224725" });
+	});
+});

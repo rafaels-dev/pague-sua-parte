@@ -1,7 +1,8 @@
 "use client";
 
 import { Avatar, Button, Card, Skeleton, TextField } from "@/components/ui";
-import { PIX_KEY_LABELS } from "@/lib/pix/key";
+import { PixKeyChoice } from "@/components/pix-key-choice";
+import { PIX_KEY_LABELS, type AmbiguousKeyChoice } from "@/lib/pix/key";
 
 export type ProfileFormViewProps = {
 	email: string;
@@ -11,6 +12,10 @@ export type ProfileFormViewProps = {
 	/** Tipo detectado da chave Pix (rótulo), quando válida. */
 	detectedType: keyof typeof PIX_KEY_LABELS | null;
 	showInvalidHint: boolean;
+	/** O número pode ser CPF ou celular: pede a escolha. */
+	ambiguous?: boolean;
+	keyChoice?: AmbiguousKeyChoice | null;
+	onKeyChoice?: (v: AmbiguousKeyChoice) => void;
 	pixError: string | null;
 	formError: string | null;
 	saving: boolean;
@@ -26,7 +31,7 @@ export function ProfileFormView(p: Readonly<ProfileFormViewProps>) {
 	) : p.showInvalidHint ? (
 		"Ainda não parece uma chave Pix válida."
 	) : (
-		"É para onde os outros vão pagar você."
+		"É para onde os outros vão pagar você. Confira se essa chave está ativa no seu banco e recebendo Pix."
 	);
 
 	return (
@@ -64,6 +69,7 @@ export function ProfileFormView(p: Readonly<ProfileFormViewProps>) {
 						supportingText={pixSupport}
 						onChange={(e) => p.onPixKey(e.target.value)}
 					/>
+					{p.ambiguous && p.onKeyChoice && <PixKeyChoice value={p.keyChoice ?? null} onChange={p.onKeyChoice} />}
 					{p.formError && (
 						<p role="alert" className="text-body-large text-error">
 							{p.formError}
