@@ -26,6 +26,24 @@ export function ifAllLine(r: Pick<PlanResultView, "expectedPeople" | "allCount" 
 	return `Se todos os ${r.peopleCount} forem: ${formatBRL(r.shareIfAllCents)} para cada um`;
 }
 
+/** 80% das pessoas, arredondado para o inteiro mais próximo e nunca menos que 1 (conta inteira). Usado na meta e na sugestão de limite. */
+export const eightyPercent = (people: number): number => Math.max(1, Math.floor((8 * people + 5) / 10));
+
+/**
+ * A meta do plano, para a tela de quem responde: "13 pessoas · R$ 219,24 cada" e, abaixo, a parte se só 80% forem
+ * ("Se só 10 forem: R$ 285,00 para cada um"). Só com previsão de pessoas; sem ela, não há meta. A linha dos 80% some
+ * quando o arredondamento não tira ninguém (previsão de 1 ou 2 pessoas).
+ */
+export function goalLines(r: Pick<PlanResultView, "expectedPeople" | "allCount" | "shareIfAllCents">, totalCents: number): { goal: string; lower: string | null } | null {
+	if (!r.expectedPeople || r.shareIfAllCents === null) return null;
+	const fewer = eightyPercent(r.allCount);
+	const lowerCents = fewer < r.allCount ? maxShare(totalCents, fewer) : null;
+	return {
+		goal: `${pessoas(r.allCount)} · ${formatBRL(r.shareIfAllCents)} cada`,
+		lower: lowerCents === null ? null : `Se só ${fewer} forem: ${formatBRL(lowerCents)} para cada um`,
+	};
+}
+
 /** "6 de 10 já responderam" e "Faltam responder: 4" (nunca negativo). */
 export function scoreLines(r: Pick<PlanResultView, "answeredCount" | "allCount" | "missingCount">): { answered: string; missing: string | null } {
 	return {
@@ -99,7 +117,7 @@ export const plannedSupport = (p: SharePreview): string => `Se todo mundo confir
  */
 export function suggestedLimit(p: SharePreview | null, totalCents: number): { cents: number; absent: number; people: number } | null {
 	if (p?.basis !== "expected") return null;
-	const people = Math.max(1, Math.floor((8 * p.people + 5) / 10));
+	const people = eightyPercent(p.people);
 	const cents = maxShare(totalCents, people);
 	return cents === null ? null : { cents, absent: p.people - people, people: p.people };
 }

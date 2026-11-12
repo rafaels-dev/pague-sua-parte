@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { minPeopleForLimit } from "@/lib/plans/compute";
-import { initialLimitCents, limitNote, liveLimitNote, goingBody, limitHint, limitIntro, PLANNED_LABEL, plannedSupport, suggestedLimit, limitPlaceholder, hintLine, ifAllLine, inviteShareLine, myAnswerText, resultHeadline, scoreLines, summaryLine } from "./plans";
+import { goalLines, initialLimitCents, limitNote, liveLimitNote, goingBody, limitHint, limitIntro, PLANNED_LABEL, plannedSupport, suggestedLimit, limitPlaceholder, hintLine, ifAllLine, inviteShareLine, myAnswerText, resultHeadline, scoreLines, summaryLine } from "./plans";
 
 describe("textos do plano", () => {
 	it("resultHeadline", () => {
@@ -134,5 +134,27 @@ describe("indicativo do limite", () => {
 		expect(goingBody(0)).toEqual({ going: true });
 		expect("limitCents" in goingBody(0)).toBe(false);
 		expect(goingBody(18000)).toEqual({ going: true, limitCents: 18000 });
+	});
+});
+
+describe("meta do plano (tela de quem responde)", () => {
+	it("mostra a meta e a parte se só 80% forem", () => {
+		expect(goalLines({ expectedPeople: 13, allCount: 13, shareIfAllCents: 21924 }, 285000)).toEqual({ goal: "13 pessoas · R$ 219,24 cada", lower: "Se só 10 forem: R$ 285,00 para cada um" });
+	});
+	it("previsão pequena: sem a linha dos 80%", () => {
+		expect(goalLines({ expectedPeople: 2, allCount: 2, shareIfAllCents: 50000 }, 100000)).toEqual({ goal: "2 pessoas · R$ 500,00 cada", lower: null });
+	});
+	it("entrou mais gente que o previsto: a meta e os 80% saem de quem está no plano", () => {
+		expect(goalLines({ expectedPeople: 10, allCount: 14, shareIfAllCents: 20358 }, 285000)).toEqual({ goal: "14 pessoas · R$ 203,58 cada", lower: "Se só 11 forem: R$ 259,10 para cada um" });
+	});
+	it("previsão de 1 pessoa: sem a linha dos 80%", () => {
+		expect(goalLines({ expectedPeople: 1, allCount: 1, shareIfAllCents: 100000 }, 100000)?.lower).toBeNull();
+	});
+	it("sem previsão de pessoas não há meta", () => {
+		expect(goalLines({ expectedPeople: null, allCount: 4, shareIfAllCents: 25000 }, 100000)).toBeNull();
+	});
+	it("nunca fala de quem já confirmou nem do valor de hoje", () => {
+		const g = goalLines({ expectedPeople: 13, allCount: 13, shareIfAllCents: 21924 }, 285000)!;
+		expect(`${g.goal} ${g.lower}`).not.toMatch(/Fecha|Por enquanto|2\.850/);
 	});
 });

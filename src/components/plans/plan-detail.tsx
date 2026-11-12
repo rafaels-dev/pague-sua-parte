@@ -13,24 +13,51 @@ import { formatBRL } from "@/lib/money";
 import { isImageType } from "@/lib/ui/attachments";
 import { formatDateLong } from "@/lib/ui/dates";
 import { buildPlanLink, buildPlanShareText, planShareIntro } from "@/lib/ui/plan-share";
-import { goingBody, hintLine, limitHint, limitIntro, liveLimitNote, PLANNED_LABEL, plannedSupport, limitPlaceholder, ifAllLine, initialLimitCents, limitNote, myAnswerText, resultHeadline, scoreLines } from "@/lib/ui/plans";
+import { goalLines, goingBody, hintLine, limitHint, limitIntro, liveLimitNote, PLANNED_LABEL, plannedSupport, limitPlaceholder, ifAllLine, initialLimitCents, limitNote, myAnswerText, resultHeadline, scoreLines } from "@/lib/ui/plans";
 import type { PlanPersonView, PlanView } from "@/lib/plans/view";
 import { PlanText } from "./plan-text";
 
 export type AnswerBody = { going: boolean; limitCents?: number };
 
-/** Resultado em destaque: "Fecha com 9 pessoas · R$ 277,78 cada" ou "Ainda não fecha", dica, "se forem N" e placar. */
+/**
+ * Cartão do topo. Quem responde vê só a meta (pessoas previstas e a parte) e a parte se só 80% forem; sem previsão, a parte se todos forem.
+ * O placar de agora ("Fecha com N pessoas", dica, quantos responderam) é só para o criador, que precisa dele para decidir quando fechar.
+ */
 export function PlanResultCard({ plan }: Readonly<{ plan: PlanView }>) {
 	const r = plan.result;
-	const hint = hintLine(r);
+	const goal = goalLines(r, plan.totalCents);
 	const all = ifAllLine(r);
+	if (!plan.isCreator) {
+		if (!goal && !all) return null;
+		return (
+			<Card tone="high" className="space-y-2 p-5">
+				{goal ? (
+					<>
+						<p className="text-label-large text-on-surface-variant">Meta</p>
+						<p className="money text-headline-small font-bold md:text-headline-medium">{goal.goal}</p>
+						{goal.lower && <p className="text-body-large text-on-surface-variant">{goal.lower}</p>}
+					</>
+				) : (
+					<p className="text-body-large">{all}</p>
+				)}
+			</Card>
+		);
+	}
+	const hint = hintLine(r);
 	const score = scoreLines(r);
 	return (
 		<Card tone="high" className="space-y-2 p-5" aria-live="polite">
+			{goal && (
+				<>
+					<p className="text-label-large text-on-surface-variant">Meta</p>
+					<p className="money text-title-large font-bold">{goal.goal}</p>
+					{goal.lower && <p className="text-body-large text-on-surface-variant">{goal.lower}</p>}
+				</>
+			)}
 			<p className="text-label-large text-on-surface-variant">Por enquanto</p>
 			<p className="money text-headline-small font-bold md:text-headline-medium">{resultHeadline(r)}</p>
 			{hint && <p className="text-body-large">{hint}</p>}
-			{all && <p className="text-body-large text-on-surface-variant">{all}</p>}
+			{!goal && all && <p className="text-body-large text-on-surface-variant">{all}</p>}
 			<p className="text-body-large text-on-surface-variant">
 				{score.answered}
 				{score.missing && <> · {score.missing}</>}
