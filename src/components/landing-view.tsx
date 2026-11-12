@@ -1,6 +1,6 @@
 import { BrandMark } from "@/components/brand";
 import { fredoka } from "@/components/landing/fonts";
-import { CareMock, HelpMock, InstallmentsMock, PixScreenMock, ReportMock, ShareMock } from "@/components/landing/mocks";
+import { CareMock, HelpMock, NoticeMock, PayAllMock, PixScreenMock, PlanMock, ShareMock } from "@/components/landing/mocks";
 import { Icon } from "@/components/ui";
 
 const REPO_URL = "https://github.com/rafaels-dev/pague-sua-parte";
@@ -112,19 +112,35 @@ export function LandingView({ children, footer }: Readonly<{ children: React.Rea
 					</div>
 				</section>
 
+				{/* Antes do grupo: planejar a despesa e perguntar quem vai. */}
+				<section className="lp-grain rounded-t-[2.5rem] bg-lp-paper-2 py-20 md:rounded-t-[4rem] md:py-32">
+					<div className={`${CONTAINER} grid items-center gap-12 md:grid-cols-[minmax(0,6fr)_minmax(0,5fr)] md:gap-16`}>
+						<div className="space-y-6">
+							<h2 className={H2}>Vai dividir uma viagem? Pergunte antes quem vai.</h2>
+							<p className="max-w-[40ch] text-[1.25rem] leading-[1.6] text-lp-ink-2">
+								Crie um plano e mande o link. Cada um responde Vou ou Não vou e diz até quanto pode pagar. O app mostra quando a conta fecha e
+								por quanto.
+							</p>
+						</div>
+						<div className="lp-sheet rounded-shape-lg ring-2 ring-lp-ink/10 md:justify-self-end">
+							<PlanMock />
+						</div>
+					</div>
+				</section>
+
 				{/* O que mais cabe. */}
-				<section className="pb-20 md:pb-32">
+				<section className="py-20 md:py-32">
 					<div className={`${CONTAINER} space-y-12 md:space-y-16`}>
 						<h2 className={`${H2} max-w-[24ch]`}>Feito para a família toda.</h2>
 						<div className="grid gap-5 md:grid-cols-12">
 							<article className={`${TILE} space-y-6 bg-lp-card md:col-span-7`}>
 								<div className="space-y-2">
-									<h3 className={H3}>Quem pode, ajuda mais</h3>
+									<h3 className={H3}>Pague tudo com um Pix</h3>
 									<p className="max-w-[40ch] text-[1.125rem] leading-[1.55] text-lp-ink-2">
-										Quando um parente paga sozinho, os outros tocam em Quero ajudar e entram na divisão.
+										O que você deve à mesma pessoa vira um só Pix e um só comprovante.
 									</p>
 								</div>
-								<HelpMock />
+								<PayAllMock />
 							</article>
 							<article className={`${TILE} space-y-6 bg-lp-sugar md:col-span-5`}>
 								<div className="space-y-2">
@@ -133,21 +149,25 @@ export function LandingView({ children, footer }: Readonly<{ children: React.Rea
 								</div>
 								<CareMock />
 							</article>
-							<article className={`${TILE} space-y-6 bg-lp-card md:col-span-4`}>
+							<article className={`${TILE} space-y-6 bg-lp-card md:col-span-5`}>
 								<div className="space-y-2">
-									<h3 className={H3}>Parcelado no cartão</h3>
-									<p className="text-[1.125rem] leading-[1.55] text-lp-ink-2">Cada parcela tem a sua data de vencimento.</p>
+									<h3 className={H3}>Quem pode, ajuda mais</h3>
+									<p className="text-[1.125rem] leading-[1.55] text-lp-ink-2">
+										Quando um parente paga sozinho, os outros tocam em Quero ajudar e entram na divisão.
+									</p>
 								</div>
-								<InstallmentsMock />
+								<HelpMock />
 							</article>
-							<article className={`${TILE} space-y-6 bg-lp-accent text-lp-on-field md:col-span-4`}>
+							<article className={`${TILE} space-y-6 bg-lp-accent text-lp-on-field md:col-span-7`}>
 								<div className="space-y-2">
-									<h3 className={H3}>Quem pagou mais, quem pagou menos</h3>
-									<p className="text-[1.125rem] leading-[1.55]">Um relatório mostra como ficou a divisão.</p>
+									<h3 className={H3}>Avisos no celular</h3>
+									<p className="max-w-[40ch] text-[1.125rem] leading-[1.55]">
+										Saiba quando alguém entrar no grupo, pagar ou lançar uma despesa. Você liga em Perfil.
+									</p>
 								</div>
-								<ReportMock />
+								<NoticeMock />
 							</article>
-							<article className={`${TILE} flex flex-col justify-between gap-6 bg-lp-mint text-lp-on-field md:col-span-4`}>
+							<article className={`${TILE} flex flex-col justify-between gap-6 bg-lp-mint text-lp-on-field md:col-span-12`}>
 								<div className="space-y-2">
 									<h3 className={H3}>Avise no WhatsApp</h3>
 									<p className="text-[1.125rem] leading-[1.55]">Um toque leva a despesa para o grupo.</p>
@@ -155,6 +175,24 @@ export function LandingView({ children, footer }: Readonly<{ children: React.Rea
 								<ShareMock />
 							</article>
 						</div>
+						<ul role="list" className="grid gap-x-10 gap-y-6 text-[1.125rem] leading-[1.55] text-lp-ink-2 md:grid-cols-2">
+							<li className="border-t-2 border-lp-rule pt-4">
+								<strong className="block font-display text-[1.25rem] font-semibold text-lp-ink">Despesas fixas</strong>
+								Entram sozinhas todo mês.
+							</li>
+							<li className="border-t-2 border-lp-rule pt-4">
+								<strong className="block font-display text-[1.25rem] font-semibold text-lp-ink">Devolução</strong>
+								Pagou a mais? A diferença fica como devolução, sem conta-corrente.
+							</li>
+							<li className="border-t-2 border-lp-rule pt-4">
+								<strong className="block font-display text-[1.25rem] font-semibold text-lp-ink">Parcelado no cartão</strong>
+								Cada parcela tem a sua data de vencimento.
+							</li>
+							<li className="border-t-2 border-lp-rule pt-4">
+								<strong className="block font-display text-[1.25rem] font-semibold text-lp-ink">Quem pagou mais, quem pagou menos</strong>
+								Um relatório mostra como ficou a divisão.
+							</li>
+						</ul>
 					</div>
 				</section>
 

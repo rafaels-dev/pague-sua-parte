@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
-import { Banner, Button, Icon, Skeleton, StatusChip } from "@/components/ui";
+import { Banner, Button, Icon, List, ListItem, Skeleton, StatusChip } from "@/components/ui";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { formatBRL } from "@/lib/money";
 import { formatDateShort } from "@/lib/ui/dates";
@@ -38,13 +38,19 @@ function PlanCard({ plan }: Readonly<{ plan: PlanSummary }>) {
 	);
 }
 
-/** Seção "Planos" do início: os planos em andamento, "Planejar despesa" e, discreto, "Ver planos antigos". */
+const VISIBLE_PLANS = 3;
+
+/**
+ * Seção "Planos" do início. Sem planos, é só uma linha convidando a planejar (sem título, para não pesar a tela).
+ * Com planos: título com o botão "Planejar despesa", os três primeiros e "Ver todos"; "Ver planos antigos" fica discreto no fim.
+ */
 export function PlansSectionView({
 	plans,
 	oldPlans,
 	loading,
 	oldLoading,
 	error,
+	hasOld = false,
 	onRetry,
 	onToggleOld,
 }: Readonly<{
@@ -54,37 +60,76 @@ export function PlansSectionView({
 	oldLoading?: boolean;
 	/** Falha ao carregar: mostra o erro com "Tentar de novo" (e não a lista vazia, que diria que não há planos). */
 	error?: string | null;
+	/** Há planos antigos (a API avisa): só então aparece "Ver planos antigos". */
+	hasOld?: boolean;
 	onRetry?: () => void;
 	onToggleOld: () => void;
 }>) {
+	const [showAll, setShowAll] = useState(false);
+	const empty = !error && !loading && plans.length === 0;
+	// Voltou a ter poucos planos: a lista recolhe sozinha (ajuste de estado durante a renderização, como a documentação do React indica).
+	if (showAll && plans.length <= VISIBLE_PLANS) setShowAll(false);
+	const shown = showAll ? plans : plans.slice(0, VISIBLE_PLANS);
 	return (
 		<section className="space-y-3" aria-labelledby="titulo-planos">
-			<h2 id="titulo-planos" className="text-title-large">
-				Planos
-			</h2>
+			{empty ? (
+				<>
+					<h2 id="titulo-planos" className="sr-only">
+						Planos
+					</h2>
+					<List>
+						<ListItem
+							href="/app/planos/novo"
+							leading={
+								<span className="flex size-12 shrink-0 items-center justify-center rounded-full bg-secondary-container text-on-secondary-container">
+									<Icon name="calendar_today" />
+								</span>
+							}
+							headline="Planejar despesa"
+							supporting="Vai dividir um gasto grande, como uma viagem? Pergunte antes quem vai."
+							trailing={<Icon name="chevron_right" />}
+						/>
+					</List>
+				</>
+			) : (
+				<div className="flex min-h-12 items-center justify-between gap-4">
+					<h2 id="titulo-planos" className="text-title-large">
+						Planos
+					</h2>
+					<Button href="/app/planos/novo" icon="add" size="md" variant="tonal">
+						Planejar despesa
+					</Button>
+				</div>
+			)}
 			{error ? (
 				<Banner tone="error" icon="error" role="alert" action={onRetry ? <Button variant="outlined" size="md" icon="refresh" onClick={onRetry}>Tentar de novo</Button> : undefined}>
 					{error}
 				</Banner>
 			) : loading ? (
 				<Skeleton className="h-[4.5rem] rounded-shape-md" />
-			) : plans.length > 0 ? (
-				<ul className="space-y-3">
-					{plans.map((p) => (
-						<PlanCard key={p.id} plan={p} />
-					))}
-				</ul>
 			) : (
-				<p className="text-body-large text-on-surface-variant">Vai dividir um gasto grande, como uma viagem? Pergunte antes quem vai.</p>
+				plans.length > 0 && (
+					<>
+						<ul className="space-y-3">
+							{shown.map((p) => (
+								<PlanCard key={p.id} plan={p} />
+							))}
+						</ul>
+						{plans.length > VISIBLE_PLANS && (
+							<Button variant="text" size="md" onClick={() => setShowAll((v) => !v)} className="-ml-4">
+								{showAll ? "Mostrar menos" : `Ver todos (${plans.length})`}
+							</Button>
+						)}
+					</>
+				)
 			)}
-			<Button href="/app/planos/novo" variant="tonal" icon="add" fullWidth className="md:w-auto">
-				Planejar despesa
-			</Button>
-			<div>
-				<Button variant="text" size="md" onClick={onToggleOld} className="-ml-4">
-					{oldPlans ? "Esconder planos antigos" : "Ver planos antigos"}
-				</Button>
-			</div>
+			{(hasOld || oldPlans) && (
+				<div>
+					<Button variant="quiet" size="md" onClick={onToggleOld} className="-ml-4">
+						{oldPlans ? "Esconder planos antigos" : "Ver planos antigos"}
+					</Button>
+				</div>
+			)}
 			{oldLoading && <Skeleton className="h-[4.5rem] rounded-shape-md" />}
 			{oldPlans &&
 				(oldPlans.length > 0 ? (
@@ -103,6 +148,7 @@ export function PlansSectionView({
 export function PlansSection() {
 	const { user } = useAuth();
 	const [plans, setPlans] = useState<PlanSummary[] | null>(null);
+	const [hasOld, setHasOld] = useState(false);
 	const [oldPlans, setOldPlans] = useState<PlanSummary[] | null>(null);
 	const [oldLoading, setOldLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -111,11 +157,12 @@ export function PlansSection() {
 	useEffect(() => {
 		if (!user) return;
 		let cancelled = false;
-		apiFetch<{ plans: PlanSummary[] }>("/api/plans")
+		apiFetch<{ plans: PlanSummary[]; hasOld?: boolean }>("/api/plans")
 			.then((d) => {
 				if (cancelled) return;
 				setError(null);
 				setPlans(d.plans);
+				setHasOld(d.hasOld === true);
 			})
 			.catch((e) => {
 				if (!cancelled) setError(e instanceof ApiError ? e.message : "Não foi possível carregar seus planos.");
@@ -142,6 +189,7 @@ export function PlansSection() {
 			loading={plans === null && !error}
 			oldLoading={oldLoading}
 			error={error}
+			hasOld={hasOld}
 			onRetry={() => {
 				setError(null);
 				setPlans(null);

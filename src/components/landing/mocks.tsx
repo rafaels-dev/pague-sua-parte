@@ -67,57 +67,73 @@ export function CareMock() {
 	);
 }
 
-/** Parcelas do cartão, cada uma com o seu vencimento. */
-export function InstallmentsMock() {
-	return (
-		<Still className="space-y-2">
-			{[
-				["Parcela 1 de 3", "10 de dezembro", "ok"],
-				["Parcela 2 de 3", "10 de janeiro", "wait"],
-				["Parcela 3 de 3", "10 de fevereiro", "wait"],
-			].map(([parcela, data, tone]) => (
-				<div key={parcela} className="flex items-center justify-between gap-3">
-					<div>
-						<p className="text-title-medium">{parcela}</p>
-						<p className="text-body-large text-on-surface-variant">{data}</p>
-					</div>
-					<StatusChip tone={tone as "ok" | "wait"}>{tone === "ok" ? "Paga" : "Falta pagar"}</StatusChip>
-				</div>
-			))}
-		</Still>
-	);
-}
-
-/** Relatório: quem pagou mais e quem pagou menos. As barras têm tamanhos diferentes porque os valores são diferentes. */
-export function ReportMock() {
-	const rows = [
-		{ name: "Mãe", value: "R$ 420", width: "100%" },
-		{ name: "Tio Beto", value: "R$ 260", width: "62%" },
-		{ name: "Ana", value: "R$ 90", width: "21%" },
-	];
-	return (
-		<Still className="space-y-3">
-			{rows.map((r) => (
-				<div key={r.name} className="space-y-1">
-					<div className="flex justify-between text-title-medium">
-						<span>{r.name}</span>
-						<span className="money">{r.value}</span>
-					</div>
-					<div className="h-3 rounded-full bg-lp-on-field/15">
-						<div className="h-3 rounded-full bg-lp-on-field" style={{ width: r.width }} />
-					</div>
-				</div>
-			))}
-		</Still>
-	);
-}
-
 /** Aviso no WhatsApp: um toque leva a despesa para o grupo. */
 export function ShareMock() {
 	return (
 		<Still className="inline-flex h-12 items-center gap-2 rounded-full bg-lp-ink px-6 text-label-large text-lp-paper">
 			<Icon name="share" size={20} />
 			<span>Avisar no WhatsApp</span>
+		</Still>
+	);
+}
+
+/** Plano "pré-grupo": quem vai, até quanto cada um pode pagar e quando a conta fecha. */
+export function PlanMock() {
+	return (
+		<Still className="space-y-4 rounded-shape-lg bg-surface p-5 text-on-surface">
+			<div>
+				<p className="text-title-large">Hotel da viagem</p>
+				<p className="money text-headline-medium font-bold">R$ 2.500,00</p>
+			</div>
+			<div className="space-y-3">
+				{[
+					["Ana", "Vou (sem limite)", "ok"],
+					["Beto", "Vou (até R$ 350,00)", "ok"],
+					["Dona Lúcia", "Não vou", "neutral"],
+				].map(([name, answer, tone]) => (
+					<div key={name} className="flex items-center justify-between gap-3">
+						<span className="flex items-center gap-3 text-title-medium">
+							<Avatar name={name} size="md" />
+							{name}
+						</span>
+						<StatusChip tone={tone as "ok" | "neutral"}>{answer}</StatusChip>
+					</div>
+				))}
+				<p className="text-body-large text-on-surface-variant">+ 6 pessoas vão</p>
+			</div>
+			<Card tone="high" className="p-4">
+				<p className="text-title-medium">Fecha com 8 pessoas</p>
+				<p className="money text-headline-small font-bold">R$ 312,50 cada</p>
+			</Card>
+		</Still>
+	);
+}
+
+/** "Pagar tudo": o que a pessoa deve a quem recebe, num só Pix. */
+export function PayAllMock() {
+	return (
+		<Still className="space-y-4">
+			<div className="flex items-end justify-between gap-3">
+				<p className="text-title-large">Para Mãe</p>
+				<p className="money text-headline-small font-bold">R$ 143,20</p>
+			</div>
+			<p className="text-body-large text-on-surface-variant">3 despesas em 2 grupos</p>
+			<Button icon="content_copy" fullWidth>
+				Copiar Pix Copia e Cola
+			</Button>
+		</Still>
+	);
+}
+
+/** Aviso no celular, como chega na tela. */
+export function NoticeMock() {
+	return (
+		<Still className="flex items-start gap-3 rounded-shape-md bg-surface p-4 text-on-surface">
+			<Avatar name="Tio Beto" size="md" />
+			<div className="space-y-1">
+				<p className="text-title-medium">Tio Beto pagou a parte dele</p>
+				<p className="text-body-large text-on-surface-variant">Despesas da vó</p>
+			</div>
 		</Still>
 	);
 }

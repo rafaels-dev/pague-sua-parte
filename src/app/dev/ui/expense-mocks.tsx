@@ -1179,7 +1179,10 @@ export function MockHome({
 	groups = MOCK_GROUPS,
 	managed = [],
 	summary,
+	children,
 }: Readonly<{
+	/** Seções extras no fim do início (ex.: Planos). */
+	children?: React.ReactNode;
 	framed?: boolean;
 	chooser?: boolean;
 	groups?: GroupSummary[];
@@ -1197,6 +1200,7 @@ export function MockHome({
 					<ManagedSummaryCards managed={managed} />
 				</div>
 				<GroupsListView state={{ kind: "ready", groups }} onPostExpense={() => setOpen(true)} />
+				{children}
 				<ChooseGroupSheet open={open} onClose={() => setOpen(false)} groups={groups} />
 			</div>
 		</Shell>

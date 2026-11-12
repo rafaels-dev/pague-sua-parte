@@ -225,13 +225,27 @@ export function MockPlanInvite() {
 	);
 }
 
+/** Os documentos fictícios compartilham o mesmo id; a lista precisa de chaves únicas. */
+const uniqueIds = (list: PlanSummary[], prefix: string): PlanSummary[] => list.map((p, i) => ({ ...p, id: `${prefix}${i}` }));
+
 export function MockPlanList({ framed = true }: Readonly<{ framed?: boolean }>) {
 	const [showOld, setShowOld] = useState(false);
-	const open: PlanSummary[] = [buildPlanSummary(FITS, "ana"), buildPlanSummary(NOT_FIT, "jose"), buildPlanSummary(ABOVE, "lucia")];
-	const old: PlanSummary[] = [buildPlanSummary(DONE, "ana"), buildPlanSummary(CANCELLED, "ana")];
+	const open = uniqueIds([buildPlanSummary(FITS, "ana"), buildPlanSummary(NOT_FIT, "jose"), buildPlanSummary(ABOVE, "lucia")], "a");
+	const old = uniqueIds([buildPlanSummary(DONE, "ana"), buildPlanSummary(CANCELLED, "ana")], "o");
 	return (
 		<Shell pathname="/app" framed={framed}>
 			<PlansSectionView plans={open} oldPlans={showOld ? old : null} loading={false} onToggleOld={() => setShowOld((s) => !s)} />
 		</Shell>
 	);
+}
+
+/** A seção "Planos" do Início com 0, 1 ou vários planos (para montar dentro de MockHome). */
+export function MockHomePlans({ count, hasOld = false }: Readonly<{ count: 0 | 1 | 5; hasOld?: boolean }>) {
+	const [showOld, setShowOld] = useState(false);
+	const all = uniqueIds(
+		[buildPlanSummary(FITS, "ana"), buildPlanSummary(NOT_FIT, "jose"), buildPlanSummary(ABOVE, "lucia"), buildPlanSummary(FITS, "beto"), buildPlanSummary(NOT_FIT, "carla")],
+		"a",
+	);
+	const old = uniqueIds([buildPlanSummary(DONE, "ana"), buildPlanSummary(CANCELLED, "ana")], "o");
+	return <PlansSectionView plans={all.slice(0, count)} hasOld={hasOld} oldPlans={showOld ? old : null} loading={false} onToggleOld={() => setShowOld((v) => !v)} />;
 }

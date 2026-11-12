@@ -3,7 +3,7 @@ import { cx } from "@/lib/ui/cx";
 import { Icon, type IconName } from "./icon";
 import { CircularProgress } from "./progress";
 
-export type ButtonVariant = "filled" | "tonal" | "outlined" | "text";
+export type ButtonVariant = "filled" | "tonal" | "outlined" | "text" | "quiet";
 
 type Common = {
 	variant?: ButtonVariant;
@@ -24,12 +24,15 @@ const VARIANT: Record<ButtonVariant, string> = {
 	tonal: "bg-secondary-container text-on-secondary-container",
 	outlined: "border border-outline text-primary",
 	text: "text-primary",
+	/** Ação discreta, para o que importa menos: texto na cor de apoio, sem contorno. */
+	quiet: "text-on-surface-variant",
 };
 const VARIANT_DISABLED: Record<ButtonVariant, string> = {
 	filled: "bg-on-surface/12 text-on-surface/38",
 	tonal: "bg-on-surface/12 text-on-surface/38",
 	outlined: "border border-on-surface/12 text-on-surface/38",
 	text: "text-on-surface/38",
+	quiet: "text-on-surface/38",
 };
 
 export function Button(props: ButtonProps) {
@@ -39,7 +42,7 @@ export function Button(props: ButtonProps) {
 	const classes = cx(
 		"state-layer inline-flex select-none items-center justify-center gap-2 rounded-full text-label-large transition-[background-color,color] duration-150 ease-out",
 		size === "lg" ? "h-14" : "h-12",
-		variant === "text" ? "px-4" : icon ? "pl-5 pr-6" : "px-6",
+		variant === "text" || variant === "quiet" ? "px-4" : icon ? "pl-5 pr-6" : "px-6",
 		fullWidth && "w-full",
 		disabled && !loading ? VARIANT_DISABLED[variant] : VARIANT[variant],
 		inert && "pointer-events-none",

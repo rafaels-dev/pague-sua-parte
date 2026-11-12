@@ -10,7 +10,7 @@ import { GoogleButtonView } from "@/components/auth/sign-in-button";
 import { LandingView } from "@/components/landing-view";
 import { todayISO } from "@/lib/ui/dates";
 import { nextDayOfMonth } from "@/lib/ui/due-dates";
-import { MockPlan, MockPlanClose, MockPlanForm, MockPlanInvite, MockPlanList, MockPlanShare } from "../plan-mocks";
+import { MockHomePlans, MockPlan, MockPlanClose, MockPlanForm, MockPlanInvite, MockPlanList, MockPlanShare } from "../plan-mocks";
 import { MockPayAll } from "../pay-all-mocks";
 import { MockReceivables } from "../receivables-mocks";
 import { DUE_GROUPS, MOCK_GROUP, Shell as MockShell, MockExpense, MockGroup, MockHome, MockManagedSheet, MockNewExpense, MockNoPixKey, MockRecurrenceSheet, MockReport } from "../expense-mocks";
@@ -229,10 +229,38 @@ export function Telas({ tela }: Readonly<{ tela: string }>) {
 			return <MockExpense mode="payer" shareSheet framed={false} />;
 		case "home-grupos":
 			return <MockHome framed={false} />;
+		case "home-sem-plano":
+			return (
+				<MockHome framed={false}>
+					<MockHomePlans count={0} />
+				</MockHome>
+			);
+		case "home-so-antigos":
+			return (
+				<MockHome framed={false}>
+					<MockHomePlans count={0} hasOld />
+				</MockHome>
+			);
+		case "home-um-plano":
+			return (
+				<MockHome framed={false}>
+					<MockHomePlans count={1} hasOld />
+				</MockHome>
+			);
+		case "home-varios-planos":
+			return (
+				<MockHome framed={false}>
+					<MockHomePlans count={5} hasOld />
+				</MockHome>
+			);
+		case "home-novo-usuario":
+			return (
+				<MockHome framed={false} groups={[]} summary={{ receiveCents: 0, payCents: 0 }}>
+					<MockHomePlans count={0} />
+				</MockHome>
+			);
 		case "home-escolher-grupo":
 			return <MockHome framed={false} chooser />;
-		case "home-sem-grupo":
-			return <MockHome framed={false} chooser groups={[]} />;
 		case "grupo-sem-celular":
 			return <MockGroup care framed={false} />;
 		case "adicionar-sem-celular":

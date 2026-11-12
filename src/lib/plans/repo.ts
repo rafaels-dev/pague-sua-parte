@@ -68,6 +68,11 @@ export async function listPlans(db: Db, uid: string, scope: "open" | "old"): Pro
 	return fresh.filter((p) => status.includes(p.status)).map((p) => buildPlanSummary(p, uid));
 }
 
+/** O usuário participa de algum plano fechado ou cancelado? Barato: um `findOne` pelo índice de participante e status. */
+export async function hasOldPlans(db: Db, uid: string): Promise<boolean> {
+	return (await plansCollection(db).findOne({ "participants.uid": uid, status: { $in: ["done", "cancelled"] } }, { projection: { _id: 1 } })) !== null;
+}
+
 // ---------- escrita com controle otimista ----------
 
 type Mutation = { reject: string } | { set: Partial<PlanDoc>; unset?: (keyof PlanDoc)[] };

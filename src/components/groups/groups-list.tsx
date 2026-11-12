@@ -70,46 +70,31 @@ export function GroupBalance({
 	);
 }
 
-/** Sheet "Em qual grupo?" (ou, sem grupos, o aviso de que é preciso criar um primeiro). */
+/** Sheet "Em qual grupo?": só é aberto quando a pessoa tem mais de um grupo. */
 export function ChooseGroupSheet({ open, onClose, groups }: Readonly<{ open: boolean; onClose: () => void; groups: GroupSummary[] }>) {
-	const none = groups.length === 0;
 	return (
-		<Sheet open={open} onClose={onClose} title={none ? "Crie um grupo primeiro" : "Em qual grupo?"}>
-			{none ? (
-				<div className="space-y-4">
-					<p className="text-body-large text-on-surface-variant">
-						Toda despesa é lançada dentro de um grupo, que reúne as pessoas que dividem os gastos. Crie o seu primeiro grupo para começar.
-					</p>
-					<Button href="/app/grupos/novo" icon="add" fullWidth>
-						Criar grupo
-					</Button>
-					<Button variant="text" size="md" onClick={onClose} fullWidth>
-						Agora não
-					</Button>
-				</div>
-			) : (
-				<div className="space-y-4">
-					<List>
-						{groups.map((g) => (
-							<ListItem
-								key={g.id}
-								href={`/app/grupos/${encodeURIComponent(g.id)}/despesas/nova`}
-								leading={
-									<span className="flex size-12 shrink-0 items-center justify-center rounded-full bg-primary-container text-on-primary-container">
-										<Icon name="group" />
-									</span>
-								}
-								headline={g.name}
-								supporting={peopleLabel(g.memberCount)}
-								trailing={<Icon name="chevron_right" />}
-							/>
-						))}
-					</List>
-					<Button variant="text" size="md" onClick={onClose} fullWidth>
-						Cancelar
-					</Button>
-				</div>
-			)}
+		<Sheet open={open} onClose={onClose} title="Em qual grupo?">
+			<div className="space-y-4">
+				<List>
+					{groups.map((g) => (
+						<ListItem
+							key={g.id}
+							href={`/app/grupos/${encodeURIComponent(g.id)}/despesas/nova`}
+							leading={
+								<span className="flex size-12 shrink-0 items-center justify-center rounded-full bg-primary-container text-on-primary-container">
+									<Icon name="group" />
+								</span>
+							}
+							headline={g.name}
+							supporting={peopleLabel(g.memberCount)}
+							trailing={<Icon name="chevron_right" />}
+						/>
+					))}
+				</List>
+				<Button variant="text" size="md" onClick={onClose} fullWidth>
+					Cancelar
+				</Button>
+			</div>
 		</Sheet>
 	);
 }
@@ -118,9 +103,11 @@ export function ChooseGroupSheet({ open, onClose, groups }: Readonly<{ open: boo
 export function GroupsListView({ state, onPostExpense }: Readonly<{ state: GroupsListState; onPostExpense?: () => void }>) {
 	const ready = state.kind === "ready";
 	const hasGroups = ready && state.groups.length > 0;
+	// Sem grupo, a ação principal é "Criar grupo" (já no meio da tela): "Lançar despesa" só aparece quando há onde lançar.
+	const canPost = hasGroups && !!onPostExpense;
 	return (
 		<div className="space-y-6">
-			{ready && onPostExpense && (
+			{canPost && (
 				<div className="max-md:hidden">
 					<Button icon="add" onClick={onPostExpense}>
 						Lançar despesa
@@ -198,7 +185,7 @@ export function GroupsListView({ state, onPostExpense }: Readonly<{ state: Group
 				)}
 			</section>
 
-			{ready && onPostExpense && (
+			{canPost && (
 				<Fab onClick={onPostExpense} icon="add" className="md:hidden">
 					Lançar despesa
 				</Fab>
@@ -244,7 +231,7 @@ export function GroupsList() {
 			? { kind: "loading" }
 			: { kind: "ready", groups };
 
-	// Um grupo só: direto para a despesa nova. Vários: pergunta qual. Nenhum: explica que falta criar um.
+	// Um grupo só: direto para a despesa nova. Vários: pergunta qual. Nenhum: o botão nem aparece (a ação é "Criar grupo").
 	function postExpense() {
 		if (!groups) return;
 		if (groups.length === 1) router.push(`/app/grupos/${encodeURIComponent(groups[0].id)}/despesas/nova`);
