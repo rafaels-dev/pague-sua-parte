@@ -12,6 +12,7 @@ import {
 } from "@/lib/storage/attachments";
 import { describeError } from "@/lib/api/http";
 import { payerPix } from "./payer-pix";
+import { plansCollection } from "@/lib/plans/collection";
 import { recurrencesCollection } from "@/lib/recurrences/collection";
 import { addedFact, paymentFacts } from "@/lib/notifications/facts";
 import type { NewExpenseFact, PaymentFact } from "@/lib/notifications/types";
@@ -68,6 +69,8 @@ export type ExpenseDoc = {
 	installment?: InstallmentInfo;
 	/** Presente quando a despesa foi gerada por uma despesa fixa: o mês (YYYY-MM) a que se refere. */
 	recurrence?: RecurrenceRef;
+	/** Presente quando a despesa nasceu do fechamento de um plano (o plano guarda os detalhes e as fotos). */
+	planId?: string;
 	createdAt: Date;
 	updatedAt: Date;
 };
@@ -211,6 +214,8 @@ export type ExpenseDetail = {
 	dueDate: string | null;
 	installment: InstallmentInfo | null;
 	recurrence: RecurrenceRef | null;
+	/** Nasceu de um plano: o código dele (para o link "Ver o plano"). */
+	planId: string | null;
 	/** Venceu (antes de hoje, em São Paulo) e ainda há cota de outra pessoa com valor em aberto. */
 	overdue: boolean;
 	/** Todas as parcelas da série que ainda existem, em ordem. */
@@ -348,6 +353,13 @@ export async function fillMissingPix<T extends { groupId: ObjectId; paidBy: stri
 	return out;
 }
 
+/** O código do plano só vai para quem consegue abrir o plano (participante); para os demais, nada (o botão some). */
+export async function visiblePlanId(db: Db, planId: string | undefined, uid: string): Promise<string | null> {
+	if (!planId || !isObjectIdHex(planId)) return null;
+	const found = await plansCollection(db).findOne({ _id: new ObjectId(planId), "participants.uid": uid }, { projection: { _id: 1 } });
+	return found ? planId : null;
+}
+
 async function toDetail(db: Db, e: ExpenseDoc, group: GroupDoc, uid: string, now: Date, known?: ExpenseDoc[]): Promise<ExpenseDetail> {
 	const markers = e.shares.flatMap((s) => [...(s.markedByAdmin && s.markedBy ? [s.markedBy] : []), ...(s.refund?.byAdmin ? [s.refund.markedBy] : [])]);
 	const people = await loadPeople(db, uidsToLoad(group, [...new Set([e.paidBy, e.createdBy, ...e.shares.map((s) => s.uid), ...markers].filter(Boolean))]));
@@ -423,6 +435,7 @@ async function toDetail(db: Db, e: ExpenseDoc, group: GroupDoc, uid: string, now
 		dueDate: e.dueDate ?? null,
 		installment: e.installment ?? null,
 		recurrence: e.recurrence ?? null,
+		planId: await visiblePlanId(db, e.planId, uid),
 		overdue: isOverdue(e, todayInSaoPaulo(now)),
 		series: await seriesOf(db, e, known),
 	};
@@ -460,9 +473,9 @@ export type CreateResult =
 export async function createExpense(
 	db: Db,
 	store: AttachmentStore,
-	args: { groupId: string; uid: string; input: ExpenseInput; files: SniffedFile[]; now?: Date },
+	args: { groupId: string; uid: string; input: ExpenseInput; files: SniffedFile[]; now?: Date; planId?: string; /** Código já sorteado da despesa (só sem parcelas): o fechamento de plano precisa dele para desfazer. */ expenseId?: string },
 ): Promise<CreateResult> {
-	const { groupId, uid, input, files } = args;
+	const { groupId, uid, input, files, planId, expenseId } = args;
 	const now = args.now ?? new Date();
 	const group = await findMemberGroup(db, groupId, uid);
 	if (!group) return { status: "no_group" };
@@ -494,7 +507,7 @@ export async function createExpense(
 	}
 
 	const count = input.installments?.count ?? 1;
-	const ids = Array.from({ length: count }, () => new ObjectId());
+	const ids = Array.from({ length: count }, (_, i) => (i === 0 && expenseId && isObjectIdHex(expenseId) ? new ObjectId(expenseId) : new ObjectId()));
 	const uploaded: AttachmentMeta[] = [];
 	let inserted = false;
 	try {
@@ -527,6 +540,7 @@ export async function createExpense(
 			attachments: uploaded.map((a) => ({ ...a })),
 			...(input.dueDate ? { dueDate: dueDates[i] } : {}),
 			...(seriesId ? { installment: { seriesId, number: i + 1, count } } : {}),
+			...(planId ? { planId } : {}),
 			createdAt: nowDate,
 			updatedAt: nowDate,
 		}));

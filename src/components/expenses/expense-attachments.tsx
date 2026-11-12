@@ -15,12 +15,13 @@ export function ExpenseAttachments({
 	items,
 	onOpenImage,
 	onOpenPdf,
-}: Readonly<{ items: AttachmentView[]; onOpenImage: (id: string) => void; onOpenPdf: (id: string) => void }>) {
+	title = "Anexos",
+}: Readonly<{ items: AttachmentView[]; onOpenImage: (id: string) => void; onOpenPdf: (id: string) => void; title?: string }>) {
 	if (items.length === 0) return null;
 	return (
 		<section className="space-y-3" aria-labelledby="anexos-despesa">
 			<h2 id="anexos-despesa" className="text-title-large">
-				Anexos
+				{title}
 			</h2>
 			<ul className="flex flex-wrap gap-3">
 				{items.map((a) => {

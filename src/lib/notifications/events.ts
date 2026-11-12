@@ -4,9 +4,10 @@ import { isManagedUid } from "@/lib/groups/helpers";
 import type { GroupDoc } from "@/lib/groups/repo";
 import { usersCollection } from "@/lib/users/repo";
 import { buildMemberJoinedNotices, buildNewExpenseNotices, buildPaymentNotices } from "./messages";
+import { buildPlanCancelledNotices, buildPlanChangeNotices, buildPlanClosedNotices } from "./plan-messages";
 import { notify } from "./notify";
 import { runAfterResponse } from "./schedule";
-import type { GroupInfo, NewExpenseFact, NewExpenseMode, NoticeContext, PaymentFact } from "./types";
+import type { GroupInfo, NewExpenseFact, NewExpenseMode, NoticeContext, PaymentFact, PlanCancelFact, PlanChangeFact, PlanClosedFact } from "./types";
 
 type GroupRow = Pick<GroupDoc, "_id" | "name" | "members">;
 
@@ -65,3 +66,8 @@ export const afterPayments = (facts: PaymentFact[] | undefined) => {
 export const afterNewExpenses = (facts: NewExpenseFact[] | undefined, mode: NewExpenseMode) => {
 	if (facts?.length) runAfterResponse(async () => notifyNewExpenses(await getDb(), facts, mode));
 };
+
+// Planos: as mensagens só dependem do que o fato já traz (nada de nomes a buscar).
+export const afterPlanChange = (f: PlanChangeFact) => runAfterResponse(async () => notify(await getDb(), buildPlanChangeNotices(f)));
+export const afterPlanCancelled = (f: PlanCancelFact) => runAfterResponse(async () => notify(await getDb(), buildPlanCancelledNotices(f)));
+export const afterPlanClosed = (f: PlanClosedFact) => runAfterResponse(async () => notify(await getDb(), buildPlanClosedNotices(f)));

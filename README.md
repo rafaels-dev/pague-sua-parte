@@ -34,6 +34,13 @@ O app avisa por e-mail e por push (Web Push) quando alguém entra no grupo, paga
 - `APP_URL` (opcional) define o endereço dos links dos e-mails.
 - Rode `npm run db:indexes` para criar os índices de `push_subscriptions` antes de publicar.
 
+## Planejar despesa (pré-grupo)
+
+Antes de existir grupo e despesa, alguém pode "planejar" um gasto grande (ex.: hotel de fim de ano). O criador informa nome, valor total e, se quiser, quando vai ser, detalhes (texto com links), até 3 fotos e quantas pessoas pensa em chamar. Ele manda o link de convite do plano (WhatsApp); cada pessoa diz **Vou** (com "até quanto posso pagar", opcional) ou **Não vou**, por si e por pessoas sem celular que acrescentar. A conta (`src/lib/plans/compute.ts`) acha o maior grupo em que a parte igual cabe no limite de todos. O limite de cada um só aparece para a própria pessoa, para quem a acrescentou e para o criador. Fechar = **Criar grupo e despesa** (só o criador): cria o grupo com quem foi escolhido e a despesa dividida em partes iguais; a despesa guarda `planId` e mostra "Ver o plano". As fotos ficam no mesmo bucket dos anexos (prefixo `plans/`), sempre servidas pela API.
+
+- Coleção `plans`; índices em `scripts/db-indexes.mjs` (`npm run db:indexes`; rode contra produção antes do push).
+- Telas de exemplo: `/dev/ui/telas?tela=plano-fecha` (e `plano-nao-fecha`, `plano-acima-limite`, `plano-criador-limites`, `plano-virou`, `plano-cancelado`, `plano-novo`, `plano-fechar`, `plano-convite`, `plano-lista`).
+
 ## Publicar na Vercel
 
 1. **Atlas**: crie o cluster e o usuário do banco; libere o acesso de rede para a Vercel (a Hobby não tem IP fixo, então use `0.0.0.0/0` com um usuário de senha forte). Depois rode uma vez `npm run db:indexes` (usa o `.env.local`).

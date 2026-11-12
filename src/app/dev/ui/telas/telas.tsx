@@ -5,6 +5,7 @@ import { GoogleButtonView } from "@/components/auth/sign-in-button";
 import { LandingView } from "@/components/landing-view";
 import { todayISO } from "@/lib/ui/dates";
 import { nextDayOfMonth } from "@/lib/ui/due-dates";
+import { MockPlan, MockPlanClose, MockPlanForm, MockPlanInvite, MockPlanList, MockPlanShare } from "../plan-mocks";
 import { MockPayAll } from "../pay-all-mocks";
 import { MockReceivables } from "../receivables-mocks";
 import { DUE_GROUPS, MOCK_GROUP, MockExpense, MockGroup, MockHome, MockManagedSheet, MockNewExpense, MockNoPixKey, MockRecurrenceSheet, MockReport } from "../expense-mocks";
@@ -47,6 +48,38 @@ export function Telas({ tela }: Readonly<{ tela: string }>) {
 			return <MockReceivables scene="devolucao" framed={false} />;
 		case "grupo-vazio":
 			return <MockGroup empty framed={false} />;
+		case "plano-fecha":
+			return <MockPlan scene="fecha" framed={false} />;
+		case "plano-fecha-detalhes":
+			return <MockPlan scene="fecha-detalhes" framed={false} />;
+		case "plano-nao-fecha":
+			return <MockPlan scene="nao-fecha" framed={false} />;
+		case "plano-acima-limite":
+			return <MockPlan scene="acima-limite" framed={false} />;
+		case "plano-acima-limite-outros":
+			return <MockPlan scene="acima-limite-outros" framed={false} />;
+		case "plano-criador-limites":
+			return <MockPlan scene="criador-limites" framed={false} />;
+		case "plano-virou":
+			return <MockPlan scene="virou" framed={false} />;
+		case "plano-cancelado":
+			return <MockPlan scene="cancelado" framed={false} />;
+		case "plano-compartilhar":
+			return <MockPlanShare framed={false} />;
+		case "plano-novo":
+			return <MockPlanForm framed={false} />;
+		case "plano-novo-preenchido":
+			return <MockPlanForm filled framed={false} />;
+		case "plano-novo-erros":
+			return <MockPlanForm errors framed={false} />;
+		case "plano-fechar":
+			return <MockPlanClose framed={false} />;
+		case "plano-fechar-nao-fecha":
+			return <MockPlanClose fits={false} framed={false} />;
+		case "plano-convite":
+			return <MockPlanInvite />;
+		case "plano-lista":
+			return <MockPlanList framed={false} />;
 		case "nova":
 			return <MockNewExpense framed={false} />;
 		case "nova-preenchida":

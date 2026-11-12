@@ -2,7 +2,7 @@
 
 import { useId, useRef } from "react";
 import { Button, Icon, IconButton } from "@/components/ui";
-import { ACCEPT_ATTR, MAX_FILES, formatFileSize } from "@/lib/ui/attachments";
+import { ACCEPT_ATTR, IMAGE_ACCEPT_ATTR, MAX_FILES, formatFileSize } from "@/lib/ui/attachments";
 import { cx } from "@/lib/ui/cx";
 import type { PickedFile } from "./use-attachments";
 
@@ -20,6 +20,7 @@ export function AttachmentPicker({
 	onPaste,
 	maxFiles = MAX_FILES,
 	copy,
+	imagesOnly = false,
 }: Readonly<{
 	items: PickedFile[];
 	problems: string[];
@@ -34,6 +35,8 @@ export function AttachmentPicker({
 	/** 1 = um arquivo só (comprovante): o botão de escolher passa a trocar o arquivo. */
 	maxFiles?: number;
 	/** Textos (padrão: anexos da despesa). */
+	/** Só fotos (JPG, PNG, WebP): fotos do plano. */
+	imagesOnly?: boolean;
 	copy?: { title: string; optional: boolean; hint: string; pick: string; pickAgain: string; inputLabel: string };
 }>) {
 	const input = useRef<HTMLInputElement>(null);
@@ -115,7 +118,7 @@ export function AttachmentPicker({
 				<input
 					ref={input}
 					type="file"
-					accept={ACCEPT_ATTR}
+					accept={imagesOnly ? IMAGE_ACCEPT_ATTR : ACCEPT_ATTR}
 					multiple={!single}
 					tabIndex={-1}
 					className="sr-only"

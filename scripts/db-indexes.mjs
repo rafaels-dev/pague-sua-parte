@@ -50,6 +50,19 @@ try {
 	const pushSubs = client.db(dbName).collection("push_subscriptions");
 	console.log("push_subscriptions:", await pushSubs.createIndex({ endpoint: 1 }, { name: "endpoint_unique", unique: true }));
 	console.log("push_subscriptions:", await pushSubs.createIndex({ uid: 1, createdAt: -1 }, { name: "uid_created" }));
+	// Planos (pré-grupo): por participante e estado, por criador, e o token do convite é único.
+	const plans = client.db(dbName).collection("plans");
+	console.log("plans:", await plans.createIndex({ "participants.uid": 1, status: 1, createdAt: -1 }, { name: "participant_status_created" }));
+	console.log("plans:", await plans.createIndex({ createdBy: 1, createdAt: -1 }, { name: "created_by" }));
+	console.log(
+		"plans:",
+		await plans.createIndex(
+			{ "invite.token": 1 },
+			{ name: "plan_invite_token_unique", unique: true, partialFilterExpression: { "invite.token": { $type: "string" } } },
+		),
+	);
+	// Despesas que nasceram de um plano (para desfazer um fechamento interrompido).
+	console.log("expenses:", await expenses.createIndex({ planId: 1 }, { name: "plan_id", sparse: true }));
 } catch (err) {
 	console.error("Falha ao criar índices:", err instanceof Error ? err.name : "erro desconhecido");
 	process.exitCode = 1;

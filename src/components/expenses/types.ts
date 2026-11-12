@@ -134,6 +134,8 @@ export type ExpenseDetailData = {
 	installment: InstallmentRef | null;
 	/** Criada por uma despesa fixa (todo mês); null = despesa comum. */
 	recurrence: RecurrenceRef | null;
+	/** Nasceu de um plano (código dele, para o link "Ver o plano"); opcional nas telas de exemplo. */
+	planId?: string | null;
 	overdue: boolean;
 	/** Todas as parcelas da compra (só quando é parcelada). */
 	series: ExpenseSeries | null;
@@ -249,6 +251,7 @@ export function normalizeExpense(raw: Loose<Omit<ExpenseDetailData, "shares">> &
 		dueDate: dueOrNull(raw.dueDate),
 		installment: normalizeInstallment(raw.installment),
 		recurrence: normalizeRecurrenceRef(raw.recurrence),
+		planId: typeof raw.planId === "string" ? raw.planId : null,
 		overdue: !!raw.overdue,
 		series: normalizeSeries(raw.series),
 		helpAsUids: Array.isArray(raw.helpAsUids) ? (raw.helpAsUids as unknown[]).filter((u): u is string => typeof u === "string") : [],

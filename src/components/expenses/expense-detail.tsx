@@ -373,6 +373,13 @@ export function ExpenseDetailView({
 				<p className="text-body-large text-on-surface-variant">
 					{paidByLabel(expense.paidBy)} · {formatDateLong(expense.date)}
 				</p>
+				{expense.planId && (
+					<p>
+						<Button href={`/app/planos/${encodeURIComponent(expense.planId)}`} variant="text" size="md" icon="calendar_today" className="-ml-4">
+							Ver o plano
+						</Button>
+					</p>
+				)}
 				{expense.launchedBy && (
 					<p className="text-body-medium text-on-surface-variant">
 						Lançada por {expense.launchedBy.name}

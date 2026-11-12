@@ -22,7 +22,7 @@ const PASTE_DENIED =
  * Anexos da tela de nova despesa: escolher arquivos, colar (Ctrl+V na tela toda e botão "Colar print") e arrastar e soltar.
  * Com `maxFiles: 1` (comprovante), escolher outro arquivo troca o atual. Imagens grandes são reduzidas antes de entrar na lista. Mensagens de problema ficam em `problems`.
  */
-export function useAttachments({ enabled = true, maxFiles = MAX_FILES }: { enabled?: boolean; maxFiles?: number } = {}) {
+export function useAttachments({ enabled = true, maxFiles = MAX_FILES, imagesOnly = false }: { enabled?: boolean; maxFiles?: number; imagesOnly?: boolean } = {}) {
 	const [items, setItems] = useState<PickedFile[]>([]);
 	const [problems, setProblems] = useState<string[]>([]);
 	const [processing, setProcessing] = useState(false);
@@ -68,7 +68,7 @@ export function useAttachments({ enabled = true, maxFiles = MAX_FILES }: { enabl
 						tooMany = true;
 						continue;
 					}
-					const bad = typeProblem(original);
+					const bad = typeProblem(original) ?? (imagesOnly && !isImageType(effectiveType(original)) ? `"${original.name}" não serve: envie uma foto (JPG, PNG ou WebP).` : null);
 					if (bad) {
 						msgs.push(bad);
 						continue;
@@ -107,7 +107,7 @@ export function useAttachments({ enabled = true, maxFiles = MAX_FILES }: { enabl
 				if (--pending.current === 0) setProcessing(false);
 			});
 		},
-		[commit, maxFiles],
+		[commit, maxFiles, imagesOnly],
 	);
 
 	const remove = useCallback(

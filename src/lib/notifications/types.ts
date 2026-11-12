@@ -41,3 +41,24 @@ export type NewExpenseFact = {
 	installments?: number;
 };
 export type NewExpenseMode = "created" | "recurring" | "added";
+
+/** O que os avisos de um plano precisam saber, num instante. Fica só na memória do servidor: os limites nunca vão a ninguém além do dono do limite. */
+export type PlanNoticeBase = {
+	planId: string;
+	name: string;
+	actorUid: string;
+	creatorUid: string;
+	/** Participantes atuais (uids) e pessoas sem celular com quem as acrescentou. */
+	participants: string[];
+	guests: { id: string; name: string; addedBy: string }[];
+};
+export type PlanSnapshot = {
+	fits: boolean;
+	shareCents: number | null;
+	includedUids: string[];
+	aboveLimitUids: string[];
+	shareIfIncluded: Record<string, number>;
+};
+export type PlanChangeFact = PlanNoticeBase & { before: PlanSnapshot; after: PlanSnapshot; limits: Record<string, number> };
+export type PlanCancelFact = PlanNoticeBase & { goingIds: string[] };
+export type PlanClosedFact = PlanNoticeBase & { leftOutIds: string[] };

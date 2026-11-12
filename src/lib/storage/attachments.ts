@@ -45,6 +45,11 @@ export function attachmentKey(groupId: string, expenseId: string, attachmentId: 
 	return `groups/${groupId}/${expenseId}/${attachmentId}`;
 }
 
+/** Foto de um plano: prefixo próprio (o plano ainda não tem grupo). */
+export function planAttachmentKey(planId: string, attachmentId: string): string {
+	return `plans/${planId}/${attachmentId}`;
+}
+
 /** Comprovante de pagamento de uma cota: prefixo próprio, separado dos anexos da despesa. */
 export function receiptKey(groupId: string, expenseId: string, receiptId: string): string {
 	return `receipts/${groupId}/${expenseId}/${receiptId}`;
@@ -61,6 +66,16 @@ export async function putAttachment(
 ): Promise<AttachmentMeta> {
 	const id = randomId();
 	const key = attachmentKey(args.groupId, args.expenseId, id);
+	await store.put(key, args.bytes, args.contentType);
+	return { id, key, name: args.name, contentType: args.contentType, size: args.bytes.byteLength };
+}
+
+export async function putPlanAttachment(
+	store: AttachmentStore,
+	args: { planId: string; bytes: Uint8Array; name: string; contentType: string },
+): Promise<AttachmentMeta> {
+	const id = randomId();
+	const key = planAttachmentKey(args.planId, id);
 	await store.put(key, args.bytes, args.contentType);
 	return { id, key, name: args.name, contentType: args.contentType, size: args.bytes.byteLength };
 }

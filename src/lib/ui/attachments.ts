@@ -6,6 +6,7 @@ export const MAX_FILE_BYTES = 4 * 1024 * 1024;
 export const MAX_TOTAL_BYTES = 4 * 1024 * 1024;
 export const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/webp", "application/pdf"] as const;
 export const ACCEPT_ATTR = ACCEPTED_TYPES.join(",");
+export const IMAGE_ACCEPT_ATTR = "image/jpeg,image/png,image/webp";
 
 /** Imagens maiores que isto (em pixels, lado maior) ou em bytes são reduzidas antes do envio. */
 export const MAX_SIDE = 1600;
