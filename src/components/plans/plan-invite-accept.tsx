@@ -9,7 +9,7 @@ import { Banner, Button, CircularProgress, Icon } from "@/components/ui";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { formatBRL } from "@/lib/money";
 import { formatDateLong } from "@/lib/ui/dates";
-import { inviteShareLine } from "@/lib/ui/plans";
+import { inviteGoal } from "@/lib/ui/plans";
 import type { PlanInvitePreview } from "@/lib/plans/repo";
 
 function PlanBadge() {
@@ -27,17 +27,26 @@ export function PlanInviteReady({
 	acceptError,
 	onAccept,
 }: Readonly<{ invite: Pick<PlanInvitePreview, "planName" | "creatorName" | "totalCents" | "eventDate" | "allCount" | "shareIfAllCents">; accepting: boolean; acceptError: string | null; onAccept: () => void }>) {
-	const estimate = inviteShareLine(invite.allCount, invite.shareIfAllCents);
+	const goal = inviteGoal(invite);
 	return (
 		<>
 			<PlanBadge />
 			<div className="space-y-1">
 				<p className="text-body-large text-on-surface-variant">{invite.creatorName} convidou você para o plano</p>
 				<h1 className="break-words text-headline-medium font-bold">{invite.planName}</h1>
-				<p className="money text-title-large">{formatBRL(invite.totalCents)}</p>
 				{invite.eventDate && <p className="text-body-large text-on-surface-variant">Quando: {formatDateLong(invite.eventDate)}</p>}
-				{estimate && <p className="text-body-large text-on-surface-variant">{estimate}</p>}
 			</div>
+			{goal ? (
+				<div className="space-y-1">
+					<p className="text-body-large text-on-surface-variant">{goal.split}</p>
+					<p className="money text-headline-medium font-bold">
+						{formatBRL(goal.shareCents)} <span className="text-title-medium font-normal">para cada um</span>
+					</p>
+					{goal.lower && <p className="text-body-large text-on-surface-variant">{goal.lower}</p>}
+				</div>
+			) : (
+				<p className="money text-title-large">{formatBRL(invite.totalCents)}</p>
+			)}
 			<p className="text-body-large text-on-surface-variant">Você diz se vai e, se quiser, até quanto pode pagar. Ninguém paga nada agora.</p>
 			{acceptError && (
 				<Banner tone="error" icon="error" role="alert">

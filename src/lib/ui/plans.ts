@@ -84,6 +84,22 @@ export function myAnswerText(p: Pick<PlanPersonView, "answer" | "limitCents">): 
 	return "Ainda não respondeu";
 }
 
+/**
+ * Página do convite, com foco no valor por pessoa: linha pequena "R$ 2.850,00 dividido por 13 pessoas", valor grande
+ * (a parte de cada um) e "Se só 10 confirmarem, o valor muda para R$ 285,00." (80%; some quando não tira ninguém).
+ * Sem ao menos 2 pessoas na conta não há valor por pessoa.
+ */
+export function inviteGoal(i: { totalCents: number; allCount: number; shareIfAllCents: number | null }): { split: string; shareCents: number; lower: string | null } | null {
+	if (i.shareIfAllCents === null || i.allCount < 2) return null;
+	const fewer = eightyPercent(i.allCount);
+	const lowerCents = fewer < i.allCount ? maxShare(i.totalCents, fewer) : null;
+	return {
+		split: `${formatBRL(i.totalCents)} dividido por ${i.allCount} pessoas`,
+		shareCents: i.shareIfAllCents,
+		lower: lowerCents === null ? null : `Se só ${fewer} confirmarem, o valor muda para ${formatBRL(lowerCents)}.`,
+	};
+}
+
 /** Previsão na lista de pessoas de um convite: "Se forem 10 pessoas, fica R$ 250,00 para cada um." */
 export function inviteShareLine(allCount: number, shareCents: number | null): string | null {
 	return shareCents === null || allCount < 2 ? null : `Se forem ${allCount} pessoas, fica ${formatBRL(shareCents)} para cada um.`;

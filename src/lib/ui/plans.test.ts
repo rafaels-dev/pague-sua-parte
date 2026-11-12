@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { minPeopleForLimit } from "@/lib/plans/compute";
-import { goalLines, initialLimitCents, limitNote, liveLimitNote, goingBody, limitHint, limitIntro, PLANNED_LABEL, plannedSupport, suggestedLimit, limitPlaceholder, hintLine, ifAllLine, inviteShareLine, myAnswerText, resultHeadline, scoreLines, summaryLine } from "./plans";
+import { goalLines, inviteGoal, initialLimitCents, limitNote, liveLimitNote, goingBody, limitHint, limitIntro, PLANNED_LABEL, plannedSupport, suggestedLimit, limitPlaceholder, hintLine, ifAllLine, inviteShareLine, myAnswerText, resultHeadline, scoreLines, summaryLine } from "./plans";
 
 describe("textos do plano", () => {
 	it("resultHeadline", () => {
@@ -156,5 +156,22 @@ describe("meta do plano (tela de quem responde)", () => {
 	it("nunca fala de quem já confirmou nem do valor de hoje", () => {
 		const g = goalLines({ expectedPeople: 13, allCount: 13, shareIfAllCents: 21924 }, 285000)!;
 		expect(`${g.goal} ${g.lower}`).not.toMatch(/Fecha|Por enquanto|2\.850/);
+	});
+});
+
+describe("valor por pessoa na página do convite", () => {
+	it("divisão, parte de cada um e o valor se só 80% confirmarem", () => {
+		expect(inviteGoal({ totalCents: 285000, allCount: 13, shareIfAllCents: 21924 })).toEqual({
+			split: "R$ 2.850,00 dividido por 13 pessoas",
+			shareCents: 21924,
+			lower: "Se só 10 confirmarem, o valor muda para R$ 285,00.",
+		});
+	});
+	it("2 pessoas: sem a linha dos 80%", () => {
+		expect(inviteGoal({ totalCents: 100000, allCount: 2, shareIfAllCents: 50000 })?.lower).toBeNull();
+	});
+	it("sem valor por pessoa: 1 pessoa ou parte nula", () => {
+		expect(inviteGoal({ totalCents: 100000, allCount: 1, shareIfAllCents: 100000 })).toBeNull();
+		expect(inviteGoal({ totalCents: 3, allCount: 10, shareIfAllCents: null })).toBeNull();
 	});
 });
