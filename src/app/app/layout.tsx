@@ -6,6 +6,7 @@ import { AppShellView } from "@/components/app-shell";
 import { useAuth } from "@/components/auth/auth-provider";
 import { CircularProgress } from "@/components/ui";
 import { signOut } from "@/lib/auth/client";
+import { forgetThisDevice, resyncSubscription } from "@/lib/push-client";
 import { useLocationSearch } from "@/lib/ui/use-location-search";
 import { loginUrlFor } from "@/lib/ui/return-to";
 
@@ -17,6 +18,11 @@ export default function AppLayout({ children }: Readonly<{ children: React.React
 	const search = useLocationSearch() ?? "";
 
 	const signingOut = useRef(false);
+	const uid = user?.uid;
+
+	useEffect(() => {
+		if (uid) void resyncSubscription();
+	}, [uid]);
 
 	useEffect(() => {
 		if (loading || user) return;
@@ -40,9 +46,12 @@ export default function AppLayout({ children }: Readonly<{ children: React.React
 			user={{ name: user.name, email: user.email, picture: user.picture ?? null }}
 			onSignOut={() => {
 				signingOut.current = true;
-				void signOut().catch(() => {
-					signingOut.current = false;
-				});
+				// Tira os avisos deste aparelho antes de sair (precisa do login ainda ativo).
+				void forgetThisDevice()
+					.then(() => signOut())
+					.catch(() => {
+						signingOut.current = false;
+					});
 			}}
 		>
 			{children}

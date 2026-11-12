@@ -34,6 +34,7 @@ describe("verifyIdToken", () => {
 		expect(await verify(await sign())).toEqual({
 			uid: "uid-123",
 			email: "ana@example.com",
+			emailVerified: false,
 			name: "Ana",
 			picture: "https://x/y.png",
 		});

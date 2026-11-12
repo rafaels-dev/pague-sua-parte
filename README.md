@@ -25,6 +25,15 @@ Os anexos (foto ou PDF, até 3 por despesa, 4 MB no total) e os comprovantes (4 
 
 Sem as variáveis `R2_*`, o `npm run dev` guarda os arquivos em disco, em `.data/attachments/` (ignorada pelo git). Em produção, sem elas o servidor responde erro 500: nunca grava em disco.
 
+## Avisos (e-mail e push)
+
+O app avisa por e-mail e por push (Web Push) quando alguém entra no grupo, paga, devolve ou lança uma despesa (inclusive as fixas). Cada canal só funciona se as variáveis dele existirem; sem elas, fica desligado em silêncio.
+
+- **E-mail (Resend)**: crie a conta, verifique o domínio `paguesuaparte.com.br` (registros DNS na Cloudflare), gere uma API key e configure `RESEND_API_KEY` e `EMAIL_FROM` (ex.: `PagueSuaParte <avisos@paguesuaparte.com.br>`). Só recebe e-mail quem tem o e-mail confirmado pelo Google.
+- **Push (VAPID)**: rode `npx web-push generate-vapid-keys` e configure `NEXT_PUBLIC_VAPID_PUBLIC_KEY` (vai no build), `VAPID_PRIVATE_KEY` e `VAPID_SUBJECT` (`mailto:...`). Cada pessoa ativa em Perfil > Avisos; no iPhone é preciso antes adicionar o app à Tela de Início.
+- `APP_URL` (opcional) define o endereço dos links dos e-mails.
+- Rode `npm run db:indexes` para criar os índices de `push_subscriptions` antes de publicar.
+
 ## Publicar na Vercel
 
 1. **Atlas**: crie o cluster e o usuário do banco; libere o acesso de rede para a Vercel (a Hobby não tem IP fixo, então use `0.0.0.0/0` com um usuário de senha forte). Depois rode uma vez `npm run db:indexes` (usa o `.env.local`).
@@ -47,6 +56,12 @@ Sem as variáveis `R2_*`, o `npm run dev` guarda os arquivos em disco, em `.data
 | `R2_ACCESS_KEY_ID` | servidor (segredo) | Access Key ID do token R2 |
 | `R2_SECRET_ACCESS_KEY` | servidor (segredo) | Secret Access Key do token R2 |
 | `R2_BUCKET` | servidor | Nome do bucket dos anexos |
+| `APP_URL` | servidor | (opcional) Endereço do app nos links dos e-mails |
+| `RESEND_API_KEY` | servidor (segredo) | Chave da API do Resend; sem ela não há e-mail |
+| `EMAIL_FROM` | servidor | Remetente verificado, ex.: `PagueSuaParte <avisos@paguesuaparte.com.br>` |
+| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | build/cliente | Chave pública VAPID (push) |
+| `VAPID_PRIVATE_KEY` | servidor (segredo) | Chave privada VAPID |
+| `VAPID_SUBJECT` | servidor | `mailto:` de contato para os serviços de push |
 
 `NEXT_PUBLIC_*` são embutidas no bundle em tempo de build. Nunca commite valores reais: use `.env.local` no desenvolvimento e as variáveis do projeto na Vercel.
 

@@ -14,6 +14,7 @@ import { MemberSheetContent } from "@/components/groups/member-sheet";
 import { HomeSummary } from "@/components/home-summary";
 import { PixKeyWarningView } from "@/components/pix-key-warning";
 import { ProfileFormView } from "@/components/profile-form";
+import { NotifyCardView } from "@/components/notify-card";
 import {
 	Avatar,
 	Banner,
@@ -383,6 +384,41 @@ export function Showcase({
 								onPixKey={noop}
 								onSubmit={noop}
 							/>
+						</Shell>
+					</Frame>
+					<Frame label="Perfil: cartão Avisos (iPhone fora da Tela de Início)">
+						<Shell pathname="/app/perfil">
+							<div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
+								<NotifyCardView emailAvailable pushAvailable emailOn canEmail support="ios-install" pushOn={false} busy={false} error={null} onEmail={noop} onEnablePush={noop} onDisablePush={noop} />
+							</div>
+						</Shell>
+					</Frame>
+					<Frame label="Perfil: cartão Avisos (pronto para ativar)">
+						<Shell pathname="/app/perfil">
+							<div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
+								<NotifyCardView emailAvailable pushAvailable emailOn={false} canEmail support="ready" pushOn={false} busy={false} error={null} onEmail={noop} onEnablePush={noop} onDisablePush={noop} />
+							</div>
+						</Shell>
+					</Frame>
+					<Frame label="Perfil: cartão Avisos (ligado neste celular)">
+						<Shell pathname="/app/perfil">
+							<div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
+								<NotifyCardView emailAvailable pushAvailable emailOn canEmail support="ready" pushOn busy={false} error={null} onEmail={noop} onEnablePush={noop} onDisablePush={noop} />
+							</div>
+						</Shell>
+					</Frame>
+					<Frame label="Perfil: cartão Avisos (bloqueado no navegador)">
+						<Shell pathname="/app/perfil">
+							<div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
+								<NotifyCardView emailAvailable pushAvailable emailOn canEmail support="denied" pushOn={false} busy={false} error={null} onEmail={noop} onEnablePush={noop} onDisablePush={noop} />
+							</div>
+						</Shell>
+					</Frame>
+					<Frame label="Perfil: cartão Avisos (só e-mail configurado)">
+						<Shell pathname="/app/perfil">
+							<div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
+								<NotifyCardView emailAvailable pushAvailable={false} emailOn canEmail support="unsupported" pushOn={false} busy={false} error={null} onEmail={noop} onEnablePush={noop} onDisablePush={noop} />
+							</div>
 						</Shell>
 					</Frame>
 					<Frame label="Convite (logada)">

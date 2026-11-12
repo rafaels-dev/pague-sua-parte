@@ -1,6 +1,6 @@
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
 
-export type AuthUser = { uid: string; email: string; name: string; picture?: string };
+export type AuthUser = { uid: string; email: string; /** O Google confirmou o e-mail (único caso em que mandamos avisos). */ emailVerified: boolean; name: string; picture?: string };
 
 /** Lançado quando o token está ausente/inválido; as rotas devem mapear para HTTP 401. */
 export class UnauthorizedError extends Error {}
@@ -59,7 +59,7 @@ export async function verifyIdToken(
 	const email = typeof payload.email === "string" ? payload.email : "";
 	const name = typeof payload.name === "string" && payload.name ? payload.name : email || "Usuário";
 	const picture = typeof payload.picture === "string" ? payload.picture : undefined;
-	return { uid: payload.sub, email, name, ...(picture ? { picture } : {}) };
+	return { uid: payload.sub, email, emailVerified: payload.email_verified === true, name, ...(picture ? { picture } : {}) };
 }
 
 /**

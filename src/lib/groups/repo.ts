@@ -207,7 +207,7 @@ export async function previewInvite(db: Db, token: string, uid: string): Promise
 	};
 }
 
-export type AcceptResult = { status: "ok"; groupId: string } | { status: "invalid" } | { status: "full" };
+export type AcceptResult = { status: "ok"; groupId: string; /** Entrou agora (e não já era membro). */ joined?: true } | { status: "invalid" } | { status: "full" };
 
 export async function acceptInvite(db: Db, token: string, uid: string): Promise<AcceptResult> {
 	// Pessoas sem login nunca entram (nem agem) por convite: o uid vem sempre do token verificado.
@@ -226,7 +226,7 @@ export async function acceptInvite(db: Db, token: string, uid: string): Promise<
 		{ $push: { members: { uid, role: "member", joinedAt: now } }, $set: { updatedAt: now } },
 		{ returnDocument: "after", projection: { _id: 1 } },
 	);
-	if (res) return { status: "ok", groupId: res._id.toHexString() };
+	if (res) return { status: "ok", groupId: res._id.toHexString(), joined: true };
 
 	const group = await findByValidToken(db, token, now);
 	if (!group) return { status: "invalid" };

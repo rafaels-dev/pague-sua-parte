@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { MULTIPART_OVERHEAD_BYTES, bodyTooLarge, handleError, jsonError } from "@/lib/api/http";
 import { requireUser } from "@/lib/auth/server";
+import { afterPayments } from "@/lib/notifications/events";
 import { getDb } from "@/lib/db/client";
 import { MAX_FILE_BYTES, type SniffedFile } from "@/lib/expenses/validation";
 import { payBatch } from "@/lib/payments/repo";
@@ -74,6 +75,7 @@ export async function POST(request: Request) {
 				return jsonError("Essas contas acabaram de mudar. Atualize e tente de novo.", 409);
 			case "ok": {
 				const { batchId, paid, failed, totalPaidCents, hasReceipt } = res;
+				afterPayments(res.payments);
 				return Response.json({ batchId, paid, failed, totalPaidCents, hasReceipt });
 			}
 		}

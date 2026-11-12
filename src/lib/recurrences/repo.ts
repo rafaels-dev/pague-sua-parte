@@ -136,7 +136,7 @@ export async function createRecurrence(
 		updatedAt: now,
 	};
 	await recurrencesCollection(db).insertOne(doc);
-	await materializeSafely(db, [group._id], now);
+	await materializeSafely(db, [group._id], now, { recurrenceId: doc._id.toHexString(), uid });
 
 	const first = await expensesCollection(db).findOne(
 		{ groupId: group._id, "recurrence.id": doc._id.toHexString() },

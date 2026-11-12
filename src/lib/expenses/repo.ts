@@ -13,6 +13,8 @@ import {
 import { describeError } from "@/lib/api/http";
 import { payerPix } from "./payer-pix";
 import { recurrencesCollection } from "@/lib/recurrences/collection";
+import { addedFact, paymentFacts } from "@/lib/notifications/facts";
+import type { NewExpenseFact, PaymentFact } from "@/lib/notifications/types";
 import { buildRecurringExpense, materializeSafely } from "@/lib/recurrences/materialize";
 import { currentPeriod, dueDateFor } from "@/lib/recurrences/period";
 import { usersCollection, type UserDoc } from "@/lib/users/repo";
@@ -449,7 +451,7 @@ export async function getExpenseDetail(db: Db, groupId: string, eid: string, uid
 // ---------- criação ----------
 
 export type CreateResult =
-	| { status: "ok"; expense: ExpenseDetail }
+	| { status: "ok"; expense: ExpenseDetail; /** Para avisar quem divide (uma só vez, mesmo parcelado). */ newExpense?: NewExpenseFact }
 	| { status: "no_group" }
 	/** `name` presente quando a chave que falta é de uma pessoa sem login. */
 	| { status: "no_pix"; name?: string }
@@ -531,7 +533,17 @@ export async function createExpense(
 		inserted = true;
 		if (docs.length === 1) await expensesCollection(db).insertOne(docs[0]);
 		else await expensesCollection(db).insertMany(docs, { ordered: true });
-		return { status: "ok", expense: await toDetail(db, docs[0], group, uid, now, docs) };
+		const newExpense: NewExpenseFact = {
+			groupId,
+			expenseId: docs[0]._id.toHexString(),
+			description: input.description,
+			amountCents: input.amountCents,
+			paidBy,
+			actorUid: uid,
+			shares: docs[0].shares.map((x) => ({ uid: x.uid, amountCents: x.amountCents })),
+			...(count > 1 ? { installments: count } : {}),
+		};
+		return { status: "ok", expense: await toDetail(db, docs[0], group, uid, now, docs), newExpense };
 	} catch (err) {
 		// Falhou depois dos uploads (ou durante): não deixa parcelas pela metade nem arquivos órfãos.
 		if (inserted) {
@@ -842,7 +854,7 @@ export async function mutateShares(db: Db, groupId: string, eid: string, mutate:
 // ---------- quitar / desfazer ----------
 
 export type MarkShareResult =
-	| { status: "ok"; expense: ExpenseDetail }
+	| { status: "ok"; expense: ExpenseDetail; /** O que mudou de fato nesta gravação (para avisar as pessoas). */ payments?: PaymentFact[] }
 	| { status: "no_group" }
 	| { status: "no_expense" }
 	| { status: "forbidden" }
@@ -875,7 +887,8 @@ export async function setSharePaid(
 	if (r.kind === "conflict") return { status: "conflict" };
 	if (r.kind === "rejected") return { status: r.error === "forbidden" ? "forbidden" : "no_share" };
 	if (store && r.wrote) await releaseReceipts(db, store, droppedReceiptKeys(r.before.shares, r.doc.shares));
-	return { status: "ok", expense: await toDetail(db, r.doc, group, uid, now) };
+	const payments = r.wrote && status === "paid" ? paymentFacts(r.doc, r.before.shares, r.doc.shares, uid, true) : [];
+	return { status: "ok", expense: await toDetail(db, r.doc, group, uid, now), payments };
 }
 
 // ---------- "Devolvi" (com comprovante opcional) ----------
@@ -929,13 +942,14 @@ export async function refundShare(
 	if (r.kind === "conflict") return { status: "conflict" };
 	if (r.kind === "rejected") return { status: r.error === "forbidden" ? "forbidden" : "no_share" };
 	if (r.wrote) await releaseReceipts(db, store, droppedReceiptKeys(r.before.shares, r.doc.shares));
-	return { status: "ok", expense: await toDetail(db, r.doc, group, uid, now) };
+	const payments = r.wrote ? paymentFacts(r.doc, r.before.shares, r.doc.shares, uid, false) : [];
+	return { status: "ok", expense: await toDetail(db, r.doc, group, uid, now), payments };
 }
 
 // ---------- "já paguei" (a própria pessoa) ----------
 
 export type SelfPayResult =
-	| { status: "ok"; expense: ExpenseDetail }
+	| { status: "ok"; expense: ExpenseDetail; payments?: PaymentFact[] }
 	| { status: "no_group" }
 	| { status: "no_expense" }
 	| { status: "forbidden" }
@@ -976,13 +990,14 @@ export async function markSelfPaid(
 	if (r.kind === "conflict") return { status: "conflict" };
 	if (r.kind === "rejected") return { status: "no_share" };
 	if (r.wrote) await releaseReceipts(db, store, droppedReceiptKeys(r.before.shares, r.doc.shares));
-	return { status: "ok", expense: await toDetail(db, r.doc, group, uid, now) };
+	const payments = r.wrote ? paymentFacts(r.doc, r.before.shares, r.doc.shares, uid, false) : [];
+	return { status: "ok", expense: await toDetail(db, r.doc, group, uid, now), payments };
 }
 
 // ---------- mudar quem divide ----------
 
 export type UpdateParticipantsResult =
-	| { status: "ok"; expense: ExpenseDetail }
+	| { status: "ok"; expense: ExpenseDetail; /** Quem entrou na divisão (para avisar). */ newExpense?: NewExpenseFact }
 	| { status: "no_group" }
 	| { status: "no_expense" }
 	| { status: "forbidden" }
@@ -1038,7 +1053,8 @@ export async function updateParticipants(
 		if (r.kind === "conflict") return { status: "conflict" };
 		if (r.kind === "rejected") return rejection(r.error);
 		if (store && r.wrote) await releaseReceipts(db, store, droppedReceiptKeys(r.before.shares, r.doc.shares));
-		return { status: "ok", expense: await toDetail(db, r.doc, group, uid, now) };
+		const newExpense = r.wrote ? addedFact(r.doc, r.before.shares, r.doc.shares, uid) : undefined;
+		return { status: "ok", expense: await toDetail(db, r.doc, group, uid, now), newExpense };
 	}
 
 	const first = await findExpense(db, groupId, eid);
@@ -1077,13 +1093,16 @@ export async function updateParticipants(
 	// Quem saiu da divisão sem ter pago perde só a cota; comprovante só some junto com a cota inteira.
 	if (store) await releaseReceipts(db, store, written.flatMap((w) => droppedReceiptKeys(w.before.shares, w.doc.shares)));
 	const mine = written.find((w) => w.doc._id.equals(first._id))?.doc ?? first;
-	return { status: "ok", expense: await toDetail(db, mine, group, uid, now) };
+	// Avisa só pela despesa aberta (não uma vez por parcela da série).
+	const w0 = written.find((w) => w.doc._id.equals(first._id));
+	const newExpense = w0 ? addedFact(w0.doc, w0.before.shares, w0.doc.shares, uid) : undefined;
+	return { status: "ok", expense: await toDetail(db, mine, group, uid, now), newExpense };
 }
 
 // ---------- editar a despesa ----------
 
 export type EditExpenseResult =
-	| { status: "ok"; expense: ExpenseDetail }
+	| { status: "ok"; expense: ExpenseDetail; newExpense?: NewExpenseFact }
 	| { status: "no_group" }
 	| { status: "no_expense" }
 	| { status: "forbidden" }
@@ -1151,7 +1170,8 @@ export async function editExpense(
 	if (r.kind === "conflict") return { status: "conflict" };
 	if (r.kind === "rejected") return r.error as { status: "forbidden" } | { status: "invalid"; error: string; field: string };
 	if (r.wrote) await releaseReceipts(db, store, droppedReceiptKeys(r.before.shares, r.doc.shares));
-	return { status: "ok", expense: await toDetail(db, r.doc, group, uid, now) };
+	const newExpense = r.wrote ? addedFact(r.doc, r.before.shares, r.doc.shares, uid) : undefined;
+	return { status: "ok", expense: await toDetail(db, r.doc, group, uid, now), newExpense };
 }
 
 // ---------- quero ajudar ----------

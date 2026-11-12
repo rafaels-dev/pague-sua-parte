@@ -1,5 +1,6 @@
 import { handleError, jsonError } from "@/lib/api/http";
 import { requireUser } from "@/lib/auth/server";
+import { afterNewExpenses } from "@/lib/notifications/events";
 import { getDb } from "@/lib/db/client";
 import { updateParticipants } from "@/lib/expenses/repo";
 import { parseParticipantsInput } from "@/lib/expenses/validation";
@@ -36,6 +37,7 @@ export async function PUT(request: Request, { params }: Ctx) {
 			case "conflict":
 				return jsonError("Essa despesa acabou de ser alterada. Tente de novo.", 409);
 			case "ok":
+				afterNewExpenses(res.newExpense && [res.newExpense], "added");
 				return Response.json(res.expense);
 		}
 	} catch (err) {

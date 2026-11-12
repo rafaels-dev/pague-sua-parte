@@ -9,7 +9,7 @@ const nextConfig: NextConfig = {
 					// Declara o idioma do conteúdo também no cabeçalho HTTP.
 					{ key: "Content-Language", value: "pt-BR" },
 					// Ninguém pode abrir o app dentro de outro site (clickjacking) nem trocar a base ou o destino dos formulários.
-					{ key: "Content-Security-Policy", value: "frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'" },
+					{ key: "Content-Security-Policy", value: "frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'; worker-src 'self'" },
 					{ key: "X-Frame-Options", value: "DENY" },
 					{ key: "X-Content-Type-Options", value: "nosniff" },
 					// Os convites levam um código no endereço: outros sites só ficam sabendo de onde a pessoa veio, não o caminho.

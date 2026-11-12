@@ -3,6 +3,7 @@ import { describeError } from "@/lib/api/http";
 import type { ExpenseDoc } from "@/lib/expenses/repo";
 import { payerPix, type PayerPix } from "@/lib/expenses/payer-pix";
 import { splitEqually } from "@/lib/expenses/split";
+import { afterNewExpenses } from "@/lib/notifications/events";
 import { groupsCollection, type GroupDoc } from "@/lib/groups/repo";
 import { recurrencesCollection, type RecurrenceDoc } from "./collection";
 import { addPeriods, currentPeriod, dueDateFor, periodsToGenerate, resolveParticipants } from "./period";
@@ -51,7 +52,13 @@ async function endRecurrence(db: Db, r: RecurrenceDoc, now: Date) {
  * inserir: só quem reservou insere (leituras simultâneas não duplicam) e apagar a despesa de um mês não a traz de volta.
  * O índice único em `recurrence.id + recurrence.period` é a segunda trava. Devolve quantas despesas criou.
  */
-export async function materializeRecurrences(db: Db, groupIds: ObjectId[], now: Date = new Date()): Promise<number> {
+export async function materializeRecurrences(
+	db: Db,
+	groupIds: ObjectId[],
+	now: Date = new Date(),
+	/** Quem acabou de criar este modelo: não recebe o aviso da primeira geração feita na própria requisição. */
+	author?: { recurrenceId: string; uid: string },
+): Promise<number> {
 	if (groupIds.length === 0) return 0;
 	const current = currentPeriod(now);
 	const recs = recurrencesCollection(db);
@@ -89,8 +96,26 @@ export async function materializeRecurrences(db: Db, groupIds: ObjectId[], now: 
 			);
 			if (claim.matchedCount === 0) break; // outra leitura está cuidando deste mês
 			try {
-				await db.collection<ExpenseDoc>("expenses").insertOne(buildRecurringExpense(r, group, period, pix, now));
+				const doc = buildRecurringExpense(r, group, period, pix, now);
+				await db.collection<ExpenseDoc>("expenses").insertOne(doc);
 				created++;
+				// Só o mês atual avisa (um atraso de vários meses não inunda ninguém) e só o documento de fato inserido.
+				if (period === current) {
+					afterNewExpenses(
+						[
+							{
+								groupId: group._id.toHexString(),
+								expenseId: doc._id.toHexString(),
+								description: doc.description,
+								amountCents: doc.amountCents,
+								paidBy: doc.paidBy,
+								actorUid: author && author.recurrenceId === r._id.toHexString() ? author.uid : null,
+								shares: doc.shares.map((x) => ({ uid: x.uid, amountCents: x.amountCents })),
+							},
+						],
+						"recurring",
+					);
+				}
 			} catch (err) {
 				if (isDuplicateKey(err)) continue; // o mês já existe: nada a fazer
 				// Devolve a reserva para tentar de novo depois.
@@ -103,9 +128,9 @@ export async function materializeRecurrences(db: Db, groupIds: ObjectId[], now: 
 }
 
 /** Como `materializeRecurrences`, mas uma falha só vai para o log e nunca derruba a leitura. */
-export async function materializeSafely(db: Db, groupIds: ObjectId[], now: Date = new Date()): Promise<void> {
+export async function materializeSafely(db: Db, groupIds: ObjectId[], now: Date = new Date(), author?: { recurrenceId: string; uid: string }): Promise<void> {
 	try {
-		await materializeRecurrences(db, groupIds, now);
+		await materializeRecurrences(db, groupIds, now, author);
 	} catch (err) {
 		console.error("materializeRecurrences error:", describeError(err));
 	}

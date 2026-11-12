@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { handleError, jsonError } from "@/lib/api/http";
 import { requireUser } from "@/lib/auth/server";
+import { afterPayments } from "@/lib/notifications/events";
 import { getDb } from "@/lib/db/client";
 import { setSharePaid } from "@/lib/expenses/repo";
 import { getAttachmentStore } from "@/lib/storage/attachments";
@@ -40,6 +41,7 @@ export async function PATCH(request: Request, { params }: Ctx) {
 			case "conflict":
 				return jsonError(CONFLICT, 409);
 			case "ok":
+				afterPayments(res.payments);
 				return Response.json(res.expense);
 		}
 	} catch (err) {

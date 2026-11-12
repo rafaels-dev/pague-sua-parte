@@ -15,6 +15,8 @@ import { dueCents, normalizeShares, payShares, refundCents, refundShares, type B
 import type { SniffedFile } from "@/lib/expenses/validation";
 import { actsFor, isObjectIdHex } from "@/lib/groups/helpers";
 import { groupsCollection, type GroupDoc } from "@/lib/groups/repo";
+import { paymentFacts } from "@/lib/notifications/facts";
+import type { PaymentFact } from "@/lib/notifications/types";
 import { materializeSafely } from "@/lib/recurrences/materialize";
 import { putBatchReceipt, randomId, type AttachmentMeta, type AttachmentStore } from "@/lib/storage/attachments";
 import { buildPayables, recipientIdFromKey, recipientKey, type Payables } from "./payables";
@@ -122,7 +124,7 @@ export type BatchPaid = BatchItemInput & { amountCents: number };
 export type BatchFailed = BatchItemInput & { reason: BatchFailReason };
 
 export type BatchPayResult =
-	| { status: "ok"; batchId: string; paid: BatchPaid[]; failed: BatchFailed[]; totalPaidCents: number; hasReceipt: boolean }
+	| { status: "ok"; batchId: string; paid: BatchPaid[]; failed: BatchFailed[]; totalPaidCents: number; hasReceipt: boolean; /** O que mudou de fato (para avisar). */ payments?: PaymentFact[] }
 	| { status: "no_group" }
 	| { status: "no_expense" }
 	| { status: "forbidden" }
@@ -241,6 +243,7 @@ export async function payBatch(
 
 	const result = new Map<string, BatchOutcome | RefundOutcome | BatchFailReason>();
 	const paidDocs: { groupId: string; eid: string }[] = [];
+	const facts: PaymentFact[] = [];
 	try {
 		const byExpense = new Map<string, BatchItemInput[]>();
 		for (const i of items) byExpense.set(`${i.groupId}:${i.expenseId}`, [...(byExpense.get(`${i.groupId}:${i.expenseId}`) ?? []), i]);
@@ -262,7 +265,10 @@ export async function payBatch(
 				if (r.kind === "ok") result.set(itemId(i), (i.kind === "refund" ? refundOutcomes : shareOutcomes).find((o) => o.uid === i.shareUid) ?? "not_found");
 				else result.set(itemId(i), r.kind === "no_expense" ? "not_found" : "conflict");
 			}
-			if (r.kind === "ok" && r.wrote) paidDocs.push({ groupId, eid: expenseId });
+			if (r.kind === "ok" && r.wrote) {
+				paidDocs.push({ groupId, eid: expenseId });
+				facts.push(...paymentFacts(r.doc, r.before.shares, r.doc.shares, uid, false));
+			}
 		}
 	} catch (err) {
 		await releaseReceipts(db, store, receipt ? [receipt.key] : []);
@@ -286,7 +292,7 @@ export async function payBatch(
 		return { status: "all_failed" };
 	}
 	if (failed.length > 0) await correctBatchTotals(db, uid, batchId, paidDocs, { id: batchId, totalCents: totalPaidCents, count: paid.length });
-	return { status: "ok", batchId, paid, failed, totalPaidCents, hasReceipt: Boolean(receipt) };
+	return { status: "ok", batchId, paid, failed, totalPaidCents, hasReceipt: Boolean(receipt), payments: facts };
 }
 
 /** Melhor esforço: ajusta o lote gravado ao que de fato foi pago. Se perder a corrida, fica o valor pedido. */

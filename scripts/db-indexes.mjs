@@ -46,6 +46,10 @@ try {
 	console.log("expenses:", await expenses.createIndex({ "shares.refund.receipt.key": 1 }, { name: "share_refund_receipt_key", sparse: true }));
 	const recurrences = client.db(dbName).collection("recurrences");
 	console.log("recurrences:", await recurrences.createIndex({ groupId: 1, active: 1, nextPeriod: 1 }, { name: "group_active_next" }));
+	// Avisos (push): um aparelho tem um só endereço; busca por usuário ao avisar.
+	const pushSubs = client.db(dbName).collection("push_subscriptions");
+	console.log("push_subscriptions:", await pushSubs.createIndex({ endpoint: 1 }, { name: "endpoint_unique", unique: true }));
+	console.log("push_subscriptions:", await pushSubs.createIndex({ uid: 1, createdAt: -1 }, { name: "uid_created" }));
 } catch (err) {
 	console.error("Falha ao criar índices:", err instanceof Error ? err.name : "erro desconhecido");
 	process.exitCode = 1;

@@ -14,6 +14,8 @@ const roboto = Roboto({
 export const metadata: Metadata = {
 	title: { default: "PagueSuaParte", template: "%s | PagueSuaParte" },
 	description: "Divida as despesas da família de forma simples: lance o gasto, pague por Pix e anexe o comprovante.",
+	icons: { icon: "/favicon.svg", apple: "/apple-touch-icon.png" },
+	appleWebApp: { capable: true, title: "PagueSuaParte", statusBarStyle: "default" },
 	openGraph: { locale: "pt_BR", siteName: "PagueSuaParte", type: "website" },
 	// O conteúdo já está em português: evita que o navegador ofereça tradução.
 	other: { google: "notranslate" },

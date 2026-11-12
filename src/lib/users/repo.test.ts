@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Db } from "mongodb";
-import { updateProfile, upsertFromAuth } from "./repo";
+import { updateNotifyPrefs, updateProfile, upsertFromAuth } from "./repo";
 
 function mockDb(result: unknown) {
 	const findOneAndUpdate = vi.fn().mockResolvedValue(result);
@@ -8,7 +8,7 @@ function mockDb(result: unknown) {
 	return { db: { collection } as unknown as Db, findOneAndUpdate, collection };
 }
 
-const authUser = { uid: "u1", email: "a@b.com", name: "Ana", picture: "http://x/p.png" };
+const authUser = { uid: "u1", email: "a@b.com", emailVerified: true, name: "Ana", picture: "http://x/p.png" };
 
 describe("upsertFromAuth", () => {
 	it("faz upsert em users com _id = uid e nunca toca em pixKey", async () => {
@@ -19,7 +19,7 @@ describe("upsertFromAuth", () => {
 		const [filter, update, opts] = findOneAndUpdate.mock.calls[0];
 		expect(filter).toEqual({ _id: "u1" });
 		expect(opts).toMatchObject({ upsert: true, returnDocument: "after" });
-		expect(update.$set).toMatchObject({ email: "a@b.com", name: "Ana", picture: "http://x/p.png" });
+		expect(update.$set).toMatchObject({ email: "a@b.com", emailVerified: true, name: "Ana", picture: "http://x/p.png" });
 		expect(update.$set.updatedAt).toBeInstanceOf(Date);
 		expect(update.$setOnInsert.createdAt).toBeInstanceOf(Date);
 		const touched = JSON.stringify(update);
@@ -60,5 +60,13 @@ describe("updateProfile", () => {
 		const update = findOneAndUpdate.mock.calls[0][1];
 		expect(update.$unset).toEqual({ pixKey: "" });
 		expect(update.$set).not.toHaveProperty("pixKey");
+	});
+});
+
+describe("updateNotifyPrefs", () => {
+	it("grava só o que foi enviado", async () => {
+		const { db, findOneAndUpdate } = mockDb({});
+		await updateNotifyPrefs(db, "u1", { email: false });
+		expect(Object.keys(findOneAndUpdate.mock.calls[0][1].$set).sort()).toEqual(["notify.email", "updatedAt"]);
 	});
 });

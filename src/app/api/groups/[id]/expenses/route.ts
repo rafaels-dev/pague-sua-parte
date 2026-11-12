@@ -1,5 +1,6 @@
 import { MULTIPART_OVERHEAD_BYTES, bodyTooLarge, handleError, jsonError } from "@/lib/api/http";
 import { requireUser } from "@/lib/auth/server";
+import { afterNewExpenses } from "@/lib/notifications/events";
 import { getDb } from "@/lib/db/client";
 import { createExpense, listExpenses } from "@/lib/expenses/repo";
 import { MAX_TOTAL_BYTES, checkFileLimits, parseExpenseInput, sniffFiles } from "@/lib/expenses/validation";
@@ -76,6 +77,7 @@ export async function POST(request: Request, { params }: Ctx) {
 			case "invalid":
 				return jsonError(result.error, 422, result.field);
 			case "ok":
+				afterNewExpenses(result.newExpense && [result.newExpense], "created");
 				return Response.json(result.expense, { status: 201 });
 		}
 	} catch (err) {

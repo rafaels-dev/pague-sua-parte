@@ -1,5 +1,6 @@
 import { handleError, jsonError } from "@/lib/api/http";
 import { requireUser } from "@/lib/auth/server";
+import { afterMemberJoined } from "@/lib/notifications/events";
 import { getDb } from "@/lib/db/client";
 import { acceptInvite } from "@/lib/groups/repo";
 import { upsertFromAuth } from "@/lib/users/repo";
@@ -20,6 +21,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
 			return jsonError(INVALID_INVITE, 404);
 		}
 		if (result.status === "full") return jsonError("Este grupo já está cheio.", 409);
+		if (result.joined) afterMemberJoined(result.groupId, user.uid);
 		return Response.json({ groupId: result.groupId });
 	} catch (err) {
 		return handleError(err, "api/invites/[token]/accept");

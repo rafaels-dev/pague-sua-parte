@@ -1,5 +1,6 @@
 import { MULTIPART_OVERHEAD_BYTES, bodyTooLarge, handleError, jsonError } from "@/lib/api/http";
 import { requireUser } from "@/lib/auth/server";
+import { afterPayments } from "@/lib/notifications/events";
 import { getDb } from "@/lib/db/client";
 import { markSelfPaid } from "@/lib/expenses/repo";
 import { MAX_FILE_BYTES, type SniffedFile } from "@/lib/expenses/validation";
@@ -46,6 +47,7 @@ export async function POST(request: Request, { params }: Ctx) {
 			case "conflict":
 				return jsonError(CONFLICT, 409);
 			case "ok":
+				afterPayments(res.payments);
 				return Response.json(res.expense);
 		}
 	} catch (err) {

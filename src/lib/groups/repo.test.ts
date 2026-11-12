@@ -202,7 +202,7 @@ describe("acceptInvite", () => {
 	it("entra com um único update atômico (token, validade, ainda fora, limite)", async () => {
 		const { db, groups } = mockDb({});
 		groups.findOneAndUpdate.mockResolvedValue({ _id: new ObjectId(GID) });
-		expect(await acceptInvite(db, TOKEN, "u3")).toEqual({ status: "ok", groupId: GID });
+		expect(await acceptInvite(db, TOKEN, "u3")).toEqual({ status: "ok", groupId: GID, joined: true });
 		const [filter, update] = groups.findOneAndUpdate.mock.calls[0];
 		expect(filter["invite.token"]).toBe(TOKEN);
 		expect(filter["invite.expiresAt"].$gt).toBeInstanceOf(Date);

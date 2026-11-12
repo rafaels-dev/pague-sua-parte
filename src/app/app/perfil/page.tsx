@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth/auth-provider";
+import { NotifyCard } from "@/components/notify-card";
 import { ProfileFormView, ProfileSkeleton } from "@/components/profile-form";
 import { Button, EmptyState, Snackbar } from "@/components/ui";
 import { onUserChanged } from "@/lib/auth/client";
@@ -155,6 +156,9 @@ export default function PerfilPage() {
 				}}
 				onSubmit={onSubmit}
 			/>
+			<div className="mt-6 grid gap-6 lg:grid-cols-[18rem_1fr]">
+				<NotifyCard />
+			</div>
 			<Snackbar open={saved} message="Salvo!" onClose={() => setSaved(false)} aboveNav />
 		</>
 	);
