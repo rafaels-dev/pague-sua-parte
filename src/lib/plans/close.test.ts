@@ -185,6 +185,62 @@ describe("closePlan", () => {
 		expect((await closePlan(f.db, store, "cri", PID, body(), deps(f), NOW)).status).toBe("ok");
 	});
 
+	describe("resposta perdida na gravação do done (B)", () => {
+		const lossy = (f: F, loseDone: boolean) => {
+			const orig = (f.db as unknown as { collection: (n: string) => Record<string, (...a: unknown[]) => Promise<unknown>> }).collection;
+			(f.db as unknown as { collection: unknown }).collection = (n: string) => {
+				const c = orig(n);
+				if (n !== "plans") return c;
+				return {
+					...c,
+					updateOne: async (q: unknown, u: { $set?: { status?: string } }) => {
+						const r = await c.updateOne(q, u);
+						if (loseDone && u.$set?.status === "done") throw new Error("rede caiu");
+						return r;
+					},
+				};
+			};
+		};
+		it("o done chegou ao banco mas a resposta se perdeu: não apaga nada e devolve sucesso", async () => {
+			const f = fakeDb();
+			f.data.plans.push(plan() as never);
+			lossy(f, true);
+			const r = await closePlan(f.db, store, "cri", PID, body(), deps(f), NOW);
+			expect(r.status).toBe("ok");
+			expect(f.data.groups).toHaveLength(1);
+			expect(f.data.expenses).toHaveLength(1);
+			expect(f.data.plans[0]).toMatchObject({ status: "done", groupName: "Viagem" });
+			expect(r.status === "ok" && r.newExpense).toBeTruthy(); // o aviso de despesa nova continua valendo
+		});
+		it("erro antes do done: desfaz como antes e o erro sobe", async () => {
+			const f = fakeDb();
+			f.data.plans.push(plan() as never);
+			const createExpense = vi.fn(async (_d, _s, a) => {
+				f.data.expenses.push({ _id: new ObjectId(a.expenseId), planId: a.planId });
+				throw new Error("banco caiu");
+			});
+			await expect(closePlan(f.db, store, "cri", PID, body(), deps(f, { createExpense }), NOW)).rejects.toThrow("banco caiu");
+			expect(f.data.groups).toHaveLength(0);
+			expect(f.data.expenses).toHaveLength(0);
+			expect(f.data.plans[0].status).toBe("open");
+		});
+		it("plano done por OUTRA tentativa não livra esta de apagar o que criou", async () => {
+			const f = fakeDb();
+			f.data.plans.push(plan() as never);
+			const createExpense = vi.fn(async (_d, _s, a) => {
+				f.data.expenses.push({ _id: new ObjectId(a.expenseId), planId: a.planId });
+				// enquanto esta tentativa trabalha, outra (já recuperada) concluiu o plano
+				Object.assign(f.data.plans[0], { status: "done", closedAttemptId: "outra", groupId: "g-outra", expenseId: "e-outra" });
+				delete f.data.plans[0].closing;
+				throw new Error("falhou");
+			});
+			await expect(closePlan(f.db, store, "cri", PID, body(), deps(f, { createExpense }), NOW)).rejects.toThrow("falhou");
+			expect(f.data.groups).toHaveLength(0); // o grupo desta tentativa foi apagado
+			expect(f.data.expenses).toHaveLength(0);
+			expect(f.data.plans[0]).toMatchObject({ status: "done", closedAttemptId: "outra" });
+		});
+	});
+
 	describe("fechamento preso", () => {
 		it("na próxima tentativa, a recuperação desfaz o que sobrou e a nova tentativa segue", async () => {
 			const f = fakeDb();

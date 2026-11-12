@@ -38,6 +38,8 @@ export type PlanDoc = {
 	 * reserva, para o desfazer sempre saber o que apagar; `attemptId` identifica a tentativa (só ela conclui ou desfaz).
 	 */
 	closing?: { at: Date; attemptId: string; groupId: string; expenseId: string };
+	/** Código da tentativa que concluiu o fechamento (para uma resposta perdida não desfazer um fechamento concluído). */
+	closedAttemptId?: string;
 	/** Quem o criador tirou do plano: não volta pelo mesmo link. (Quem saiu por conta própria pode voltar.) */
 	removed?: string[];
 	/** Cresce a cada escrita (concorrência otimista). */

@@ -32,7 +32,7 @@ export async function findPlanFor(db: Db, pid: string, uid: string, now: Date = 
 
 /** Nomes e fotos de quem participa (projeção explícita: sem e-mail nem chave Pix). */
 export async function loadInfo(db: Db, plan: PlanDoc): Promise<(uid: string) => PersonInfo> {
-	const people = await loadPeople(db, plan.participants.map((p) => p.uid));
+	const people = await loadPeople(db, [...plan.participants.map((p) => p.uid), ...(plan.removed ?? [])]);
 	return (uid) => {
 		const u = people.get(uid);
 		return { name: u?.displayName?.trim() || u?.name || "Participante", picture: u?.picture ?? null };
@@ -240,6 +240,18 @@ export async function removeParticipant(db: Db, pid: string, uid: string, target
 				responses: p.responses.filter((r) => r.who !== target && !goneGuests.has(r.who)),
 			},
 		};
+	});
+	return finish(db, uid, m, { ...FORBIDDEN, no_person: { kind: "no_plan" } });
+}
+
+/** O criador deixa quem tirou voltar pelo link (não recoloca a pessoa: ela entra de novo pelo convite). */
+export async function allowReturn(db: Db, pid: string, uid: string, target: string): Promise<PlanChange> {
+	const m = await mutatePlan(db, pid, uid, (p) => {
+		const bad = creatorOpen(p, uid);
+		if (bad) return bad;
+		if (!p.removed?.includes(target)) return { reject: "no_person" };
+		const left = p.removed.filter((x) => x !== target);
+		return left.length ? { set: { removed: left } } : { set: {}, unset: ["removed"] };
 	});
 	return finish(db, uid, m, { ...FORBIDDEN, no_person: { kind: "no_plan" } });
 }

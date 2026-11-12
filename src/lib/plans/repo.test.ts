@@ -2,7 +2,7 @@ import { ObjectId } from "mongodb";
 import { describe, expect, it, vi } from "vitest";
 import type { AttachmentStore } from "@/lib/storage/attachments";
 import { CLOSING_STALE_MS, type PlanDoc } from "./collection";
-import { acceptPlanInvite, cancelPlan, getPlanView, listPlans, removeParticipant, setResponse } from "./repo";
+import { acceptPlanInvite, allowReturn, cancelPlan, getPlanView, listPlans, removeParticipant, setResponse } from "./repo";
 import { fakeDb } from "./test-db";
 
 const NOW = new Date();
@@ -132,5 +132,32 @@ describe("'Ver o plano' na despesa (6)", () => {
 		expect(await visiblePlanId(f.db, PID, "intruso")).toBeNull();
 		expect(await visiblePlanId(f.db, undefined, "ana")).toBeNull();
 		expect(await visiblePlanId(f.db, "lixo", "ana")).toBeNull();
+	});
+});
+
+describe("permitir voltar (C)", () => {
+	it("o criador tira o uid de `removed` e a pessoa entra de novo pelo link (não é recolocada sozinha)", async () => {
+		const f = setup();
+		await removeParticipant(f.db, PID, "cri", "ana");
+		expect(await acceptPlanInvite(f.db, TOKEN, "ana")).toEqual({ status: "removed" });
+		const res = await allowReturn(f.db, PID, "cri", "ana");
+		expect(res.kind).toBe("ok");
+		expect(f.data.plans[0].removed).toBeUndefined();
+		expect((f.data.plans[0].participants as { uid: string }[]).map((p) => p.uid)).toEqual(["cri"]); // ainda fora
+		expect(await acceptPlanInvite(f.db, TOKEN, "ana")).toMatchObject({ status: "ok", joined: true });
+	});
+	it("mantém os outros removidos", async () => {
+		const f = setup({ removed: ["ana", "zeca"] });
+		await allowReturn(f.db, PID, "cri", "ana");
+		expect(f.data.plans[0].removed).toEqual(["zeca"]);
+	});
+	it("só o criador; só com o plano aberto; uid que não está na lista é recusado", async () => {
+		const f = setup({ removed: ["zeca"] });
+		expect((await allowReturn(f.db, PID, "ana", "zeca")).kind).toBe("forbidden");
+		expect((await allowReturn(f.db, PID, "intruso", "zeca")).kind).toBe("no_plan");
+		expect((await allowReturn(f.db, PID, "cri", "outro")).kind).toBe("no_plan");
+		expect(f.data.plans[0].removed).toEqual(["zeca"]);
+		f.data.plans[0].status = "cancelled";
+		expect((await allowReturn(f.db, PID, "cri", "zeca")).kind).toBe("closed");
 	});
 });

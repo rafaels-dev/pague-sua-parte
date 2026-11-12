@@ -1,4 +1,5 @@
 import { computePlan, maxShare, type PlanComputation, type PlanHint } from "./compute";
+import { sharePreview, type SharePreview } from "./preview";
 import { MAX_GUESTS_PER_PERSON, MAX_PLAN_PEOPLE, peopleOf, type PlanDoc, type PlanStatus } from "./collection";
 
 export type PlanAnswerState = "going" | "not_going" | "pending";
@@ -23,6 +24,8 @@ export type PlanPersonView = {
 	aboveLimit: boolean | null;
 	/** Mesmas regras: quanto seria a parte se entrasse na conta agora. */
 	shareIfIncludedCents: number | null;
+	/** Só para quem responde por esta pessoa: o valor previsto da parte dela (indicativo para o campo de limite). */
+	preview: SharePreview | null;
 };
 
 export type PlanResultView = {
@@ -70,6 +73,8 @@ export type PlanView = {
 	goingIds: string[] | null;
 	people: PlanPersonView[];
 	attachments: PlanAttachmentView[];
+	/** SÓ para quem criou o plano, com o plano aberto: quem ele tirou (pode permitir que volte pelo link). */
+	removed: { uid: string; name: string }[];
 	/** Preenchido quando o plano virou grupo. `groupId` só vai para quem entrou no grupo. */
 	closed: { groupName: string; groupId: string | null; expenseId: string | null } | null;
 };
@@ -158,6 +163,7 @@ export function buildPlanView(
 			limitCents: reveal && resp?.going && typeof resp.limitCents === "number" ? resp.limitCents : null,
 			aboveLimit: reveal ? above : null,
 			shareIfIncludedCents: reveal && above ? (c.shareIfIncluded[id] ?? null) : null,
+			preview: open && canAnswerFor(plan, caller, id) ? sharePreview(plan, id) : null,
 		};
 	}
 
@@ -200,6 +206,7 @@ export function buildPlanView(
 		goingIds: isCreator ? c.goingUids : null,
 		people,
 		attachments: plan.attachments.map((a) => ({ id: a.id, name: a.name, contentType: a.contentType, size: a.size })),
+		removed: isCreator && open ? (plan.removed ?? []).map((uid) => ({ uid, name: info(uid).name })) : [],
 		closed: closing && plan.groupName ? { groupName: plan.groupName, groupId: closed?.groupId ?? null, expenseId: closed?.groupId ? (plan.expenseId ?? null) : null } : null,
 	};
 }

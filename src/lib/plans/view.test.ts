@@ -85,6 +85,29 @@ describe("privacidade do limite", () => {
 	});
 });
 
+describe("prévia da parte e removidos", () => {
+	it("a prévia só vai para quem responde pela pessoa", () => {
+		const v = buildPlanView(plan({ expectedPeople: 10 }), "bia", info);
+		expect(person(v, "bia").preview).toEqual({ cents: 9000, basis: "expected", people: 10 });
+		expect(person(v, "ana").preview).toBeNull();
+		expect(person(v, "pg_1").preview).toBeNull();
+		const ana = buildPlanView(plan({ expectedPeople: 10 }), "ana", info);
+		expect(person(ana, "pg_1").preview).not.toBeNull(); // ana acrescentou o Benjamim
+	});
+	it("plano fechado não traz prévia", () => {
+		const v = buildPlanView(plan({ status: "cancelled" }), "bia", info);
+		expect(person(v, "bia").preview).toBeNull();
+	});
+	it("removidos só para o criador, com o plano aberto", () => {
+		const p = plan({ removed: ["zeca"] });
+		const named = (uid: string) => ({ name: uid === "zeca" ? "Zeca" : "x", picture: null });
+		expect(buildPlanView(p, "cri", named).removed).toEqual([{ uid: "zeca", name: "Zeca" }]);
+		expect(buildPlanView(p, "ana", named).removed).toEqual([]);
+		expect(buildPlanView(plan({ removed: ["zeca"], status: "cancelled" }), "cri", named).removed).toEqual([]);
+		expect(JSON.stringify(buildPlanView(p, "ana", named))).not.toContain("zeca");
+	});
+});
+
 describe("respostas e permissões", () => {
 	it("canAnswerFor", () => {
 		const p = plan();

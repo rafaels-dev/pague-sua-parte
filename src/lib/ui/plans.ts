@@ -1,4 +1,5 @@
 import { formatBRL } from "@/lib/money";
+import type { SharePreview } from "@/lib/plans/preview";
 import type { PlanAnswerState, PlanPersonView, PlanResultView, PlanSummary } from "@/lib/plans/view";
 
 const pessoas = (n: number) => (n === 1 ? "1 pessoa" : `${n} pessoas`);
@@ -59,4 +60,33 @@ export function myAnswerText(p: Pick<PlanPersonView, "answer" | "limitCents">): 
 /** Previsão na lista de pessoas de um convite: "Se forem 10 pessoas, fica R$ 250,00 para cada um." */
 export function inviteShareLine(allCount: number, shareCents: number | null): string | null {
 	return shareCents === null || allCount < 2 ? null : `Se forem ${allCount} pessoas, fica ${formatBRL(shareCents)} para cada um.`;
+}
+
+/** Placeholder do campo "Até quanto posso pagar": o valor previsto, sempre com "R$" (sem previsão, "R$ 0,00" como nas outras telas). Não é valor preenchido. */
+export function limitPlaceholder(p: SharePreview | null): string {
+	return p ? formatBRL(p.cents) : "R$ 0,00";
+}
+
+const OPTIONAL = "Deixe vazio se não tem limite.";
+
+/** Texto de apoio abaixo do campo de limite: o indicativo e, na mesma mensagem, que o campo é opcional. */
+export function limitHint(p: SharePreview | null): string {
+	if (!p) return OPTIONAL;
+	const base =
+		p.basis === "expected"
+			? `Previsto: ${formatBRL(p.cents)} para cada um, se forem as ${p.people} pessoas.`
+			: p.basis === "plan"
+				? `Se forem as ${p.people} pessoas do plano: ${formatBRL(p.cents)} para cada um.`
+				: `Hoje ficaria ${formatBRL(p.cents)} para cada um.`;
+	return `${base} ${OPTIONAL}`;
+}
+
+/** Aviso leve (não bloqueia) quando o limite digitado fica abaixo do valor previsto. */
+export function belowPreviewNote(limitCents: number, p: SharePreview | null): string | null {
+	return p && limitCents > 0 && limitCents < p.cents ? "Abaixo do valor previsto. Você só entra se mais gente for." : null;
+}
+
+/** O corpo da resposta "Vou": campo vazio (0) = sem limite; o placeholder nunca vira valor. */
+export function goingBody(limitCents: number): { going: true; limitCents?: number } {
+	return limitCents > 0 ? { going: true, limitCents } : { going: true };
 }

@@ -84,6 +84,7 @@ export async function closePlan(
 		return { status: again && again.status === "open" ? "conflict" : "not_open" };
 	}
 
+	let newExpense: NewExpenseFact | undefined;
 	try {
 		// Quem entra no grupo: o criador (administrador), os participantes escolhidos, as pessoas sem celular escolhidas
 		// (cuidadas por quem as acrescentou) e, se preciso, esse responsável (sem parte na despesa).
@@ -131,26 +132,39 @@ export async function closePlan(
 			return { status: "conflict" };
 		}
 
+		newExpense = created.newExpense;
 		const done = await plansCollection(db).updateOne(
 			{ _id: plan._id, status: "closing", "closing.attemptId": attemptId },
-			{ $set: { status: "done", groupId: closing.groupId, groupName: input.groupName, expenseId: closing.expenseId, updatedAt: new Date() }, $unset: { closing: "" }, $inc: { version: 1 } },
+			{ $set: { status: "done", closedAttemptId: attemptId, groupId: closing.groupId, groupName: input.groupName, expenseId: closing.expenseId, updatedAt: new Date() }, $unset: { closing: "" }, $inc: { version: 1 } },
 		);
 		if (done.matchedCount === 0) {
 			// A recuperação desfez esta tentativa (ela demorou demais): apaga só o que ELA criou e falha limpo.
 			await rollbackAttempt(db, plan._id, closing);
 			return { status: "conflict" };
 		}
-		const chosen = new Set(input.participantIds);
+		return success(input.participantIds, created.newExpense);
+	} catch (err) {
+		// A gravação do `done` pode ter chegado ao banco com a resposta perdida: se o plano já está concluído por ESTA
+		// tentativa, não apaga nada (grupo e despesa são de um fechamento que deu certo) e devolve sucesso.
+		try {
+			const now = await plansCollection(db).findOne({ _id: plan._id });
+			if (now?.status === "done" && now.closedAttemptId === attemptId) return success(input.participantIds, newExpense);
+		} catch {
+			// sem como conferir: segue para o desfazer, como antes
+		}
+		await rollbackAttempt(db, plan._id, closing);
+		throw err;
+	}
+
+	function success(chosenIds: string[], fact: NewExpenseFact | undefined): CloseResult {
+		const chosen = new Set(chosenIds);
 		return {
 			status: "ok",
 			groupId: closing.groupId,
 			expenseId: closing.expenseId,
-			doc: { ...plan, status: "done", groupId: closing.groupId, groupName: input.groupName, expenseId: closing.expenseId },
-			newExpense: created.newExpense,
+			doc: { ...plan!, status: "done", groupId: closing.groupId, groupName: input.groupName, expenseId: closing.expenseId },
+			newExpense: fact,
 			notChosenGoing: [...going].filter((w) => !chosen.has(w)),
 		};
-	} catch (err) {
-		await rollbackAttempt(db, plan._id, closing);
-		throw err;
 	}
 }

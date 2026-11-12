@@ -13,7 +13,7 @@ import { formatBRL } from "@/lib/money";
 import { isImageType } from "@/lib/ui/attachments";
 import { formatDateLong } from "@/lib/ui/dates";
 import { buildPlanLink, buildPlanShareText, planShareIntro } from "@/lib/ui/plan-share";
-import { aboveLimitQuestion, hintLine, ifAllLine, myAnswerText, resultHeadline, scoreLines } from "@/lib/ui/plans";
+import { aboveLimitQuestion, belowPreviewNote, goingBody, hintLine, limitHint, limitPlaceholder, ifAllLine, myAnswerText, resultHeadline, scoreLines } from "@/lib/ui/plans";
 import type { PlanPersonView, PlanView } from "@/lib/plans/view";
 import { PlanText } from "./plan-text";
 
@@ -44,12 +44,26 @@ export function AnswerCard({
 	person,
 	busy,
 	initialAsking = false,
+	initialLimit,
 	onAnswer,
 	onRemove,
-}: Readonly<{ person: PlanPersonView; busy: boolean; initialAsking?: boolean; onAnswer: (body: AnswerBody) => void; onRemove?: () => void }>) {
+}: Readonly<{ person: PlanPersonView; busy: boolean; initialAsking?: boolean; initialLimit?: number; onAnswer: (body: AnswerBody) => void; onRemove?: () => void }>) {
 	const [asking, setAsking] = useState(initialAsking);
-	const [limit, setLimit] = useState(person.limitCents ?? 0);
+	const askRef = useRef<HTMLDivElement>(null);
+	const scrollOnOpen = useRef(false);
+	const [limit, setLimit] = useState(initialLimit ?? person.limitCents ?? 0);
 	const question = aboveLimitQuestion(person);
+	/** Abre o campo de limite e leva o bloco todo (campo, apoio, confirmar) para a parte visível, acima da barra de baixo. */
+	const openAsking = () => {
+		scrollOnOpen.current = true;
+		setAsking(true);
+	};
+	useEffect(() => {
+		if (!asking || !scrollOnOpen.current) return;
+		scrollOnOpen.current = false;
+		const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+		askRef.current?.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" });
+	}, [asking]);
 	const title = person.isYou ? "Você" : person.name;
 	const answered = person.answer !== "pending";
 	return (
@@ -75,7 +89,7 @@ export function AnswerCard({
 							Não vou
 						</Button>
 					</div>
-					<Button variant="text" size="md" onClick={() => setAsking(true)} fullWidth>
+					<Button variant="text" size="md" onClick={openAsking} fullWidth>
 						Mudar meu limite
 					</Button>
 				</div>
@@ -91,7 +105,7 @@ export function AnswerCard({
 						<p className="text-body-large text-on-surface-variant">Você vai?</p>
 					)}
 					<div className="flex flex-col gap-3 sm:flex-row">
-						<Button fullWidth variant={person.answer === "going" ? "tonal" : "filled"} icon="check" disabled={busy} onClick={() => setAsking(true)}>
+						<Button fullWidth variant={person.answer === "going" ? "tonal" : "filled"} icon="check" disabled={busy} onClick={openAsking}>
 							{person.answer === "going" ? "Mudar o limite" : "Vou"}
 						</Button>
 						<Button fullWidth variant={person.answer === "not_going" ? "tonal" : "outlined"} disabled={busy || person.answer === "not_going"} onClick={() => onAnswer({ going: false })}>
@@ -102,21 +116,28 @@ export function AnswerCard({
 			)}
 
 			{asking && (
-				<div className="space-y-3">
+				<div ref={askRef} className="scroll-mb-32 space-y-3">
 					<MoneyField
 						id={`limite-${person.id}`}
 						label="Até quanto posso pagar (opcional)"
 						cents={limit}
 						onChange={setLimit}
+						placeholder={limitPlaceholder(person.preview)}
+						supportingText={limitHint(person.preview)}
 					/>
-					<p className="text-body-large text-on-surface-variant">Só o criador do plano e você veem esse valor. Deixe vazio se não tem limite.</p>
+					{belowPreviewNote(limit, person.preview) && (
+						<p role="status" className="text-body-large text-on-surface">
+							{belowPreviewNote(limit, person.preview)}
+						</p>
+					)}
+					<p className="text-body-large text-on-surface-variant">Só o criador do plano e você veem esse valor.</p>
 					<div className="flex flex-col gap-3 sm:flex-row">
 						<Button
 							fullWidth
 							icon="check"
 							loading={busy}
 							onClick={() => {
-								onAnswer({ going: true, ...(limit > 0 ? { limitCents: limit } : {}) });
+								onAnswer(goingBody(limit));
 								setAsking(false);
 							}}
 						>
@@ -181,6 +202,11 @@ export type PlanDetailViewProps = {
 	onAddGuest: () => void;
 	onRemovePerson: (p: PlanPersonView) => void;
 	onAskCancel: () => void;
+	onAllowReturn?: (uid: string) => void;
+	/** Quem está sendo liberado agora (o botão fica desabilitado enquanto a chamada roda). */
+	returningUid?: string | null;
+	/** Só para as telas de exemplo: abre o campo de limite de uma pessoa já preenchido. */
+	mockAsking?: { who: string; limitCents?: number };
 	groupHref: string | null;
 	expenseHref: string | null;
 };
@@ -266,6 +292,8 @@ export function PlanDetailView(p: Readonly<PlanDetailViewProps>) {
 						<AnswerCard
 							key={person.id + person.answer + (person.limitCents ?? 0)}
 							person={person}
+							initialAsking={p.mockAsking?.who === person.id}
+							initialLimit={p.mockAsking?.who === person.id ? p.mockAsking.limitCents : undefined}
 							busy={p.busyWho === person.id}
 							onAnswer={(body) => p.onAnswer(person.id, body)}
 							onRemove={person.kind === "guest" && person.canRemove ? () => p.onRemovePerson(person) : undefined}
@@ -290,6 +318,25 @@ export function PlanDetailView(p: Readonly<PlanDetailViewProps>) {
 				<PeopleGroup title="Não vão" people={notGoing} onRemove={p.onRemovePerson} />
 				<PeopleGroup title="Ainda não responderam" people={pending} onRemove={p.onRemovePerson} />
 			</section>
+
+			{plan.removed.length > 0 && (
+				<details className="rounded-shape-md bg-surface-container-low">
+					<summary className="state-layer flex min-h-12 cursor-pointer items-center rounded-shape-md px-4 text-body-large text-on-surface-variant">
+						Removidos ({plan.removed.length})
+					</summary>
+					<ul className="space-y-1 px-4 pb-3">
+						{plan.removed.map((r) => (
+							<li key={r.uid} className="flex items-center justify-between gap-2">
+								<span className="min-w-0 break-words text-body-large">{r.name}</span>
+								<Button variant="text" size="md" disabled={p.returningUid === r.uid} loading={p.returningUid === r.uid} onClick={() => p.onAllowReturn?.(r.uid)}>
+									Permitir voltar
+								</Button>
+							</li>
+						))}
+					</ul>
+					<p className="px-4 pb-3 text-body-large text-on-surface-variant">A pessoa não volta sozinha: ela precisa abrir o link do convite de novo.</p>
+				</details>
+			)}
 
 			{plan.open && (
 				<div className="flex flex-col gap-3">
@@ -364,6 +411,7 @@ export function PlanDetail({ planId }: Readonly<{ planId: string }>) {
 	const [removeBusy, setRemoveBusy] = useState(false);
 	const [cancelOpen, setCancelOpen] = useState(false);
 	const [cancelBusy, setCancelBusy] = useState(false);
+	const [returningUid, setReturningUid] = useState<string | null>(null);
 
 	useEffect(() => {
 		clearFlash();
@@ -499,6 +547,23 @@ export function PlanDetail({ planId }: Readonly<{ planId: string }>) {
 		setSnack(`${person.name} saiu do plano.`);
 	}
 
+	async function allowReturn(uid: string) {
+		if (returningUid) return;
+		const name = plan?.removed.find((r) => r.uid === uid)?.name ?? "A pessoa";
+		setReturningUid(uid);
+		setActionError(null);
+		try {
+			const res = await apiFetch<PlanView>(`/api/plans/${encodeURIComponent(planId)}/removed/${encodeURIComponent(uid)}`, { method: "DELETE" });
+			setPlan(res);
+			setSnack(`${name} pode voltar pelo link do convite.`);
+		} catch (e) {
+			// 404: já estava liberado (ou o plano mudou). Não é erro para a pessoa: só recarrega o plano.
+			if (e instanceof ApiError && e.status === 404) setReloadKey((k) => k + 1);
+			else setActionError(e instanceof ApiError ? e.message : "Não foi possível concluir. Tente de novo.");
+		}
+		setReturningUid(null);
+	}
+
 	async function cancelPlan() {
 		setCancelBusy(true);
 		const res = await call(() => apiFetch<PlanView>(`/api/plans/${encodeURIComponent(planId)}`, { method: "DELETE" }), setActionError);
@@ -563,6 +628,8 @@ export function PlanDetail({ planId }: Readonly<{ planId: string }>) {
 				}}
 				onRemovePerson={setRemoving}
 				onAskCancel={() => setCancelOpen(true)}
+				onAllowReturn={(uid) => void allowReturn(uid)}
+				returningUid={returningUid}
 				groupHref={plan.closed?.groupId ? `/app/grupos/${encodeURIComponent(plan.closed.groupId)}` : null}
 				expenseHref={plan.closed?.groupId && plan.closed.expenseId ? `/app/grupos/${encodeURIComponent(plan.closed.groupId)}/despesas/${encodeURIComponent(plan.closed.expenseId)}` : null}
 			/>

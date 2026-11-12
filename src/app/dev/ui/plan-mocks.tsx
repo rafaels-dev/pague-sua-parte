@@ -18,7 +18,7 @@ import { Shell } from "./expense-mocks";
 
 const noop = () => {};
 const AT = new Date("2026-11-10T12:00:00Z");
-const NAMES: Record<string, string> = { rafa: "Rafael Schettino", maria: "Maria das Dores Silva", jose: "José", lucia: "Dona Lúcia", ana: "Ana Paula", beto: "Beto", carla: "Carla", duda: "Duda", edu: "Edu" };
+const NAMES: Record<string, string> = { zeca: "Zeca", rafa: "Rafael Schettino", maria: "Maria das Dores Silva", jose: "José", lucia: "Dona Lúcia", ana: "Ana Paula", beto: "Beto", carla: "Carla", duda: "Duda", edu: "Edu" };
 const info = (uid: string) => ({ name: NAMES[uid] ?? "Participante", picture: null });
 
 const DETAILS = "Pousada Sol e Mar, 5 diárias.\nDia previsto: 27 a 31 de dezembro.\nVeja o lugar: https://pousadasolemar.example.com/quartos.\nA reserva precisa ser confirmada até o dia 20.";
@@ -74,9 +74,16 @@ const ABOVE = doc({
 const DONE = { ...FITS_DETAILS, status: "done" as const, groupId: "1", groupName: "Viagem de fim de ano", expenseId: "e1" };
 const CANCELLED = { ...FITS, status: "cancelled" as const };
 
-export type PlanScene = "fecha" | "fecha-detalhes" | "nao-fecha" | "acima-limite" | "acima-limite-outros" | "criador-limites" | "virou" | "cancelado" | "respondendo";
+export type PlanScene = "respondendo-limite" | "respondendo-limite-abaixo" | "respondendo-hoje" | "removidos" | "fecha" | "fecha-detalhes" | "nao-fecha" | "acima-limite" | "acima-limite-outros" | "criador-limites" | "virou" | "cancelado" | "respondendo";
 
-const SCENES: Record<PlanScene, { plan: PlanDoc; as: string; photos?: boolean }> = {
+const REMOVED = { ...FITS, removed: ["zeca"] };
+const TODAY_PLAN = doc({ uids: ["rafa", "maria", "ana"], resp: [["rafa", true], ["maria", true, 60000]], expectedPeople: undefined, totalCents: 150000, name: "Passeio de barco" });
+
+const SCENES: Record<PlanScene, { plan: PlanDoc; as: string; photos?: boolean; asking?: { who: string; limitCents?: number } }> = {
+	"respondendo-limite": { plan: doc({ uids: ["rafa", "ana"], resp: [["rafa", true]], expectedPeople: 10 }), as: "ana", asking: { who: "ana" } },
+	"respondendo-limite-abaixo": { plan: doc({ uids: ["rafa", "ana"], resp: [["rafa", true]], expectedPeople: 10 }), as: "ana", asking: { who: "ana", limitCents: 18000 } },
+	"respondendo-hoje": { plan: TODAY_PLAN, as: "ana", asking: { who: "ana" } },
+	removidos: { plan: REMOVED, as: "rafa" },
 	fecha: { plan: FITS, as: "ana" },
 	"fecha-detalhes": { plan: FITS_DETAILS, as: "ana", photos: true },
 	"nao-fecha": { plan: NOT_FIT, as: "jose" },
@@ -106,6 +113,8 @@ export function MockPlan({ scene, framed = true }: Readonly<{ scene: PlanScene; 
 				onAddGuest={noop}
 				onRemovePerson={noop}
 				onAskCancel={noop}
+				onAllowReturn={noop}
+				mockAsking={s.asking}
 				groupHref={view.closed?.groupId ? "/app/grupos/1" : null}
 				expenseHref={view.closed?.groupId ? "/app/grupos/1/despesas/e1" : null}
 			/>

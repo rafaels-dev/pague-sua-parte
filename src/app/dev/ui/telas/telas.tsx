@@ -64,6 +64,16 @@ export function Telas({ tela }: Readonly<{ tela: string }>) {
 			return <MockPlan scene="virou" framed={false} />;
 		case "plano-cancelado":
 			return <MockPlan scene="cancelado" framed={false} />;
+		case "plano-responder":
+			return <MockPlan scene="respondendo" framed={false} />;
+		case "plano-responder-limite":
+			return <MockPlan scene="respondendo-limite" framed={false} />;
+		case "plano-responder-limite-abaixo":
+			return <MockPlan scene="respondendo-limite-abaixo" framed={false} />;
+		case "plano-responder-hoje":
+			return <MockPlan scene="respondendo-hoje" framed={false} />;
+		case "plano-removidos":
+			return <MockPlan scene="removidos" framed={false} />;
 		case "plano-compartilhar":
 			return <MockPlanShare framed={false} />;
 		case "plano-novo":
