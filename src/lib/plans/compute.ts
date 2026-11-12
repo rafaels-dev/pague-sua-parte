@@ -37,6 +37,19 @@ export function maxShare(totalCents: number, k: number): number | null {
 	return Math.max(...splitEqually(totalCents, ids, "").map((s) => s.amountCents));
 }
 
+/**
+ * Menor número de pessoas (1..`maxPeople`) em que a maior parte da divisão cabe em `limitCents`; null se nem com `maxPeople` cabe.
+ * Usa `maxShare` (centavos inteiros, mesma divisão da despesa). Depende só do total e do limite dados.
+ */
+export function minPeopleForLimit(totalCents: number, limitCents: number, maxPeople: number): number | null {
+	for (let k = 1; k <= maxPeople; k++) {
+		const share = maxShare(totalCents, k);
+		if (share === null) return null;
+		if (share <= limitCents) return k;
+	}
+	return null;
+}
+
 /** Com os limites em ordem decrescente: o maior k em que o k-ésimo limite cobre a parte. */
 function bestFit(totalCents: number, limitsDesc: number[]): { k: number; share: number } | null {
 	for (let k = limitsDesc.length; k >= 1; k--) {

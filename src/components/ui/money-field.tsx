@@ -18,6 +18,7 @@ export function MoneyField({
 	className,
 	placeholder = "R$ 0,00",
 	supportingText,
+	readOnly,
 }: Readonly<{
 	label: string;
 	cents: number;
@@ -30,6 +31,8 @@ export function MoneyField({
 	placeholder?: string;
 	/** Texto de apoio abaixo do campo (sem erro). */
 	supportingText?: React.ReactNode;
+	/** Só mostra o valor (mesmo tamanho do campo editável, sem hover nem foco de digitação). */
+	readOnly?: boolean;
 }>) {
 	const auto = useId();
 	const fieldId = id ?? auto;
@@ -45,6 +48,7 @@ export function MoneyField({
 				inputMode="numeric"
 				autoComplete="off"
 				autoFocus={autoFocus}
+				readOnly={readOnly}
 				placeholder={placeholder}
 				value={maskedMoney(cents)}
 				onChange={(e) => onChange(centsFromTyped(e.target.value))}
@@ -54,7 +58,9 @@ export function MoneyField({
 					"money h-20 w-full rounded-shape-md border bg-transparent px-5 text-display-small font-bold text-on-surface outline-none transition-[border-color,box-shadow] duration-150 placeholder:font-normal placeholder:text-on-surface-variant/60",
 					error
 						? "border-error shadow-[inset_0_0_0_1px_var(--md-error)]"
-						: "border-outline hover:border-on-surface focus:border-primary focus:shadow-[inset_0_0_0_1px_var(--md-primary)]",
+						: readOnly
+							? "cursor-default border-outline-variant bg-surface-container-low"
+							: "border-outline hover:border-on-surface focus:border-primary focus:shadow-[inset_0_0_0_1px_var(--md-primary)]",
 				)}
 			/>
 			{error ? (

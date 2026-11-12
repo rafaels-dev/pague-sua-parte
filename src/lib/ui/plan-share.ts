@@ -1,5 +1,5 @@
 import { formatBRL } from "@/lib/money";
-import { inviteShareLine, resultHeadline } from "./plans";
+import { inviteShareLine } from "./plans";
 import { formatDateLong } from "./dates";
 import type { PlanResultView } from "@/lib/plans/view";
 
@@ -8,7 +8,7 @@ export type PlanShareData = {
 	totalCents: number;
 	eventDate: string | null;
 	details: string | null;
-	result: Pick<PlanResultView, "fits" | "shareCents" | "includedCount" | "goingCount" | "pendingCount" | "notGoingCount" | "expectedPeople" | "allCount" | "shareIfAllCents" | "answeredCount" | "missingCount">;
+	result: Pick<PlanResultView, "expectedPeople" | "allCount" | "shareIfAllCents">;
 };
 
 export const SHARE_DETAILS_MAX = 160;
@@ -22,7 +22,8 @@ export function detailsSnippet(details: string | null, max = SHARE_DETAILS_MAX):
 }
 
 /**
- * Texto do plano para o WhatsApp: nome, valor, quando, placar, a previsão por pessoa e o link de convite.
+ * Texto do plano para o WhatsApp: nome, valor, quando, a previsão por pessoa e o link de convite.
+ * Sem placar (quantos vão, quantos faltam, quanto fica hoje): muda a toda hora e a mensagem fica velha.
  * Nunca leva limite de ninguém, nem fotos, nem chave Pix.
  */
 export function buildPlanShareText(p: PlanShareData, inviteLink: string): string {
@@ -33,10 +34,6 @@ export function buildPlanShareText(p: PlanShareData, inviteLink: string): string
 	if (snippet) lines.push(snippet);
 	const estimate = r.expectedPeople ? inviteShareLine(r.allCount, r.shareIfAllCents) : null;
 	if (estimate) lines.push("", estimate);
-	lines.push("", `Já vão: ${r.goingCount}`);
-	if (r.notGoingCount > 0) lines.push(`Não vão: ${r.notGoingCount}`);
-	if (r.missingCount > 0) lines.push(`Faltam responder: ${r.missingCount}`);
-	lines.push(`Por enquanto: ${resultHeadline(r)}`);
 	lines.push("", `Diga se você vai: ${inviteLink}`);
 	return lines.join("\n");
 }

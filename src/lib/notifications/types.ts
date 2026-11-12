@@ -46,6 +46,8 @@ export type NewExpenseMode = "created" | "recurring" | "added";
 export type PlanNoticeBase = {
 	planId: string;
 	name: string;
+	/** Total do plano (centavos), para dizer a partir de quantas pessoas o limite de alguém cabe. */
+	totalCents: number;
 	actorUid: string;
 	creatorUid: string;
 	/** Participantes atuais (uids) e pessoas sem celular com quem as acrescentou. */

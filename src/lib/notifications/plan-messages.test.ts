@@ -5,6 +5,7 @@ import type { PlanChangeFact, PlanNoticeBase, PlanSnapshot } from "./types";
 const base: PlanNoticeBase = {
 	planId: "p1",
 	name: "Hotel",
+	totalCents: 250000,
 	actorUid: "ana",
 	creatorUid: "cri",
 	participants: ["cri", "ana", "bia"],
@@ -42,8 +43,12 @@ describe("avisos de mudança", () => {
 			}),
 		);
 		expect(n).toEqual([
-			{ uid: "ana", title: "Passou do seu limite", body: '"Hotel" ficou em R$ 277,78 para cada um, acima do seu limite de R$ 250,00. Você vai ou não?', url: "/app/planos/p1" },
+			{ uid: "ana", title: "Acima do seu limite por enquanto", body: 'No plano "Hotel", com o seu limite você entra quando pelo menos 10 pessoas confirmarem. Você pode esperar ou mudar seu limite.', url: "/app/planos/p1" },
 		]);
+	});
+	it("limite que não cabe nem com o plano cheio", () => {
+		const n = buildPlanChangeNotices(change({ actorUid: "cri", after: snap({ aboveLimitUids: ["ana"] }), limits: { ana: 100 } }));
+		expect(n[0].body).toBe('No plano "Hotel", o seu limite fica abaixo da parte mesmo com o plano cheio. Você pode mudar seu limite.');
 	});
 	it("quem já estava acima do limite não é avisado de novo", () => {
 		const s = snap({ aboveLimitUids: ["ana"], shareIfIncluded: { ana: 100 } });
@@ -57,7 +62,8 @@ describe("avisos de mudança", () => {
 		const [n, ...rest] = buildPlanChangeNotices(change({ after: snap({ aboveLimitUids: ["pg_1"], shareIfIncluded: { pg_1: 30000 } }), limits: { pg_1: 20000 } }));
 		expect(rest).toEqual([]);
 		expect(n.uid).toBe("bia");
-		expect(n.body).toBe('"Hotel" ficou em R$ 300,00 para cada um, acima do limite de Benjamim (R$ 200,00). Benjamim vai ou não?');
+		expect(n.title).toBe("Acima do limite por enquanto");
+		expect(n.body).toBe('No plano "Hotel", com o limite de Benjamim, Benjamim entra quando pelo menos 13 pessoas confirmarem. Você pode esperar ou mudar o limite.');
 	});
 	it("o limite de uma pessoa nunca aparece no aviso de outra", () => {
 		const n = buildPlanChangeNotices(

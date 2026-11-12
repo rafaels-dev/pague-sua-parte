@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { aboveLimitQuestion, belowPreviewNote, goingBody, limitHint, limitPlaceholder, hintLine, ifAllLine, inviteShareLine, myAnswerText, resultHeadline, scoreLines, summaryLine } from "./plans";
+import { minPeopleForLimit } from "@/lib/plans/compute";
+import { initialLimitCents, limitNote, liveLimitNote, goingBody, limitHint, limitIntro, PLANNED_LABEL, plannedSupport, suggestedLimit, limitPlaceholder, hintLine, ifAllLine, inviteShareLine, myAnswerText, resultHeadline, scoreLines, summaryLine } from "./plans";
 
 describe("textos do plano", () => {
 	it("resultHeadline", () => {
@@ -32,12 +33,50 @@ describe("textos do plano", () => {
 		expect(summaryLine({ ...s, status: "cancelled" })).toBe("Cancelado");
 		expect(summaryLine({ ...s, status: "done" })).toBe("Virou grupo e despesa");
 	});
-	it("aboveLimitQuestion só existe com limite e parte conhecidos", () => {
-		expect(aboveLimitQuestion({ name: "Ana", isYou: true, limitCents: 25000, shareIfIncludedCents: 27778 })).toBe(
-			"Do jeito que está, sua parte seria R$ 277,78, acima do seu limite de R$ 250,00. Você vai ou não?",
-		);
-		expect(aboveLimitQuestion({ name: "Benjamim", isYou: false, limitCents: 20000, shareIfIncludedCents: 30000 })).toContain("a parte de Benjamim");
-		expect(aboveLimitQuestion({ name: "Ana", isYou: true, limitCents: null, shareIfIncludedCents: 1 })).toBeNull();
+	it("frase ao vivo: só quando o limite digitado fica abaixo da parte de hoje", () => {
+		const ana = { name: "Ana", isYou: true, answer: "pending" as const };
+		// 100000, 4 já confirmaram + ela = 5 -> 200,00; limite 150,00 -> K=7
+		expect(liveLimitNote(ana, 15000, 100000, 4)).toContain("pelo menos 7 pessoas");
+		expect(liveLimitNote(ana, 20000, 100000, 4)).toBeNull(); // igual à parte de hoje
+		expect(liveLimitNote(ana, 0, 100000, 4)).toBeNull();
+		// quem já disse Vou conta uma vez só: 4 confirmadas incluindo ela
+		expect(liveLimitNote({ ...ana, answer: "going" }, 15000, 100000, 4)).toContain("pelo menos 7 pessoas");
+		expect(liveLimitNote({ ...ana, answer: "going" }, 25000, 100000, 4)).toBeNull(); // 4 pessoas = 250,00
+	});
+	describe("limitNote", () => {
+		const you = { name: "Ana", isYou: true };
+		it("para você e para pessoa sem celular, sem o valor de hoje", () => {
+			expect(limitNote(you, 30000, 285000)).toBe("No valor limite que você pode pagar, você entra na divisão quando pelo menos 10 pessoas confirmarem.");
+			expect(limitNote({ name: "Benjamim", isYou: false }, 30000, 285000)).toBe(
+				"No valor limite que Benjamim pode pagar, Benjamim entra na divisão quando pelo menos 10 pessoas confirmarem.",
+			);
+			expect(limitNote(you, 30000, 285000)).not.toMatch(/R\$|mesmo assim|vai ou não/);
+		});
+		it("fronteira com centavos que não dividem certo", () => {
+			// 285001 / 10 = 28500,1 -> a maior parte é 28501
+			expect(limitNote(you, 28500, 285001)).toContain("pelo menos 11 pessoas");
+			expect(limitNote(you, 28501, 285001)).toContain("pelo menos 10 pessoas");
+			expect(minPeopleForLimit(285001, 28501, 50)).toBe(10);
+			expect(minPeopleForLimit(285001, 28500, 50)).toBe(11);
+		});
+		it("acima do teto de 50 pessoas", () => {
+			expect(limitNote(you, 5000, 285000)).toBe("Esse limite fica abaixo da parte mesmo com o plano cheio.");
+			expect(limitNote(you, 5700, 285000)).toContain("pelo menos 50 pessoas");
+		});
+		it("sem limite ou limite que já cobre tudo: sem frase", () => {
+			expect(limitNote(you, null, 285000)).toBeNull();
+			expect(limitNote(you, 0, 285000)).toBeNull();
+			expect(limitNote(you, 285000, 285000)).toBeNull();
+		});
+	});
+	it("campo de limite: pré-preenche a sugestão só com previsão do organizador e só para quem ainda não disse Vou", () => {
+		const expected = { cents: 25000, basis: "expected" as const, people: 10 };
+		expect(initialLimitCents({ answer: "pending", limitCents: null, preview: expected }, 250000)).toBe(31250);
+		expect(initialLimitCents({ answer: "not_going", limitCents: null, preview: expected }, 250000)).toBe(31250);
+		expect(initialLimitCents({ answer: "going", limitCents: null, preview: expected }, 250000)).toBe(0); // escolheu ficar sem limite
+		expect(initialLimitCents({ answer: "going", limitCents: 30000, preview: expected }, 250000)).toBe(30000);
+		expect(initialLimitCents({ answer: "pending", limitCents: null, preview: { cents: 1, basis: "plan", people: 3 } }, 250000)).toBe(0);
+		expect(initialLimitCents({ answer: "pending", limitCents: null, preview: null }, 250000)).toBe(0);
 	});
 	it("myAnswerText", () => {
 		expect(myAnswerText({ answer: "going", limitCents: 30000 })).toBe("Vou (até R$ 300,00)");
@@ -60,19 +99,36 @@ describe("indicativo do limite", () => {
 		expect(limitPlaceholder(expected)).toBe("R$ 250,00");
 		expect(limitPlaceholder(null)).toBe("R$ 0,00");
 	});
-	it("texto de apoio: indicativo e opcional numa mensagem só", () => {
-		expect(limitHint(expected)).toBe("Previsto: R$ 250,00 para cada um, se forem as 10 pessoas. Deixe vazio se não tem limite.");
-		expect(limitHint(plan)).toBe("Se forem as 5 pessoas do plano: R$ 500,00 para cada um. Deixe vazio se não tem limite.");
-		expect(limitHint(today)).toBe("Hoje ficaria R$ 277,78 para cada um. Deixe vazio se não tem limite.");
-		expect(limitHint(null)).toBe("Deixe vazio se não tem limite.");
-		for (const p of [expected, plan, today, null]) expect(limitHint(p).match(/Deixe vazio/g)).toHaveLength(1);
+	it("pergunta acima do campo, campo planejado e apoio abaixo", () => {
+		const you = { name: "Ana", isYou: true };
+		const guest = { name: "Benjamim", isYou: false };
+		expect(limitIntro(expected, you)).toBe("Se alguém faltar, a parte de cada um aumenta. Até quanto você pode pagar na nova divisão?");
+		expect(limitIntro(expected, guest)).toContain("Até quanto Benjamim pode pagar na nova divisão?");
+		for (const p of [plan, today, null]) expect(limitIntro(p, you)).toBe("Se menos gente for, a parte de cada um aumenta. Até quanto você pode pagar?");
+		expect(limitIntro(null, guest)).toBe("Se menos gente for, a parte de cada um aumenta. Até quanto Benjamim pode pagar?");
+		expect(PLANNED_LABEL).toBe("Valor planejado por pessoa");
+		expect(plannedSupport(expected)).toBe("Se todo mundo confirmar (10 pessoas).");
 	});
-	it("aviso leve só quando o limite digitado é menor que o previsto", () => {
-		expect(belowPreviewNote(20000, expected)).toBe("Abaixo do valor previsto. Você só entra se mais gente for.");
-		expect(belowPreviewNote(25000, expected)).toBeNull();
-		expect(belowPreviewNote(30000, expected)).toBeNull();
-		expect(belowPreviewNote(0, expected)).toBeNull(); // vazio = sem limite
-		expect(belowPreviewNote(100, null)).toBeNull();
+	it("sugestão: parte se 20% das pessoas previstas não forem", () => {
+		const e = (n: number) => ({ cents: 0, basis: "expected" as const, people: n });
+		// R$ 2.850,00: E=10 -> 8 pessoas -> 356,25
+		expect(suggestedLimit(e(10), 285000)).toEqual({ cents: 35625, absent: 2, people: 10 });
+		// pessoas: E=1 -> 1, E=2 -> 2, E=3 -> 2, E=5 -> 4
+		expect(suggestedLimit(e(1), 285000)).toMatchObject({ cents: 285000, absent: 0 });
+		expect(suggestedLimit(e(2), 285000)).toMatchObject({ cents: 142500, absent: 0 });
+		expect(suggestedLimit(e(3), 285000)).toMatchObject({ cents: 142500, absent: 1 });
+		expect(suggestedLimit(e(5), 285000)).toMatchObject({ cents: 71250, absent: 1 });
+		// centavos que não dividem: 100001 / 8 = 12500,125 -> a maior parte é 12501
+		expect(suggestedLimit(e(10), 100001)?.cents).toBe(12501);
+		expect(suggestedLimit(plan, 285000)).toBeNull();
+		expect(suggestedLimit(null, 285000)).toBeNull();
+	});
+	it("apoio do campo: sugestão quando alguém 'sai' na conta; senão só o básico", () => {
+		const e = (n: number) => ({ cents: 0, basis: "expected" as const, people: n });
+		expect(limitHint(e(10), 285000)).toBe("Sugestão: R$ 356,25, se 2 das 10 pessoas não forem. Pode mudar, ou apagar se não tem limite.");
+		expect(limitHint(e(2), 285000)).toBe("Pode mudar, ou apagar se não tem limite.");
+		expect(limitHint(plan, 285000)).toBe("Pode mudar, ou apagar se não tem limite.");
+		expect(limitHint(null, 285000)).toBe("Pode mudar, ou apagar se não tem limite.");
 	});
 	it("enviar sem digitar não grava limite: o placeholder nunca vira valor", () => {
 		expect(goingBody(0)).toEqual({ going: true });

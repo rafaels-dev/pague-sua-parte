@@ -5,7 +5,7 @@ import { groupsCollection } from "@/lib/groups/repo";
 import { deleteAttachments, putPlanAttachment, randomId, type AttachmentMeta, type AttachmentStore } from "@/lib/storage/attachments";
 import type { SniffedFile } from "@/lib/expenses/validation";
 import { recoverIfStale } from "./closing";
-import { allCountOf, computeFor, buildPlanSummary, buildPlanView, canAnswerFor, type PersonInfo, type PlanSummary, type PlanView } from "./view";
+import { allCountOf, buildPlanSummary, buildPlanView, canAnswerFor, type PersonInfo, type PlanSummary, type PlanView } from "./view";
 import { maxShare, type PlanComputation } from "./compute";
 import {
 	GUEST_PREFIX,
@@ -197,12 +197,7 @@ export async function setResponse(db: Db, pid: string, uid: string, who: string,
 		if (p.status !== "open") return { reject: "closed" };
 		if (!peopleOf(p).includes(who)) return { reject: "no_person" };
 		if (!canAnswerFor(p, uid, who)) return { reject: "forbidden" };
-		const existing = p.responses.find((r) => r.who === who);
-		let limitCents: number | undefined;
-		if (input.going) {
-			// "Vou mesmo assim": o limite passa a ser a parte que a pessoa teria agora (calculada aqui, nunca vinda do cliente).
-			limitCents = input.sameAsShare ? (computeFor(p).shareIfIncluded[who] ?? existing?.limitCents) : input.limitCents;
-		}
+		const limitCents = input.going ? input.limitCents : undefined;
 		const next = { who, going: input.going, ...(limitCents ? { limitCents } : {}), by: uid, at: new Date() };
 		return { set: { responses: [...p.responses.filter((r) => r.who !== who), next] } };
 	});

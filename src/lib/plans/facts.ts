@@ -6,6 +6,7 @@ export function noticeBase(doc: PlanDoc, actorUid: string): PlanNoticeBase {
 	return {
 		planId: doc._id.toHexString(),
 		name: doc.name,
+		totalCents: doc.totalCents,
 		actorUid,
 		creatorUid: doc.createdBy,
 		participants: doc.participants.map((p) => p.uid),

@@ -6,12 +6,12 @@ const base: PlanShareData = {
 	totalCents: 250000,
 	eventDate: "2026-12-28",
 	details: "Pousada Sol\nhttps://pousada.com.br/quartos",
-	result: { fits: true, shareCents: 27778, includedCount: 9, goingCount: 9, pendingCount: 1, notGoingCount: 0, expectedPeople: 10, allCount: 10, shareIfAllCents: 25000, answeredCount: 9, missingCount: 1 },
+	result: { expectedPeople: 10, allCount: 10, shareIfAllCents: 25000 },
 };
 const LINK = "https://paguesuaparte.com.br/convite/plano/abc123";
 
 describe("texto do WhatsApp do plano", () => {
-	it("traz nome, valor, data, trecho dos detalhes, previsão, placar e o link de convite", () => {
+	it("traz nome, valor, data, trecho dos detalhes, previsão e o link de convite", () => {
 		const t = buildPlanShareText(base, LINK);
 		expect(t).toBe(
 			[
@@ -22,20 +22,18 @@ describe("texto do WhatsApp do plano", () => {
 				"",
 				"Se forem 10 pessoas, fica R$ 250,00 para cada um.",
 				"",
-				"Já vão: 9",
-				"Faltam responder: 1",
-				"Por enquanto: Fecha com 9 pessoas · R$ 277,78 cada",
-				"",
 				`Diga se você vai: ${LINK}`,
 			].join("\n"),
 		);
 	});
 	it("sem data, detalhes nem previsão: linhas omitidas", () => {
-		const t = buildPlanShareText({ ...base, eventDate: null, details: null, result: { ...base.result, expectedPeople: null, fits: false, shareCents: null, includedCount: 0, notGoingCount: 2 } }, LINK);
+		const t = buildPlanShareText({ ...base, eventDate: null, details: null, result: { ...base.result, expectedPeople: null } }, LINK);
 		expect(t).not.toContain("Quando");
 		expect(t).not.toContain("Se forem");
-		expect(t).toContain("Não vão: 2");
-		expect(t).toContain("Por enquanto: Ainda não fecha");
+	});
+	it("não leva placar: quantos vão, quantos faltam nem quanto fica hoje", () => {
+		const t = buildPlanShareText(base, LINK);
+		expect(t).not.toMatch(/Já vão|Não vão|Faltam responder|Por enquanto|Fecha com/);
 	});
 	it("nunca leva limite, chave Pix nem fotos", () => {
 		const t = buildPlanShareText(base, LINK);

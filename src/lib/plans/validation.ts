@@ -81,15 +81,16 @@ export function parsePlanInput(raw: unknown, now: Date = new Date()): { ok: true
 	};
 }
 
-export type ResponseInput = { going: boolean; limitCents?: number; sameAsShare?: boolean };
+export type ResponseInput = { going: boolean; limitCents?: number };
 
-/** Corpo de `PUT .../responses/:who`: `{ going, limitCents?, sameAsShare? }`. `limitCents` vazio/ausente = sem limite. */
+/** Corpo de `PUT .../responses/:who`: `{ going, limitCents? }`. `limitCents` vazio/ausente = sem limite. */
 export function parseResponseInput(raw: unknown): { ok: true; value: ResponseInput } | Invalid {
 	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return fail("going", "Dados inválidos.");
 	const b = raw as Record<string, unknown>;
+	// Versão antiga da tela mandava "sameAsShare": ignorar apagaria o limite gravado, então recusa.
+	if ("sameAsShare" in b) return fail("sameAsShare", "Atualize a página e responda de novo.");
 	if (typeof b.going !== "boolean") return fail("going", "Diga se você vai ou não.");
 	if (!b.going) return { ok: true, value: { going: false } };
-	if (b.sameAsShare === true) return { ok: true, value: { going: true, sameAsShare: true } };
 	if (b.limitCents === undefined || b.limitCents === null) return { ok: true, value: { going: true } };
 	if (typeof b.limitCents !== "number" || !Number.isInteger(b.limitCents) || b.limitCents < 1 || b.limitCents > MAX_AMOUNT_CENTS) {
 		return fail("limitCents", "Informe um limite válido, maior que zero.");

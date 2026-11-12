@@ -83,6 +83,8 @@ export function Telas({ tela }: Readonly<{ tela: string }>) {
 			return <MockPlan scene="nao-fecha" framed={false} />;
 		case "plano-acima-limite":
 			return <MockPlan scene="acima-limite" framed={false} />;
+		case "plano-acima-limite-alto":
+			return <MockPlan scene="acima-limite-alto" framed={false} />;
 		case "plano-acima-limite-outros":
 			return <MockPlan scene="acima-limite-outros" framed={false} />;
 		case "plano-criador-limites":

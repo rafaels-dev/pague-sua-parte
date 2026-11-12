@@ -115,13 +115,6 @@ describe("respostas", () => {
 		expect((await setResponse(f.db, PID, "cri", "pg_1", { going: false })).kind).toBe("forbidden");
 		expect((await setResponse(f.db, PID, "cri", "ana", { going: false })).kind).toBe("forbidden");
 	});
-	it("'Vou mesmo assim' grava o limite calculado no servidor, não o do cliente", async () => {
-		const f = setup({ responses: [{ who: "cri", going: true, by: "cri", at: NOW }, { who: "ana", going: true, limitCents: 1000, by: "ana", at: NOW }] });
-		const res = await setResponse(f.db, PID, "ana", "ana", { going: true, sameAsShare: true });
-		expect(res.kind).toBe("ok");
-		const saved = (f.data.plans[0].responses as { who: string; limitCents?: number }[]).find((r) => r.who === "ana")!;
-		expect(saved.limitCents).toBeGreaterThan(1000);
-	});
 });
 
 describe("'Ver o plano' na despesa (6)", () => {

@@ -69,12 +69,12 @@ const ABOVE = doc({
 	totalCents: 100000,
 	expectedPeople: 5,
 	uids: ["rafa", "maria", "jose", "lucia"],
-	resp: [["rafa", true], ["maria", true, 15000], ["jose", true, 60000], ["lucia", true], ["pg_1", true]],
+	resp: [["rafa", true], ["maria", true, 15000], ["jose", true, 60000], ["lucia", true], ["pg_1", true, 10000]],
 });
 const DONE = { ...FITS_DETAILS, status: "done" as const, groupId: "1", groupName: "Viagem de fim de ano", expenseId: "e1" };
 const CANCELLED = { ...FITS, status: "cancelled" as const };
 
-export type PlanScene = "respondendo-limite" | "respondendo-limite-abaixo" | "respondendo-hoje" | "removidos" | "fecha" | "fecha-detalhes" | "nao-fecha" | "acima-limite" | "acima-limite-outros" | "criador-limites" | "virou" | "cancelado" | "respondendo";
+export type PlanScene = "respondendo-limite" | "respondendo-limite-abaixo" | "respondendo-hoje" | "removidos" | "fecha" | "fecha-detalhes" | "nao-fecha" | "acima-limite" | "acima-limite-alto" | "acima-limite-outros" | "criador-limites" | "virou" | "cancelado" | "respondendo";
 
 const REMOVED = { ...FITS, removed: ["zeca"] };
 const TODAY_PLAN = doc({ uids: ["rafa", "maria", "ana"], resp: [["rafa", true], ["maria", true, 60000]], expectedPeople: undefined, totalCents: 150000, name: "Passeio de barco" });
@@ -88,6 +88,7 @@ const SCENES: Record<PlanScene, { plan: PlanDoc; as: string; photos?: boolean; a
 	"fecha-detalhes": { plan: FITS_DETAILS, as: "ana", photos: true },
 	"nao-fecha": { plan: NOT_FIT, as: "jose" },
 	"acima-limite": { plan: ABOVE, as: "maria" },
+	"acima-limite-alto": { plan: { ...ABOVE, totalCents: 10000000 }, as: "maria" },
 	"acima-limite-outros": { plan: ABOVE, as: "lucia" },
 	"criador-limites": { plan: ABOVE, as: "rafa" },
 	virou: { plan: DONE, as: "ana", photos: true },

@@ -57,7 +57,8 @@ describe("parseResponseInput", () => {
 		expect(parseResponseInput({ going: true, limitCents: 25000 })).toEqual({ ok: true, value: { going: true, limitCents: 25000 } });
 		expect(parseResponseInput({ going: true, limitCents: null })).toEqual({ ok: true, value: { going: true } });
 		expect(parseResponseInput({ going: false, limitCents: 5 })).toEqual({ ok: true, value: { going: false } });
-		expect(parseResponseInput({ going: true, sameAsShare: true, limitCents: 5 })).toEqual({ ok: true, value: { going: true, sameAsShare: true } });
+		for (const same of [true, false, null, "x"]) expect(parseResponseInput({ going: true, sameAsShare: same, limitCents: 5 }).ok).toBe(false);
+		expect(parseResponseInput({ going: true, sameAsShare: true })).toMatchObject({ ok: false, error: "Atualize a página e responda de novo." });
 	});
 	it("recusa limite inválido e corpo sem going", () => {
 		for (const b of [{ going: true, limitCents: 0 }, { going: true, limitCents: -1 }, { going: true, limitCents: 1.5 }, { going: true, limitCents: "9" }, { going: true, limitCents: 1e12 }, {}, { going: "sim" }, null]) {

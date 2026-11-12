@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computePlan, maxShare, type PlanAnswer } from "./compute";
+import { computePlan, maxShare, minPeopleForLimit, type PlanAnswer } from "./compute";
 
 const P = (n: number) => Array.from({ length: n }, (_, i) => `p${i + 1}`);
 const yes = (who: string, limitCents?: number): PlanAnswer => ({ who, going: true, ...(limitCents ? { limitCents } : {}) });
@@ -141,5 +141,25 @@ describe("computePlan", () => {
 		expect(r.includedUids).toEqual(["p3"]);
 		expect(r.aboveLimitUids).toEqual(["p1", "p2"]);
 		expect(r.shareIfIncluded).toEqual({ p1: 50000, p2: 50000 });
+	});
+});
+
+describe("minPeopleForLimit", () => {
+	it("limite igual ao total cabe com 1 pessoa", () => {
+		expect(minPeopleForLimit(285000, 285000, 50)).toBe(1);
+		expect(minPeopleForLimit(285000, 999999, 50)).toBe(1);
+	});
+	it("limite exatamente na parte e um centavo abaixo (centavos que não dividem)", () => {
+		expect(minPeopleForLimit(285000, 28500, 50)).toBe(10);
+		expect(minPeopleForLimit(285000, 28499, 50)).toBe(11);
+	});
+	it("total pequeno: com limite de 1 centavo basta 1 centavo por pessoa", () => {
+		expect(minPeopleForLimit(30, 1, 50)).toBe(30);
+		expect(minPeopleForLimit(30, 5, 50)).toBe(6);
+	});
+	it("teto de pessoas: null quando nem cheio cabe", () => {
+		expect(minPeopleForLimit(285000, 5700, 50)).toBe(50);
+		expect(minPeopleForLimit(285000, 5699, 50)).toBeNull();
+		expect(minPeopleForLimit(285000, 5000, 50)).toBeNull();
 	});
 });

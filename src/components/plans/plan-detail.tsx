@@ -13,11 +13,11 @@ import { formatBRL } from "@/lib/money";
 import { isImageType } from "@/lib/ui/attachments";
 import { formatDateLong } from "@/lib/ui/dates";
 import { buildPlanLink, buildPlanShareText, planShareIntro } from "@/lib/ui/plan-share";
-import { aboveLimitQuestion, belowPreviewNote, goingBody, hintLine, limitHint, limitPlaceholder, ifAllLine, myAnswerText, resultHeadline, scoreLines } from "@/lib/ui/plans";
+import { goingBody, hintLine, limitHint, limitIntro, liveLimitNote, PLANNED_LABEL, plannedSupport, limitPlaceholder, ifAllLine, initialLimitCents, limitNote, myAnswerText, resultHeadline, scoreLines } from "@/lib/ui/plans";
 import type { PlanPersonView, PlanView } from "@/lib/plans/view";
 import { PlanText } from "./plan-text";
 
-export type AnswerBody = { going: boolean; limitCents?: number; sameAsShare?: boolean };
+export type AnswerBody = { going: boolean; limitCents?: number };
 
 /** Resultado em destaque: "Fecha com 9 pessoas · R$ 277,78 cada" ou "Ainda não fecha", dica, "se forem N" e placar. */
 export function PlanResultCard({ plan }: Readonly<{ plan: PlanView }>) {
@@ -45,14 +45,20 @@ export function AnswerCard({
 	busy,
 	initialAsking = false,
 	initialLimit,
+	totalCents,
+	goingCount,
 	onAnswer,
 	onRemove,
-}: Readonly<{ person: PlanPersonView; busy: boolean; initialAsking?: boolean; initialLimit?: number; onAnswer: (body: AnswerBody) => void; onRemove?: () => void }>) {
+}: Readonly<{ person: PlanPersonView; busy: boolean; totalCents: number; goingCount: number; initialAsking?: boolean; initialLimit?: number; onAnswer: (body: AnswerBody) => void; onRemove?: () => void }>) {
 	const [asking, setAsking] = useState(initialAsking);
 	const askRef = useRef<HTMLDivElement>(null);
 	const scrollOnOpen = useRef(false);
-	const [limit, setLimit] = useState(initialLimit ?? person.limitCents ?? 0);
-	const question = aboveLimitQuestion(person);
+	const startLimit = initialLimit ?? initialLimitCents(person, totalCents);
+	const [limit, setLimit] = useState(startLimit);
+	/** Já gravado e fora da conta por enquanto: a frase calma, sem alerta. */
+	const savedNote = person.answer === "going" && person.aboveLimit ? limitNote(person, person.limitCents, totalCents) : null;
+	/** Ao vivo, enquanto digita: só quando o limite digitado fica abaixo da parte de hoje. */
+	const liveNote = liveLimitNote(person, limit, totalCents, goingCount);
 	/** Abre o campo de limite e leva o bloco todo (campo, apoio, confirmar) para a parte visível, acima da barra de baixo. */
 	const openAsking = () => {
 		scrollOnOpen.current = true;
@@ -76,26 +82,7 @@ export function AnswerCard({
 				{onRemove && <IconButton icon="close" label={`Tirar ${person.name} do plano`} onClick={onRemove} className="-mr-2 -mt-2" />}
 			</div>
 
-			{question && !asking && (
-				<div className="space-y-3">
-					<Banner icon="warning" role="status">
-						{question}
-					</Banner>
-					<div className="flex flex-col gap-3 sm:flex-row">
-						<Button fullWidth icon="check" disabled={busy} onClick={() => onAnswer({ going: true, sameAsShare: true })}>
-							Vou mesmo assim
-						</Button>
-						<Button fullWidth variant="outlined" disabled={busy} onClick={() => onAnswer({ going: false })}>
-							Não vou
-						</Button>
-					</div>
-					<Button variant="text" size="md" onClick={openAsking} fullWidth>
-						Mudar meu limite
-					</Button>
-				</div>
-			)}
-
-			{!question && !asking && (
+			{!asking && (
 				<>
 					{answered ? (
 						<p className="text-body-large">
@@ -112,25 +99,30 @@ export function AnswerCard({
 							Não vou
 						</Button>
 					</div>
+					{savedNote && <p className="text-body-large text-on-surface-variant">{savedNote}</p>}
 				</>
 			)}
 
 			{asking && (
 				<div ref={askRef} className="scroll-mb-32 space-y-3">
+					{person.preview?.basis === "expected" && (
+						<MoneyField id={`planejado-${person.id}`} label={PLANNED_LABEL} cents={person.preview.cents} onChange={() => {}} readOnly supportingText={plannedSupport(person.preview)} />
+					)}
+					<p className="text-body-large">{limitIntro(person.preview, person)}</p>
 					<MoneyField
 						id={`limite-${person.id}`}
-						label="Até quanto posso pagar (opcional)"
+						label="Até quanto posso pagar"
 						cents={limit}
 						onChange={setLimit}
 						placeholder={limitPlaceholder(person.preview)}
-						supportingText={limitHint(person.preview)}
+						supportingText={limitHint(person.preview, totalCents)}
 					/>
-					{belowPreviewNote(limit, person.preview) && (
+					{liveNote && (
 						<p role="status" className="text-body-large text-on-surface">
-							{belowPreviewNote(limit, person.preview)}
+							{liveNote}
 						</p>
 					)}
-					<p className="text-body-large text-on-surface-variant">Só o criador do plano e você veem esse valor.</p>
+					<p className="text-body-large text-on-surface-variant">Só o organizador do plano e você veem esse valor.</p>
 					<div className="flex flex-col gap-3 sm:flex-row">
 						<Button
 							fullWidth
@@ -143,7 +135,15 @@ export function AnswerCard({
 						>
 							Confirmar que vou
 						</Button>
-						<Button fullWidth variant="text" disabled={busy} onClick={() => setAsking(false)}>
+						<Button
+							fullWidth
+							variant="text"
+							disabled={busy}
+							onClick={() => {
+								setLimit(startLimit);
+								setAsking(false);
+							}}
+						>
 							Voltar
 						</Button>
 					</div>
@@ -290,8 +290,10 @@ export function PlanDetailView(p: Readonly<PlanDetailViewProps>) {
 					</h2>
 					{mine.map((person) => (
 						<AnswerCard
-							key={person.id + person.answer + (person.limitCents ?? 0)}
+							key={`${person.id}|${person.answer}|${person.limitCents ?? 0}|${plan.totalCents}|${person.preview?.basis === "expected" ? person.preview.people : 0}`}
 							person={person}
+							totalCents={plan.totalCents}
+							goingCount={plan.result.goingCount}
 							initialAsking={p.mockAsking?.who === person.id}
 							initialLimit={p.mockAsking?.who === person.id ? p.mockAsking.limitCents : undefined}
 							busy={p.busyWho === person.id}

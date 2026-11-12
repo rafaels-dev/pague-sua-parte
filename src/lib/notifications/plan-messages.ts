@@ -1,4 +1,6 @@
 import { formatBRL } from "@/lib/money";
+import { MAX_PLAN_PEOPLE } from "@/lib/plans/collection";
+import { minPeopleForLimit } from "@/lib/plans/compute";
 import type { Notice, PlanCancelFact, PlanChangeFact, PlanClosedFact, PlanNoticeBase } from "./types";
 
 const clip = (s: string, max = 60) => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
@@ -50,17 +52,15 @@ export function buildPlanChangeNotices(f: PlanChangeFact): Notice[] {
 		if (f.before.aboveLimitUids.includes(id)) continue;
 		const uid = planLoginOf(f, id);
 		const limit = f.limits[id];
-		const share = f.after.shareIfIncluded[id];
-		if (!uid || uid === f.actorUid || !limit || !share) continue;
+		if (!uid || uid === f.actorUid || !limit) continue;
 		const own = uid === id;
-		out.push({
-			uid,
-			title: "Passou do seu limite",
-			body: own
-				? `"${title}" ficou em ${formatBRL(share)} para cada um, acima do seu limite de ${formatBRL(limit)}. Você vai ou não?`
-				: `"${title}" ficou em ${formatBRL(share)} para cada um, acima do limite de ${nameOf(f, id)} (${formatBRL(limit)}). ${nameOf(f, id)} vai ou não?`,
-			url,
-		});
+		const who = own ? "o seu limite você entra" : `o limite de ${nameOf(f, id)}, ${nameOf(f, id)} entra`;
+		const k = minPeopleForLimit(f.totalCents, limit, MAX_PLAN_PEOPLE);
+		const body =
+			k === null
+				? `No plano "${title}", ${own ? "o seu limite fica" : `o limite de ${nameOf(f, id)} fica`} abaixo da parte mesmo com o plano cheio. Você pode mudar ${own ? "seu" : "o"} limite.`
+				: `No plano "${title}", com ${who} quando pelo menos ${k} pessoas confirmarem. Você pode esperar ou mudar ${own ? "seu" : "o"} limite.`;
+		out.push({ uid, title: own ? "Acima do seu limite por enquanto" : "Acima do limite por enquanto", body, url });
 	}
 	return dedupe(out);
 }
