@@ -5,8 +5,11 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth/auth-provider";
 import { ActionChip, Avatar, Banner, Button, Card, EmptyState, Icon, List, Sheet, Skeleton, Snackbar, StatusChip } from "@/components/ui";
 import type { Group } from "@/components/groups/group-detail";
+import { NotMemberState } from "@/components/groups/not-member";
+import { useShareInvite } from "@/components/groups/use-share-invite";
+import { expenseShareCarriesInvite, expenseShareLink, SOLO_SHARE_EXPENSE_HINT, SOLO_SHARE_NOTICE } from "@/lib/ui/share-link";
 import { normalizeGroupDetail } from "@/components/groups/types";
-import { apiFetch, apiFetchBlob, ApiError } from "@/lib/api-client";
+import { apiFetch, apiFetchBlob, ApiError, isMissingExpenseError, isNotMemberError } from "@/lib/api-client";
 import { formatBRL } from "@/lib/money";
 import { buildPixPayload, descriptionBudget } from "@/lib/pix/brcode";
 import { refundMessage, shareMessage } from "@/lib/pix/message";
@@ -15,7 +18,7 @@ import { formatDateLong, formatDateShort, todayISO } from "@/lib/ui/dates";
 import { deleteFlashMessage, dueLong, installmentLabel } from "@/lib/ui/due-dates";
 import { RECURRING_CHIP } from "@/lib/ui/recurrences";
 import { isImageType } from "@/lib/ui/attachments";
-import { buildExpenseLink, buildExpenseShareText, buildPaidShareText, shareIntro } from "@/lib/ui/expense-share";
+import { buildExpenseShareText, buildPaidShareText, shareIntro } from "@/lib/ui/expense-share";
 import { paidByLabel, shareStatusChip } from "@/lib/ui/expense-status";
 import { buildExpenseStatusText, buildRefundShareText, expenseSummaryIntro } from "@/lib/ui/expense-summary";
 import { paidCaption, receiptActions, receiptDoneMessage, receiptSheetCopy, refundCaption, undoLabel, type ReceiptMode } from "@/lib/ui/receipts";
@@ -738,7 +741,7 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 	const router = useRouter();
 	const { user } = useAuth();
 	const [expense, setExpense] = useState<ExpenseDetailData | null>(null);
-	const [error, setError] = useState<{ message: string; notFound: boolean } | null>(null);
+	const [error, setError] = useState<{ message: string; kind: "notMember" | "missing" | "other" } | null>(null);
 	const [reloadKey, setReloadKey] = useState(0);
 	const [qrOpen, setQrOpen] = useState<string | null>(null);
 	const [codeFallback, setCodeFallback] = useState<string | null>(null);
@@ -754,6 +757,7 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 	const [copied, setCopied] = useState(false);
 	const [resplitOpen, setResplitOpen] = useState(false);
 	const [groupMembers, setGroupMembers] = useState<SplitMember[] | null>(null);
+	const shareInvite = useShareInvite(groupId, shareOpen !== null && expenseShareCarriesInvite(shareOpen), groupMembers ? groupMembers.filter((m) => m.kind === "user").length <= 1 : undefined);
 	const [resplitSelected, setResplitSelected] = useState<string[]>([]);
 	const [resplitMode, setResplitMode] = useState<SplitMode>("all");
 	const [resplitBusy, setResplitBusy] = useState(false);
@@ -795,8 +799,9 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 			})
 			.catch((e) => {
 				if (cancelled) return;
-				if (e instanceof ApiError) setError({ message: e.message, notFound: e.status === 404 });
-				else setError({ message: "Não foi possível carregar a despesa.", notFound: false });
+				if (isNotMemberError(e)) setError({ message: "", kind: "notMember" });
+				else if (isMissingExpenseError(e)) setError({ message: "", kind: "missing" });
+				else setError({ message: e instanceof ApiError ? e.message : "Não foi possível carregar a despesa.", kind: "other" });
 			});
 		return () => {
 			cancelled = true;
@@ -1068,16 +1073,17 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 		}
 	}
 
+	if (error?.kind === "notMember") return <NotMemberState />;
 	if (error) {
 		return (
 			<EmptyState
 				tone="error"
 				icon="error"
 				role="alert"
-				title={error.notFound ? "Despesa não encontrada" : "Ops!"}
+				title={error.kind === "missing" ? "Despesa não encontrada" : "Ops!"}
 				action={
 					<>
-						{!error.notFound && (
+						{error.kind !== "missing" && (
 							<Button
 								icon="refresh"
 								onClick={() => {
@@ -1088,13 +1094,13 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 								Tentar de novo
 							</Button>
 						)}
-						<Button href={`/app/grupos/${encodeURIComponent(groupId)}`} variant={error.notFound ? "filled" : "outlined"}>
+						<Button href={`/app/grupos/${encodeURIComponent(groupId)}`} variant={error.kind === "missing" ? "filled" : "outlined"}>
 							Voltar para o grupo
 						</Button>
 					</>
 				}
 			>
-				{error.notFound ? "Essa despesa não existe mais ou você não faz parte do grupo." : error.message}
+				{error.kind === "missing" ? "Essa despesa não existe mais." : error.message}
 			</EmptyState>
 		);
 	}
@@ -1102,7 +1108,8 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 
 	const viewed = attachments.find((a) => a.id === viewing);
 	const shareTarget = shareAction ? expense.shares.find((s) => s.uid === shareAction.uid) : undefined;
-	const shareLink = buildExpenseLink(window.location.origin, groupId, expenseId);
+	// Lançada, cobrança e resumo levam o convite do grupo (destino na despesa); "paguei" e "devolvi" levam o link simples.
+	const shareLink = expenseShareLink(shareOpen ?? "launched", window.location.origin, shareInvite.token, groupId, expenseId);
 	const shareText =
 		shareOpen === "paid" && paidNotice
 			? buildPaidShareText({ ...paidNotice, description: expense.description }, shareLink)
@@ -1250,8 +1257,12 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 									? expenseSummaryIntro()
 									: shareIntro(shareOpen === "manual" ? "manual" : "launched", expense.installment?.count)
 					}
+					notice={
+						shareInvite.token && shareInvite.solo ? `${SOLO_SHARE_NOTICE} ${SOLO_SHARE_EXPENSE_HINT}` : undefined
+					}
+					loading={shareInvite.status === "loading"}
 					whatsappLabel={shareOpen === "summary" ? "Compartilhar no WhatsApp" : undefined}
-						preview={shareOpen === "summary"}
+					preview={shareOpen === "summary"}
 					canShare={canNativeShare}
 					copyFailed={copyFailed}
 					dismissLabel={shareOpen === "manual" || shareOpen === "summary" ? "Fechar" : "Agora não"}

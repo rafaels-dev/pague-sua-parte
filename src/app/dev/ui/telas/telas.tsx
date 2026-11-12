@@ -1,5 +1,10 @@
 "use client";
 
+import { ShareExpenseContent } from "@/components/expenses/expense-share";
+import { InviteErrorContent, InviteMemberContent, InviteShell } from "@/components/groups/invite-accept";
+import { NotMemberState } from "@/components/groups/not-member";
+import { buildExpenseShareText, shareIntro } from "@/lib/ui/expense-share";
+import { expenseShareLink, SOLO_SHARE_EXPENSE_HINT, SOLO_SHARE_NOTICE } from "@/lib/ui/share-link";
 import { MockPixRefused } from "../pix-mocks";
 import { GoogleButtonView } from "@/components/auth/sign-in-button";
 import { LandingView } from "@/components/landing-view";
@@ -8,7 +13,29 @@ import { nextDayOfMonth } from "@/lib/ui/due-dates";
 import { MockPlan, MockPlanClose, MockPlanForm, MockPlanInvite, MockPlanList, MockPlanShare } from "../plan-mocks";
 import { MockPayAll } from "../pay-all-mocks";
 import { MockReceivables } from "../receivables-mocks";
-import { DUE_GROUPS, MOCK_GROUP, MockExpense, MockGroup, MockHome, MockManagedSheet, MockNewExpense, MockNoPixKey, MockRecurrenceSheet, MockReport } from "../expense-mocks";
+import { DUE_GROUPS, MOCK_GROUP, Shell as MockShell, MockExpense, MockGroup, MockHome, MockManagedSheet, MockNewExpense, MockNoPixKey, MockRecurrenceSheet, MockReport } from "../expense-mocks";
+
+const ORIGIN = "https://paguesuaparte.com.br";
+
+function ShareSheetMock({ notice, loading = false }: Readonly<{ notice?: string; loading?: boolean }>) {
+	return (
+		<main className="mx-auto w-full max-w-md space-y-4 bg-surface-container-low p-5">
+			<h1 className="text-headline-small">Despesa lançada!</h1>
+			<ShareExpenseContent
+				text={buildExpenseShareText({ amountCents: 15000, description: "Mercado" }, expenseShareLink("launched", ORIGIN, "abc123", "1", "e1"))}
+				intro={shareIntro("launched")}
+				notice={notice}
+				loading={loading}
+				canShare
+				copyFailed={false}
+				preview
+				onCopy={() => {}}
+				onShare={() => {}}
+				onClose={() => {}}
+			/>
+		</main>
+	);
+}
 
 export function Telas({ tela }: Readonly<{ tela: string }>) {
 	switch (tela) {
@@ -90,6 +117,30 @@ export function Telas({ tela }: Readonly<{ tela: string }>) {
 			return <MockPlanInvite />;
 		case "plano-lista":
 			return <MockPlanList framed={false} />;
+		case "nao-membro":
+			return (
+				<MockShell pathname="/app/grupos/1" framed={false}>
+					<NotMemberState />
+				</MockShell>
+			);
+		case "compartilhar-solo":
+			return <ShareSheetMock notice={`${SOLO_SHARE_NOTICE} ${SOLO_SHARE_EXPENSE_HINT}`} />;
+		case "compartilhar-sem-aviso":
+			return <ShareSheetMock />;
+		case "compartilhar-carregando":
+			return <ShareSheetMock loading />;
+		case "convite-erro":
+			return (
+				<InviteShell>
+					<InviteErrorContent message="Este convite não é mais válido. Peça um novo link a quem te convidou." onRetry={() => {}} />
+				</InviteShell>
+			);
+		case "convite-membro-aviso":
+			return (
+				<InviteShell>
+					<InviteMemberContent groupId="1" groupName="Família Silva" memberCount={5} badDestination />
+				</InviteShell>
+			);
 		case "nova":
 			return <MockNewExpense framed={false} />;
 		case "nova-preenchida":

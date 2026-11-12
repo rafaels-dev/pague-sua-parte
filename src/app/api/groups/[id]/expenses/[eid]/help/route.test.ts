@@ -31,8 +31,8 @@ describe("POST /expenses/:eid/help", () => {
 	});
 	it("mapeia os resultados do repo", async () => {
 		const cases: [unknown, number, Record<string, unknown>][] = [
-			[{ status: "no_group" }, 404, { error: "Grupo não encontrado." }],
-			[{ status: "no_expense" }, 404, { error: "Despesa não encontrada." }],
+			[{ status: "no_group" }, 404, { error: "Grupo não encontrado.", code: "no_group" }],
+			[{ status: "no_expense" }, 404, { error: "Despesa não encontrada.", code: "no_expense" }],
 			[{ status: "payer" }, 403, { error: "Quem pagou a despesa não pode entrar na divisão dela." }],
 			[{ status: "already", name: null }, 409, { error: "Você já participa desta despesa." }],
 			[{ status: "already", name: "Vó" }, 409, { error: "Vó já participa desta despesa." }],

@@ -8,6 +8,7 @@ import { Wordmark } from "@/components/brand";
 import { Banner, Button, CircularProgress, Icon } from "@/components/ui";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { peopleLabel } from "@/lib/ui/invite";
+import { afterAcceptPath, onInviteFailed, onInviteLoaded } from "@/lib/ui/invite-flow";
 
 type Invite = { groupId: string; groupName: string; memberCount: number; alreadyMember: boolean };
 
@@ -61,7 +62,49 @@ export function InviteReady({
 	);
 }
 
-export function InviteAccept({ token }: Readonly<{ token: string }>) {
+/** Convite que não abre (vencido, trocado): mensagem e saídas. Sem botão para páginas de grupo (quem não é membro ficaria sem saída). */
+export function InviteErrorContent({ message, onRetry }: Readonly<{ message: string; onRetry: () => void }>) {
+	return (
+		<>
+			<span className="flex size-16 items-center justify-center rounded-full bg-error-container text-on-error-container">
+				<Icon name="error" size={32} />
+			</span>
+			<h1 className="text-headline-small font-bold">Convite indisponível</h1>
+			<p role="alert" className="text-body-large text-on-surface-variant">
+				{message}
+			</p>
+			<div className="flex flex-col gap-2">
+				<Button icon="refresh" onClick={onRetry} fullWidth>
+					Tentar de novo
+				</Button>
+				<Button href="/app" variant="outlined" fullWidth>
+					Ir para o início
+				</Button>
+			</div>
+		</>
+	);
+}
+
+/** Quem já é do grupo e abriu um convite sem destino válido (`badDestination`: avisa que a página do link não foi achada). */
+export function InviteMemberContent({ groupId, groupName, memberCount, badDestination }: Readonly<{ groupId: string; groupName: string; memberCount: number; badDestination: boolean }>) {
+	return (
+		<>
+			<GroupBadge />
+			<h1 className="break-words text-headline-small font-bold">Você já está no grupo “{groupName}”</h1>
+			<p className="text-body-large text-on-surface-variant">{peopleLabel(memberCount)} no grupo.</p>
+			{badDestination && (
+				<p role="status" className="text-body-large text-on-surface">
+					Não achamos a página do link. Toque abaixo para abrir o grupo.
+				</p>
+			)}
+			<Button href={`/app/grupos/${groupId}`} fullWidth>
+				Abrir o grupo
+			</Button>
+		</>
+	);
+}
+
+export function InviteAccept({ token, destination = null }: Readonly<{ token: string; destination?: string | null }>) {
 	const router = useRouter();
 	const { user, loading } = useAuth();
 	const [invite, setInvite] = useState<Invite | null>(null);
@@ -69,6 +112,15 @@ export function InviteAccept({ token }: Readonly<{ token: string }>) {
 	const [reloadKey, setReloadKey] = useState(0);
 	const [accepting, setAccepting] = useState(false);
 	const [acceptError, setAcceptError] = useState<string | null>(null);
+
+	const [probing, setProbing] = useState(false);
+
+	// Destino só vale dentro do grupo deste convite (ver `onInviteLoaded`).
+	const action = invite ? onInviteLoaded(invite, destination) : null;
+	const redirectTo = action?.kind === "redirect" ? action.to : null;
+	useEffect(() => {
+		if (redirectTo) router.replace(redirectTo);
+	}, [redirectTo, router]);
 
 	useEffect(() => {
 		if (!user) return;
@@ -78,12 +130,26 @@ export function InviteAccept({ token }: Readonly<{ token: string }>) {
 				if (!cancelled) setInvite(i);
 			})
 			.catch((e) => {
-				if (!cancelled) setError(e instanceof ApiError ? e.message : "Não foi possível abrir o convite.");
+				if (cancelled) return;
+				setError(e instanceof ApiError ? e.message : "Não foi possível abrir o convite.");
+				// Link antigo (convite vencido ou trocado) aberto por quem já é do grupo: segue para o destino.
+				// A API só responde 200 a membros; quem não é cai na tela de erro do convite.
+				const failed = onInviteFailed(destination);
+				if (failed.kind === "probe") {
+					setProbing(true);
+					apiFetch(`/api/groups/${encodeURIComponent(failed.groupId)}`)
+						.then(() => {
+							if (!cancelled) router.replace(failed.to);
+						})
+						.catch(() => {
+							if (!cancelled) setProbing(false);
+						});
+				}
 			});
 		return () => {
 			cancelled = true;
 		};
-	}, [user, token, reloadKey]);
+	}, [user, token, reloadKey, destination, router]);
 
 	async function accept() {
 		setAccepting(true);
@@ -93,7 +159,7 @@ export function InviteAccept({ token }: Readonly<{ token: string }>) {
 				method: "POST",
 				body: JSON.stringify({}),
 			});
-			router.push(`/app/grupos/${res.groupId}`);
+			router.push(afterAcceptPath(res.groupId, destination));
 		} catch (e) {
 			setAcceptError(e instanceof ApiError ? e.message : "Não foi possível entrar no grupo. Tente de novo.");
 			setAccepting(false);
@@ -123,36 +189,31 @@ export function InviteAccept({ token }: Readonly<{ token: string }>) {
 		);
 	}
 
-	if (error) {
+	if (probing) {
 		return (
 			<InviteShell>
-				<span className="flex size-16 items-center justify-center rounded-full bg-error-container text-on-error-container">
-					<Icon name="error" size={32} />
-				</span>
-				<h1 className="text-headline-small font-bold">Convite indisponível</h1>
-				<p role="alert" className="text-body-large text-on-surface-variant">
-					{error}
-				</p>
-				<div className="flex flex-col gap-2">
-					<Button
-						icon="refresh"
-						onClick={() => {
-							setError(null);
-							setReloadKey((k) => k + 1);
-						}}
-						fullWidth
-					>
-						Tentar de novo
-					</Button>
-					<Button href="/app" variant="outlined" fullWidth>
-						Ir para o início
-					</Button>
+				<div className="flex justify-center py-6 text-primary">
+					<CircularProgress label="Abrindo..." />
 				</div>
 			</InviteShell>
 		);
 	}
 
-	if (!invite) {
+	if (error) {
+		return (
+			<InviteShell>
+				<InviteErrorContent
+					message={error}
+					onRetry={() => {
+						setError(null);
+						setReloadKey((k) => k + 1);
+					}}
+				/>
+			</InviteShell>
+		);
+	}
+
+	if (!invite || !action || action.kind === "redirect") {
 		return (
 			<InviteShell>
 				<div className="flex flex-col items-center gap-3 py-6 text-primary">
@@ -163,15 +224,10 @@ export function InviteAccept({ token }: Readonly<{ token: string }>) {
 		);
 	}
 
-	if (invite.alreadyMember) {
+	if (action.kind === "member" || action.kind === "member-bad-destination") {
 		return (
 			<InviteShell>
-				<GroupBadge />
-				<h1 className="break-words text-headline-small font-bold">Você já está no grupo “{invite.groupName}”</h1>
-				<p className="text-body-large text-on-surface-variant">{peopleLabel(invite.memberCount)} no grupo.</p>
-				<Button href={`/app/grupos/${invite.groupId}`} fullWidth>
-					Abrir o grupo
-				</Button>
+				<InviteMemberContent groupId={invite.groupId} groupName={invite.groupName} memberCount={invite.memberCount} badDestination={action.kind === "member-bad-destination"} />
 			</InviteShell>
 		);
 	}

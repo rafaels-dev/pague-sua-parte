@@ -1,8 +1,15 @@
 import { UnauthorizedError } from "@/lib/auth/server";
 
-/** Resposta de erro padrão: `{ error, field? }` com mensagem em pt-BR. */
-export function jsonError(message: string, status: number, field?: string) {
-	return Response.json({ error: message, ...(field ? { field } : {}) }, { status });
+/** Códigos de erro que o cliente usa para decidir a tela (`code` na resposta). */
+export type ErrorCode = "no_group" | "no_expense";
+
+/**
+ * Resposta de erro padrão: `{ error, field?, code? }` com mensagem em pt-BR.
+ * `no_group`: grupo inexistente OU quem chama não é membro (mesma resposta para os dois, de propósito).
+ * `no_expense`: só é devolvido depois de conferir que quem chama é membro.
+ */
+export function jsonError(message: string, status: number, field?: string, code?: ErrorCode) {
+	return Response.json({ error: message, ...(field ? { field } : {}), ...(code ? { code } : {}) }, { status });
 }
 
 /**

@@ -113,7 +113,7 @@ describe("POST /api/groups/:id/expenses", () => {
 		createExpense.mockResolvedValue({ status: "no_group" });
 		let res = await post(data);
 		expect(res.status).toBe(404);
-		expect(await res.json()).toEqual({ error: "Grupo não encontrado." });
+		expect(await res.json()).toEqual({ error: "Grupo não encontrado.", code: "no_group" });
 		createExpense.mockResolvedValue({ status: "no_pix" });
 		res = await post(data);
 		expect(res.status).toBe(409);
@@ -145,7 +145,7 @@ describe("GET /api/groups/:id/expenses", () => {
 		listExpenses.mockResolvedValue(null);
 		const res = await get();
 		expect(res.status).toBe(404);
-		expect(await res.json()).toEqual({ error: "Grupo não encontrado." });
+		expect(await res.json()).toEqual({ error: "Grupo não encontrado.", code: "no_group" });
 	});
 });
 

@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
+import { NotMemberState } from "@/components/groups/not-member";
 import { Avatar, Button, Card, EmptyState, IconButton, List, SegmentedButton, Skeleton } from "@/components/ui";
-import { apiFetch, ApiError } from "@/lib/api-client";
+import { apiFetch, ApiError, isNotMemberError } from "@/lib/api-client";
 import { formatBRL } from "@/lib/money";
 import { todayISO } from "@/lib/ui/dates";
 import {
@@ -30,6 +31,7 @@ export type ReportState =
 	| { kind: "loading" }
 	| { kind: "error"; message: string; onRetry: () => void }
 	| { kind: "unavailable"; onRetry: () => void }
+	| { kind: "notMember" }
 	| { kind: "ready"; data: ReportData };
 
 const KINDS = [
@@ -185,6 +187,7 @@ export function ReportView({
 	today?: string;
 }>) {
 	const gid = encodeURIComponent(groupId);
+	if (state.kind === "notMember") return <NotMemberState />;
 	const ready = state.kind === "ready" ? state.data : null;
 	return (
 		<div className="mx-auto max-w-2xl space-y-6">
@@ -280,7 +283,8 @@ export function GroupReport({ groupId }: Readonly<{ groupId: string }>) {
 			})
 			.catch((e) => {
 				if (cancelled) return;
-				if (e instanceof ApiError && (e.status === 404 || e.status === 501)) setState({ kind: "unavailable", onRetry: retry });
+				if (isNotMemberError(e)) setState({ kind: "notMember" });
+				else if (e instanceof ApiError && e.status === 501) setState({ kind: "unavailable", onRetry: retry });
 				else setState({ kind: "error", message: e instanceof ApiError ? e.message : "Não foi possível carregar o relatório.", onRetry: retry });
 			});
 		return () => {

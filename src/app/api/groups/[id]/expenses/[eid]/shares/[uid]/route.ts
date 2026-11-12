@@ -31,9 +31,9 @@ export async function PATCH(request: Request, { params }: Ctx) {
 		const res = await setSharePaid(await getDb(), id, eid, user.uid, uid, parsed.data.status, undefined, getAttachmentStore());
 		switch (res.status) {
 			case "no_group":
-				return jsonError("Grupo não encontrado.", 404);
+				return jsonError("Grupo não encontrado.", 404, undefined, "no_group");
 			case "no_expense":
-				return jsonError("Despesa não encontrada.", 404);
+				return jsonError("Despesa não encontrada.", 404, undefined, "no_expense");
 			case "forbidden":
 				return jsonError("Só quem pagou a despesa ou quem administra o grupo pode marcar pagamentos.", 403);
 			case "no_share":

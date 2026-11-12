@@ -27,9 +27,9 @@ export async function PUT(request: Request, { params }: Ctx) {
 		const res = await updateParticipants(await getDb(), id, eid, user.uid, input.value, input.scope, undefined, getAttachmentStore());
 		switch (res.status) {
 			case "no_group":
-				return jsonError("Grupo não encontrado.", 404);
+				return jsonError("Grupo não encontrado.", 404, undefined, "no_group");
 			case "no_expense":
-				return jsonError("Despesa não encontrada.", 404);
+				return jsonError("Despesa não encontrada.", 404, undefined, "no_expense");
 			case "forbidden":
 				return jsonError("Só quem pagou a despesa ou quem administra o grupo pode mudar quem divide.", 403);
 			case "invalid":

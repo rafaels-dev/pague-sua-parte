@@ -15,6 +15,7 @@ import { useWhoSplits } from "@/components/expenses/who-splits";
 import { ChooseGroupSheet, GroupsListView, type GroupSummary } from "@/components/groups/groups-list";
 import type { MeSummary } from "@/lib/ui/managed";
 import { GroupSummaryView, HomeSummary } from "@/components/home-summary";
+import { expenseShareLink, groupShareLink } from "@/lib/ui/share-link";
 import { buildExpenseShareText, shareIntro } from "@/lib/ui/expense-share";
 import type { AttachmentView } from "@/components/expenses/expense-attachments";
 import { HelpContent, helperOptions } from "@/components/expenses/help";
@@ -285,7 +286,7 @@ export function MockGroup({
 		<Shell pathname="/app/grupos/1" framed={framed} user={care ? CARE_USER : USER}>
 			<Sheet open={summaryOpen} onClose={() => setSummaryOpen(false)} title="Compartilhar resumo">
 				<ShareExpenseContent
-					text={buildGroupSummaryText(GROUP_SUMMARY_TEXT, "https://pague-sua-parte.app/app/grupos/1")}
+					text={buildGroupSummaryText(GROUP_SUMMARY_TEXT, groupShareLink("https://pague-sua-parte.app", "abc123", "1"))}
 					intro="Mande o resumo para o grupo ver quem deve a quem. É o mesmo para todo mundo."
 					canShare
 					copyFailed={false}
@@ -1014,7 +1015,7 @@ export function MockExpense({
 	const members = (isCare(mode) ? CARE_GROUP : MOCK_GROUP).members.map(({ uid, name, picture, isYou, kind }) => ({ uid, name, picture, isYou, kind }));
 	const who = useWhoSplits(members.map((m) => m.uid), resplit ?? expense.participantUids);
 	const target = action ? expense.shares.find((s) => s.uid === action.uid) : undefined;
-	const text = buildExpenseShareText(expense, "https://pague-sua-parte.app/app/grupos/1/despesas/e1");
+	const text = buildExpenseShareText(expense, expenseShareLink("launched", "https://pague-sua-parte.app", "abc123", "1", "e1"));
 	return (
 		<Shell pathname="/app/grupos/1/despesas/e1" framed={framed} user={isCare(mode) ? CARE_USER : USER}>
 			<ExpenseDetailView
@@ -1043,7 +1044,7 @@ export function MockExpense({
 			/>
 			<Sheet open={summaryOpen} onClose={() => setSummaryOpen(false)} title="Compartilhar resumo">
 				<ShareExpenseContent
-					text={buildExpenseStatusText(expense, "https://pague-sua-parte.app/app/grupos/1/despesas/e1")}
+					text={buildExpenseStatusText(expense, expenseShareLink("launched", "https://pague-sua-parte.app", "abc123", "1", "e1"))}
 					intro={expenseSummaryIntro()}
 					canShare
 					copyFailed={false}

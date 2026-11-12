@@ -5,9 +5,10 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth/auth-provider";
 import type { Group, Member } from "@/components/groups/group-detail";
 import { CarerPicker } from "@/components/groups/managed-sheet";
+import { NotMemberState } from "@/components/groups/not-member";
 import { normalizeGroupDetail } from "@/components/groups/types";
 import { Banner, Button, Card, EmptyState, Icon, MoneyField, SegmentedButton, Sheet, Skeleton, TextField } from "@/components/ui";
-import { apiFetch, ApiError } from "@/lib/api-client";
+import { apiFetch, ApiError, isMissingExpenseError, isNotMemberError } from "@/lib/api-client";
 import { formatBRL } from "@/lib/money";
 import { profileUrlFor } from "@/lib/ui/return-to";
 import { formatDateShort, isValidISODate, todayISO } from "@/lib/ui/dates";
@@ -370,7 +371,7 @@ export function NewExpenseForm({ groupId, editExpenseId }: Readonly<{ groupId: s
 	const router = useRouter();
 	const { user } = useAuth();
 	const [group, setGroup] = useState<Group | null>(null);
-	const [loadError, setLoadError] = useState<{ message: string; notFound: boolean } | null>(null);
+	const [loadError, setLoadError] = useState<{ message: string; kind: "notMember" | "missing" | "other" } | null>(null);
 	const [noPixKey, setNoPixKey] = useState(false);
 	const [payerUid, setPayerUid] = useState<string | null>(null);
 	const [reloadKey, setReloadKey] = useState(0);
@@ -424,8 +425,9 @@ export function NewExpenseForm({ groupId, editExpenseId }: Readonly<{ groupId: s
 			})
 			.catch((e) => {
 				if (cancelled) return;
-				if (e instanceof ApiError) setLoadError({ message: e.message, notFound: e.status === 404 });
-				else setLoadError({ message: "Não foi possível carregar o grupo.", notFound: false });
+				if (isNotMemberError(e)) setLoadError({ message: "", kind: "notMember" });
+				else if (isMissingExpenseError(e)) setLoadError({ message: "", kind: "missing" });
+				else setLoadError({ message: e instanceof ApiError ? e.message : "Não foi possível carregar o grupo.", kind: "other" });
 			});
 		return () => {
 			cancelled = true;
@@ -440,16 +442,17 @@ export function NewExpenseForm({ groupId, editExpenseId }: Readonly<{ groupId: s
 		document.getElementById(id)?.focus();
 	}, [errors]);
 
+	if (loadError?.kind === "notMember") return <NotMemberState />;
 	if (loadError) {
 		return (
 			<EmptyState
 				tone="error"
 				icon="error"
 				role="alert"
-				title={loadError.notFound ? "Grupo não encontrado" : "Ops!"}
+				title={loadError.kind === "missing" ? "Despesa não encontrada" : "Ops!"}
 				action={
 					<>
-						{!loadError.notFound && (
+						{loadError.kind !== "missing" && (
 							<Button
 								icon="refresh"
 								onClick={() => {
@@ -460,13 +463,13 @@ export function NewExpenseForm({ groupId, editExpenseId }: Readonly<{ groupId: s
 								Tentar de novo
 							</Button>
 						)}
-						<Button href="/app" variant={loadError.notFound ? "filled" : "outlined"}>
-							Voltar para o início
+						<Button href={loadError.kind === "missing" ? `/app/grupos/${encodeURIComponent(groupId)}` : "/app"} variant={loadError.kind === "missing" ? "filled" : "outlined"}>
+							{loadError.kind === "missing" ? "Voltar para o grupo" : "Voltar para o início"}
 						</Button>
 					</>
 				}
 			>
-				{loadError.notFound ? "Esse grupo não existe ou você não faz parte dele." : loadError.message}
+				{loadError.kind === "missing" ? "Essa despesa não existe mais." : loadError.message}
 			</EmptyState>
 		);
 	}

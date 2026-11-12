@@ -7,6 +7,8 @@ export class ApiError extends Error {
 		message: string,
 		public readonly status: number,
 		public readonly field?: string,
+		/** "no_group" (grupo inexistente ou não é membro) ou "no_expense" (despesa inexistente; só para membros). */
+		public readonly code?: string,
 	) {
 		super(message);
 		this.name = "ApiError";
@@ -29,8 +31,8 @@ export async function apiFetch<T = unknown>(path: string, init: RequestInit = {}
 	}
 	const data: unknown = await res.json().catch(() => null);
 	if (!res.ok) {
-		const d = (data ?? {}) as { error?: string; field?: string };
-		throw new ApiError(d.error ?? "Algo deu errado. Tente novamente.", res.status, d.field);
+		const d = (data ?? {}) as { error?: string; field?: string; code?: string };
+		throw new ApiError(d.error ?? "Algo deu errado. Tente novamente.", res.status, d.field, d.code);
 	}
 	return data as T;
 }
@@ -52,4 +54,14 @@ export async function apiFetchBlob(path: string): Promise<Blob> {
 		throw new ApiError(data?.error ?? "Não foi possível abrir o arquivo.", res.status, data?.field);
 	}
 	return res.blob();
+}
+
+/** 404 de grupo inexistente ou de quem não é membro (a API não distingue os dois, de propósito). */
+export function isNotMemberError(e: unknown): boolean {
+	return e instanceof ApiError && e.status === 404 && e.code !== "no_expense";
+}
+
+/** 404 de despesa inexistente; a API só diz isso depois de conferir que a pessoa é membro. */
+export function isMissingExpenseError(e: unknown): boolean {
+	return e instanceof ApiError && e.status === 404 && e.code === "no_expense";
 }

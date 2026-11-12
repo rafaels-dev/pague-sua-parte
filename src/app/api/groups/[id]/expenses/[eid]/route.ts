@@ -15,8 +15,8 @@ export async function GET(request: Request, { params }: Ctx) {
 		const user = await requireUser(request);
 		const { id, eid } = await params;
 		const res = await getExpenseDetail(await getDb(), id, eid, user.uid);
-		if (res.status === "no_group") return jsonError("Grupo não encontrado.", 404);
-		if (res.status === "no_expense") return jsonError("Despesa não encontrada.", 404);
+		if (res.status === "no_group") return jsonError("Grupo não encontrado.", 404, undefined, "no_group");
+		if (res.status === "no_expense") return jsonError("Despesa não encontrada.", 404, undefined, "no_expense");
 		return Response.json(res.expense);
 	} catch (err) {
 		return handleError(err, "api/groups/[id]/expenses/[eid] GET");
@@ -38,9 +38,9 @@ export async function PATCH(request: Request, { params }: Ctx) {
 		const res = await editExpense(await getDb(), getAttachmentStore(), { groupId: id, eid, uid: user.uid, input: input.value });
 		switch (res.status) {
 			case "no_group":
-				return jsonError("Grupo não encontrado.", 404);
+				return jsonError("Grupo não encontrado.", 404, undefined, "no_group");
 			case "no_expense":
-				return jsonError("Despesa não encontrada.", 404);
+				return jsonError("Despesa não encontrada.", 404, undefined, "no_expense");
 			case "forbidden":
 				return jsonError("Só quem pagou a despesa ou quem administra o grupo pode editar.", 403);
 			case "invalid":
@@ -65,9 +65,9 @@ export async function DELETE(request: Request, { params }: Ctx) {
 		const res = await deleteExpense(await getDb(), getAttachmentStore(), id, eid, user.uid, scope);
 		switch (res.status) {
 			case "no_group":
-				return jsonError("Grupo não encontrado.", 404);
+				return jsonError("Grupo não encontrado.", 404, undefined, "no_group");
 			case "no_expense":
-				return jsonError("Despesa não encontrada.", 404);
+				return jsonError("Despesa não encontrada.", 404, undefined, "no_expense");
 			case "forbidden":
 				return jsonError("Só quem lançou a despesa ou quem administra o grupo pode apagar.", 403);
 			case "has_payment":

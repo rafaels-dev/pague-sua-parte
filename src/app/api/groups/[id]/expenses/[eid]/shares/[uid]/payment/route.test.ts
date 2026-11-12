@@ -63,7 +63,8 @@ describe("POST /expenses/:eid/shares/:uid/payment", () => {
 		];
 		for (const [status, code, error] of cases) {
 			markSelfPaid.mockResolvedValue({ status });
-			expect(await out(await upload(null))).toEqual([code, { error }]);
+			const codes: Record<string, string> = { no_group: "no_group", no_expense: "no_expense" };
+			expect(await out(await upload(null))).toEqual([code, { error, ...(codes[status] ? { code: codes[status] } : {}) }]);
 		}
 	});
 	it("401 sem autenticação e 500 genérico em erro", async () => {

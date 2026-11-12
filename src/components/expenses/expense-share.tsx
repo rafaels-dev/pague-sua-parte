@@ -1,6 +1,6 @@
 "use client";
 
-import { Button } from "@/components/ui";
+import { Banner, Button } from "@/components/ui";
 import { buildWhatsAppUrl } from "@/lib/ui/invite";
 
 /** Conteúdo (visual) do sheet "Avisar o grupo": WhatsApp, compartilhar, copiar a mensagem. */
@@ -12,6 +12,8 @@ export function ShareExpenseContent({
 	dismissLabel = "Agora não",
 	whatsappLabel = "Avisar no WhatsApp",
 	preview = false,
+	notice,
+	loading = false,
 	onCopy,
 	onShare,
 	onClose,
@@ -24,13 +26,41 @@ export function ShareExpenseContent({
 	whatsappLabel?: string;
 	/** Mostra a mensagem pronta antes dos botões (resumos). */
 	preview?: boolean;
+	/** Aviso antes dos botões (ex.: grupo com uma pessoa só). */
+	notice?: React.ReactNode;
+	/** Preparando o link do convite: os botões esperam para não sair com o link errado. */
+	loading?: boolean;
 	onCopy: () => void;
 	onShare: () => void;
 	onClose: () => void;
 }>) {
+	const dismiss = (
+		<Button variant="text" size="md" onClick={onClose} fullWidth>
+			{dismissLabel}
+		</Button>
+	);
+	const lead = (
+		<>
+			<p className="text-body-large text-on-surface-variant">{intro}</p>
+			{notice && <Banner>{notice}</Banner>}
+		</>
+	);
+
+	if (loading) {
+		return (
+			<div className="space-y-4">
+				{lead}
+				<p role="status" className="py-6 text-center text-body-large text-on-surface-variant">
+					Preparando a mensagem...
+				</p>
+				{dismiss}
+			</div>
+		);
+	}
+
 	return (
 		<div className="space-y-4">
-			<p className="text-body-large text-on-surface-variant">{intro}</p>
+			{lead}
 			{preview && (
 				<pre aria-label="Prévia da mensagem" className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-shape-md bg-surface-container-high p-4 font-sans text-body-large text-on-surface">
 					{text}
@@ -64,9 +94,7 @@ export function ShareExpenseContent({
 					/>
 				</div>
 			)}
-			<Button variant="text" size="md" onClick={onClose} fullWidth>
-				{dismissLabel}
-			</Button>
+			{dismiss}
 		</div>
 	);
 }

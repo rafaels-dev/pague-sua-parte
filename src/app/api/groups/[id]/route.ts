@@ -10,7 +10,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 		const user = await requireUser(request);
 		const { id } = await params;
 		const group = await getGroupDetail(await getDb(), id, user.uid);
-		if (!group) return jsonError("Grupo não encontrado.", 404);
+		if (!group) return jsonError("Grupo não encontrado.", 404, undefined, "no_group");
 		return Response.json(group);
 	} catch (err) {
 		return handleError(err, "api/groups/[id]");

@@ -37,9 +37,9 @@ export async function POST(request: Request, { params }: Ctx) {
 		const res = await markSelfPaid(await getDb(), getAttachmentStore(), { groupId: id, eid, uid: user.uid, targetUid: uid, file });
 		switch (res.status) {
 			case "no_group":
-				return jsonError("Grupo não encontrado.", 404);
+				return jsonError("Grupo não encontrado.", 404, undefined, "no_group");
 			case "no_expense":
-				return jsonError("Despesa não encontrada.", 404);
+				return jsonError("Despesa não encontrada.", 404, undefined, "no_expense");
 			case "forbidden":
 				return jsonError("Só quem deve pode avisar que pagou.", 403);
 			case "no_share":

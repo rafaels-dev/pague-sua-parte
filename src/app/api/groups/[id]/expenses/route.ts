@@ -18,7 +18,7 @@ export async function GET(request: Request, { params }: Ctx) {
 		const user = await requireUser(request);
 		const { id } = await params;
 		const expenses = await listExpenses(await getDb(), id, user.uid);
-		if (!expenses) return jsonError(NOT_FOUND, 404);
+		if (!expenses) return jsonError(NOT_FOUND, 404, undefined, "no_group");
 		return Response.json({ expenses });
 	} catch (err) {
 		return handleError(err, "api/groups/[id]/expenses GET");
@@ -65,7 +65,7 @@ export async function POST(request: Request, { params }: Ctx) {
 		});
 		switch (result.status) {
 			case "no_group":
-				return jsonError(NOT_FOUND, 404);
+				return jsonError(NOT_FOUND, 404, undefined, "no_group");
 			case "no_pix":
 				return jsonError(
 					result.name

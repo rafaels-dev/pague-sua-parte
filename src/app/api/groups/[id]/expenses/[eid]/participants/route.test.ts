@@ -36,9 +36,9 @@ describe("PUT /expenses/:eid/participants", () => {
 	});
 	it("mapeia os resultados do repo", async () => {
 		updateParticipants.mockResolvedValue({ status: "no_group" });
-		expect(await out(await put({ participantUids: ["u1"] }))).toEqual([404, { error: "Grupo não encontrado." }]);
+		expect(await out(await put({ participantUids: ["u1"] }))).toEqual([404, { error: "Grupo não encontrado.", code: "no_group" }]);
 		updateParticipants.mockResolvedValue({ status: "no_expense" });
-		expect(await out(await put({ participantUids: ["u1"] }))).toEqual([404, { error: "Despesa não encontrada." }]);
+		expect(await out(await put({ participantUids: ["u1"] }))).toEqual([404, { error: "Despesa não encontrada.", code: "no_expense" }]);
 		updateParticipants.mockResolvedValue({ status: "forbidden" });
 		expect(await out(await put({ participantUids: ["u1"] }))).toEqual([403, { error: "Só quem pagou a despesa ou quem administra o grupo pode mudar quem divide." }]);
 		updateParticipants.mockResolvedValue({ status: "invalid", field: "amountCents", error: "pequeno" });

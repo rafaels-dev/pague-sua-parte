@@ -28,9 +28,9 @@ export async function POST(request: Request, { params }: Ctx) {
 		const res = await helpExpense(await getDb(), id, eid, user.uid, input.forUid);
 		switch (res.status) {
 			case "no_group":
-				return jsonError("Grupo não encontrado.", 404);
+				return jsonError("Grupo não encontrado.", 404, undefined, "no_group");
 			case "no_expense":
-				return jsonError("Despesa não encontrada.", 404);
+				return jsonError("Despesa não encontrada.", 404, undefined, "no_expense");
 			case "payer":
 				return jsonError("Quem pagou a despesa não pode entrar na divisão dela.", 403);
 			case "already":

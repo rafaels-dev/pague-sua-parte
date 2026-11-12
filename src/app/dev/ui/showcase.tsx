@@ -8,6 +8,10 @@ import { CreateGroupFormView } from "@/components/groups/create-group-form";
 import { ExpenseListView } from "@/components/expenses/expense-list";
 import { GroupDetailView, GroupDetailSkeleton, type Group } from "@/components/groups/group-detail";
 import { GroupsListView, normalizeGroup, type GroupSummary } from "@/components/groups/groups-list";
+import { NotMemberState } from "@/components/groups/not-member";
+import { ShareExpenseContent } from "@/components/expenses/expense-share";
+import { buildExpenseShareText, shareIntro } from "@/lib/ui/expense-share";
+import { expenseShareLink, SOLO_SHARE_EXPENSE_HINT, SOLO_SHARE_NOTICE } from "@/lib/ui/share-link";
 import { InviteReady, InviteShell } from "@/components/groups/invite-accept";
 import { InviteSheetContent } from "@/components/groups/invite-panel";
 import { MemberSheetContent } from "@/components/groups/member-sheet";
@@ -420,6 +424,27 @@ export function Showcase({
 								<NotifyCardView emailAvailable pushAvailable={false} emailOn canEmail support="unsupported" pushOn={false} busy={false} error={null} onEmail={noop} onEnablePush={noop} onDisablePush={noop} />
 							</div>
 						</Shell>
+					</Frame>
+					<Frame label="Quem não é do grupo (grupo ou despesa)">
+						<Shell pathname="/app/grupos/1/despesas/e1">
+							<NotMemberState />
+						</Shell>
+					</Frame>
+					<Frame label="Compartilhar despesa: grupo com uma pessoa só (aviso)">
+						<Card className="max-w-md p-6">
+							<h2 className="mb-4 text-headline-small">Despesa lançada!</h2>
+							<ShareExpenseContent
+								text={buildExpenseShareText({ amountCents: 15000, description: "Mercado" }, expenseShareLink("launched", "https://pague-sua-parte.app", "abc123", "1", "e1"))}
+								intro={shareIntro("launched")}
+								notice={`${SOLO_SHARE_NOTICE} ${SOLO_SHARE_EXPENSE_HINT}`}
+								canShare
+								copyFailed={false}
+								preview
+								onCopy={noop}
+								onShare={noop}
+								onClose={noop}
+							/>
+						</Card>
 					</Frame>
 					<Frame label="Convite (logada)">
 						<InviteShell>

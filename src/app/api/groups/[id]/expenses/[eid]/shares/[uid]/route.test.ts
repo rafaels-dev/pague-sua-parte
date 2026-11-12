@@ -29,9 +29,9 @@ describe("PATCH /expenses/:eid/shares/:uid", () => {
 	});
 	it("404, 403 e 404 com as mensagens do contrato", async () => {
 		setSharePaid.mockResolvedValue({ status: "no_group" });
-		expect(await out(await patch({ status: "paid" }))).toEqual([404, { error: "Grupo não encontrado." }]);
+		expect(await out(await patch({ status: "paid" }))).toEqual([404, { error: "Grupo não encontrado.", code: "no_group" }]);
 		setSharePaid.mockResolvedValue({ status: "no_expense" });
-		expect(await out(await patch({ status: "paid" }))).toEqual([404, { error: "Despesa não encontrada." }]);
+		expect(await out(await patch({ status: "paid" }))).toEqual([404, { error: "Despesa não encontrada.", code: "no_expense" }]);
 		setSharePaid.mockResolvedValue({ status: "forbidden" });
 		expect(await out(await patch({ status: "paid" }))).toEqual([403, { error: "Só quem pagou a despesa ou quem administra o grupo pode marcar pagamentos." }]);
 		setSharePaid.mockResolvedValue({ status: "no_share" });

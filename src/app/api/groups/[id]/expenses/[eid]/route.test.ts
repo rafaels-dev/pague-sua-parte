@@ -23,10 +23,10 @@ describe("GET /expenses/:eid", () => {
 		expect(await (await GET(new Request("http://x"), ctx)).json()).toEqual({ id: "e" });
 		getExpenseDetail.mockResolvedValue({ status: "no_group" });
 		let res = await GET(new Request("http://x"), ctx);
-		expect([res.status, await res.json()]).toEqual([404, { error: "Grupo não encontrado." }]);
+		expect([res.status, await res.json()]).toEqual([404, { error: "Grupo não encontrado.", code: "no_group" }]);
 		getExpenseDetail.mockResolvedValue({ status: "no_expense" });
 		res = await GET(new Request("http://x"), ctx);
-		expect([res.status, await res.json()]).toEqual([404, { error: "Despesa não encontrada." }]);
+		expect([res.status, await res.json()]).toEqual([404, { error: "Despesa não encontrada.", code: "no_expense" }]);
 	});
 });
 
@@ -73,9 +73,9 @@ describe("PATCH /expenses/:eid (editar)", () => {
 	});
 	it("mensagens do contrato: 404, 403 (dono ou admin), 422 e 409", async () => {
 		editExpense.mockResolvedValue({ status: "no_group" });
-		expect(await out(await patch(body))).toEqual([404, { error: "Grupo não encontrado." }]);
+		expect(await out(await patch(body))).toEqual([404, { error: "Grupo não encontrado.", code: "no_group" }]);
 		editExpense.mockResolvedValue({ status: "no_expense" });
-		expect(await out(await patch(body))).toEqual([404, { error: "Despesa não encontrada." }]);
+		expect(await out(await patch(body))).toEqual([404, { error: "Despesa não encontrada.", code: "no_expense" }]);
 		editExpense.mockResolvedValue({ status: "forbidden" });
 		expect(await out(await patch(body))).toEqual([403, { error: "Só quem pagou a despesa ou quem administra o grupo pode editar." }]);
 		editExpense.mockResolvedValue({ status: "invalid", error: "Esse valor é pequeno demais para dividir entre tantas pessoas.", field: "amountCents" });

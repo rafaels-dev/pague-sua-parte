@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { Avatar, Banner, Button, EmptyState, Icon, IconButton, List, ListItem, Sheet, Skeleton, Snackbar } from "@/components/ui";
-import { apiFetch, ApiError } from "@/lib/api-client";
+import { apiFetch, ApiError, isNotMemberError } from "@/lib/api-client";
 import { ExpenseList } from "@/components/expenses/expense-list";
 import { clearFlash, peekFlash } from "@/components/expenses/types";
 import {
@@ -22,7 +22,10 @@ import { managedCaption } from "@/lib/ui/managed";
 import { GroupSummaryLive } from "@/components/home-summary";
 import { ShareExpenseContent } from "@/components/expenses/expense-share";
 import { copyText } from "@/lib/ui/clipboard";
-import { buildGroupLink, buildGroupSummaryText, normalizeGroupSummary, type GroupSummaryData } from "@/lib/ui/group-summary";
+import { NotMemberState } from "@/components/groups/not-member";
+import { useShareInvite } from "@/components/groups/use-share-invite";
+import { groupShareLink, SOLO_SHARE_NOTICE } from "@/lib/ui/share-link";
+import { buildGroupSummaryText, normalizeGroupSummary, type GroupSummaryData } from "@/lib/ui/group-summary";
 import { InvitePanel } from "./invite-panel";
 import { MemberSheetContent } from "./member-sheet";
 import {
@@ -222,7 +225,7 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 			})
 			.catch((e) => {
 				if (cancelled) return;
-				if (e instanceof ApiError) setError({ message: e.message, notFound: e.status === 404 });
+				if (e instanceof ApiError) setError({ message: e.message, notFound: isNotMemberError(e) });
 				else setError({ message: "Não foi possível carregar o grupo.", notFound: false });
 			});
 		return () => {
@@ -399,6 +402,9 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 		}
 	}
 
+	const soloGroup = !!group && group.members.filter((m) => m.kind === "user").length <= 1;
+	const shareInvite = useShareInvite(id, summary.kind !== "closed", group ? soloGroup : undefined);
+
 	function openSummary() {
 		setSummary({ kind: "loading" });
 		setSummaryCopyFailed(false);
@@ -406,37 +412,36 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 			.then((d) => setSummary({ kind: "ready", data: normalizeGroupSummary(d) }))
 			.catch((e) => setSummary({ kind: "error", message: e instanceof ApiError ? e.message : "Não foi possível montar o resumo. Tente de novo." }));
 	}
-	const summaryText = summary.kind === "ready" && group ? buildGroupSummaryText(summary.data, buildGroupLink(window.location.origin, group.id)) : "";
+	const summaryText = summary.kind === "ready" && group ? buildGroupSummaryText(summary.data, groupShareLink(window.location.origin, shareInvite.token, group.id)) : "";
 
 	const memberUrl = (m: Member) => `/api/groups/${encodeURIComponent(id)}/members/${encodeURIComponent(m.uid)}`;
 
+	if (error?.notFound) return <NotMemberState />;
 	if (error) {
 		return (
 			<EmptyState
 				tone="error"
 				icon="error"
 				role="alert"
-				title={error.notFound ? "Grupo não encontrado" : "Ops!"}
+				title="Ops!"
 				action={
 					<>
-						{!error.notFound && (
-							<Button
-								icon="refresh"
-								onClick={() => {
-									setError(null);
-									setReloadKey((k) => k + 1);
-								}}
-							>
-								Tentar de novo
-							</Button>
-						)}
-						<Button href="/app" variant={error.notFound ? "filled" : "outlined"}>
+						<Button
+							icon="refresh"
+							onClick={() => {
+								setError(null);
+								setReloadKey((k) => k + 1);
+							}}
+						>
+							Tentar de novo
+						</Button>
+						<Button href="/app" variant="outlined">
 							Voltar para o início
 						</Button>
 					</>
 				}
 			>
-				{error.notFound ? "Esse grupo não existe ou você não faz parte dele." : error.message}
+				{error.message}
 			</EmptyState>
 		);
 	}
@@ -482,6 +487,8 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 							dismissLabel="Fechar"
 							whatsappLabel="Compartilhar no WhatsApp"
 							preview
+							notice={soloGroup && shareInvite.token ? SOLO_SHARE_NOTICE : undefined}
+							loading={shareInvite.status === "loading"}
 							onCopy={() =>
 								void copyText(summaryText).then((ok) => {
 									setSummaryCopyFailed(!ok);

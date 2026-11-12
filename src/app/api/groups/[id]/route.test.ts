@@ -36,7 +36,7 @@ describe("GET /api/groups/:id", () => {
 		for (const id of ["507f1f77bcf86cd799439011", "malformado"]) {
 			const res = await call(id);
 			expect(res.status).toBe(404);
-			expect(await res.json()).toEqual({ error: "Grupo não encontrado." });
+			expect(await res.json()).toEqual({ error: "Grupo não encontrado.", code: "no_group" });
 		}
 	});
 	it("401 sem autenticação", async () => {
