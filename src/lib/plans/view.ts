@@ -90,6 +90,10 @@ export type PlanSummary = {
 	fits: boolean;
 	shareCents: number | null;
 	includedCount: number;
+	/** A meta: pessoas previstas pelo criador (nulo sem previsão), quantas contam em "se forem todas" e a parte nesse caso. */
+	expectedPeople: number | null;
+	allCount: number;
+	shareIfAllCents: number | null;
 	/** Você (ou alguém por quem você responde) ainda não respondeu. */
 	needsMyAnswer: boolean;
 	isCreator: boolean;
@@ -214,6 +218,7 @@ export function buildPlanView(
 export function buildPlanSummary(plan: PlanDoc, caller: string): PlanSummary {
 	const c = computeFor(plan);
 	const mine = peopleOf(plan).filter((id) => canAnswerFor(plan, caller, id));
+	const allCount = allCountOf(plan.expectedPeople, c.peopleCount);
 	return {
 		id: plan._id.toHexString(),
 		name: plan.name,
@@ -225,6 +230,9 @@ export function buildPlanSummary(plan: PlanDoc, caller: string): PlanSummary {
 		fits: c.fits,
 		shareCents: c.shareCents,
 		includedCount: c.includedUids.length,
+		expectedPeople: plan.expectedPeople ?? null,
+		allCount,
+		shareIfAllCents: maxShare(plan.totalCents, allCount),
 		needsMyAnswer: mine.some((id) => answerOf(plan, id) === "pending"),
 		isCreator: caller === plan.createdBy,
 	};

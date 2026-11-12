@@ -47,7 +47,7 @@ export function PlanInviteReady({
 			) : (
 				<p className="money text-title-large">{formatBRL(invite.totalCents)}</p>
 			)}
-			<p className="text-body-large text-on-surface-variant">Você diz se vai e, se quiser, até quanto pode pagar. Ninguém paga nada agora.</p>
+			<p className="text-body-large text-on-surface-variant">Você diz se vai e, se quiser, até quanto pode pagar.</p>
 			{acceptError && (
 				<Banner tone="error" icon="error" role="alert">
 					{acceptError}

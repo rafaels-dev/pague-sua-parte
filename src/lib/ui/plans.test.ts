@@ -24,12 +24,13 @@ describe("textos do plano", () => {
 		expect(scoreLines({ answeredCount: 6, allCount: 10, missingCount: 4 })).toEqual({ answered: "6 de 10 já responderam", missing: "Faltam responder: 4" });
 		expect(scoreLines({ answeredCount: 4, allCount: 4, missingCount: 0 })).toEqual({ answered: "4 de 4 já responderam", missing: null });
 	});
-	it("summaryLine", () => {
-		const s = { goingCount: 8, includedCount: 8, shareCents: 31250, fits: true, status: "open" as const };
-		expect(summaryLine(s)).toBe("8 vão · R$ 312,50 cada");
-		expect(summaryLine({ ...s, includedCount: 1, shareCents: 100, fits: true })).toBe("1 vai · R$ 1,00 cada");
-		expect(summaryLine({ ...s, fits: false, shareCents: null })).toBe("8 vão · Ainda não fecha");
-		expect(summaryLine({ ...s, fits: false, shareCents: null, goingCount: 0 })).toBe("Ainda não fecha");
+	it("summaryLine: plano aberto mostra a meta, nunca o placar de agora", () => {
+		const s = { status: "open" as const, expectedPeople: 13, allCount: 13, shareIfAllCents: 21924, peopleCount: 2 };
+		expect(summaryLine(s)).toBe("Meta: 13 pessoas · R$ 219,24 cada");
+		expect(summaryLine({ ...s, expectedPeople: null, allCount: 2, shareIfAllCents: 142500 })).toBe("2 pessoas no plano");
+		expect(summaryLine({ ...s, expectedPeople: null, allCount: 1, peopleCount: 1 })).toBe("1 pessoa no plano");
+		expect(summaryLine({ ...s, shareIfAllCents: null })).toBe("2 pessoas no plano");
+		expect(summaryLine(s)).not.toMatch(/vai|vão|fecha/i);
 		expect(summaryLine({ ...s, status: "cancelled" })).toBe("Cancelado");
 		expect(summaryLine({ ...s, status: "done" })).toBe("Virou grupo e despesa");
 	});
