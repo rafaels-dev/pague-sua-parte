@@ -85,6 +85,25 @@ export type ExpenseShare = {
 	helped: boolean;
 	/** Paga junto com outras contas, num Pix só (`count` inclui esta parte); null = paga sozinha. */
 	batch: { totalCents: number; count: number } | null;
+	/** "manual" marcado pelo administrador do grupo (e não por quem pagou a conta). */
+	markedByAdmin: boolean;
+	markedByName: string | null;
+	/** A devolução do que a pessoa pagou a mais já foi feita. */
+	refund: ShareRefundInfo | null;
+	/** Você (quem pagou ou o administrador) pode marcar "Devolvi" / desfazer a devolução. */
+	canRefund: boolean;
+	canUndoRefund: boolean;
+	/** Chave Pix de quem recebe de volta; só para quem paga a devolução. null = a pessoa não tem chave; undefined = não é você quem paga. */
+	refundPix?: { type: PixKeyType; key: string; payeeName: string } | null;
+};
+
+export type ShareRefundInfo = {
+	cents: number;
+	at: string;
+	byAdmin: boolean;
+	markedByName: string | null;
+	receipt: ShareReceipt | null;
+	batch: { totalCents: number; count: number } | null;
 };
 
 export type ExpenseAttachment = { id: string; name: string; contentType: string; size: number };
@@ -99,6 +118,10 @@ export type ExpenseDetailData = {
 	canDelete: boolean;
 	canMarkPaid: boolean;
 	canEditParticipants: boolean;
+	/** Você pode editar a despesa (quem pagou ou o administrador do grupo). */
+	canEdit: boolean;
+	/** Você só gerencia esta despesa por ser administrador do grupo (não foi você quem pagou). */
+	adminOnly: boolean;
 	participantUids: string[];
 	paidBy: { uid: string; name: string; picture: string | null; isYou: boolean; kind: "user" | "managed"; youManage: boolean };
 	pix: { type: PixKeyType; key: string; payeeName: string };
@@ -150,6 +173,20 @@ export function normalizeReceipt(raw: unknown): ShareReceipt | null {
 	return { name: r.name, contentType: typeof r.contentType === "string" ? r.contentType : "", size: typeof r.size === "number" ? r.size : 0 };
 }
 
+function normalizeRefund(raw: unknown): ShareRefundInfo | null {
+	if (!raw || typeof raw !== "object") return null;
+	const r = raw as Record<string, unknown>;
+	if (typeof r.cents !== "number" || r.cents <= 0) return null;
+	return {
+		cents: r.cents,
+		at: typeof r.at === "string" ? r.at : "",
+		byAdmin: r.byAdmin === true,
+		markedByName: typeof r.markedByName === "string" ? r.markedByName : null,
+		receipt: normalizeReceipt(r.receipt),
+		batch: normalizeBatch(r.batch),
+	};
+}
+
 const dueOrNull = (v: unknown): string | null => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null);
 
 const helpShare = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null);
@@ -183,6 +220,12 @@ export function normalizeExpense(raw: Loose<Omit<ExpenseDetailData, "shares">> &
 			canAddReceipt: !!s.canAddReceipt,
 			helped: !!s.helped,
 			batch: normalizeBatch(s.batch),
+			markedByAdmin: s.method === "manual" && !!s.markedByAdmin,
+			markedByName: typeof s.markedByName === "string" ? s.markedByName : null,
+			refund: normalizeRefund(s.refund),
+			canRefund: !!s.canRefund,
+			canUndoRefund: !!s.canUndoRefund,
+			...(s.refundPix === null ? { refundPix: null } : s.refundPix && typeof s.refundPix.key === "string" ? { refundPix: { type: s.refundPix.type, key: s.refundPix.key, payeeName: s.refundPix.payeeName ?? "" } } : {}),
 		};
 	});
 	const paidBy = (raw.paidBy ?? { uid: "", name: "", picture: null, isYou: false }) as Loose<ExpenseDetailData["paidBy"]>;
@@ -210,6 +253,8 @@ export function normalizeExpense(raw: Loose<Omit<ExpenseDetailData, "shares">> &
 		canDelete: !!raw.canDelete,
 		canMarkPaid: !!raw.canMarkPaid,
 		canEditParticipants: raw.canEditParticipants ?? false,
+		canEdit: !!raw.canEdit,
+		adminOnly: !!raw.adminOnly,
 		participantUids: raw.participantUids ?? shares.filter((s) => s.participates).map((s) => s.uid),
 	};
 }

@@ -4,6 +4,8 @@ import { describeItems, payAllLink } from "./pay-all";
 /** "Quem me deve": o que ainda devem à pessoa, por devedor (formato de `GET /api/me/receivables`). */
 
 export type ReceivableItem = {
+	/** "refund" = a receber de volta: a pessoa pagou a mais e quem pagou a despesa vai devolver. */
+	kind: "share" | "refund";
 	groupId: string;
 	groupName: string;
 	expenseId: string;
@@ -51,6 +53,7 @@ function normalizeItem(raw: unknown): ReceivableItem | null {
 	const number = inst ? num(inst.number) : 0;
 	const count = inst ? num(inst.count) : 0;
 	return {
+		kind: r.kind === "refund" ? "refund" : "share",
 		groupId: r.groupId,
 		groupName: str(r.groupName),
 		expenseId: r.expenseId,
@@ -111,6 +114,9 @@ export function debtorCaption(d: Pick<Debtor, "kind" | "youManage" | "managedByN
 }
 
 /** Quem recebe quando não é você: "para Benjamim"; null quando o dinheiro é seu. */
+/** Etiqueta de um item que é devolução. */
+export const REFUND_BACK_CHIP = "A receber de volta";
+
 export function payeeNote(i: Pick<ReceivableItem, "payeeIsYou" | "payeeName">): string | null {
 	return i.payeeIsYou ? null : `para ${i.payeeName || "quem você cuida"}`;
 }

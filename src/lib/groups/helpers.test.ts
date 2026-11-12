@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { actsFor, generateInviteToken, generateManagedUid, isManagedMember, isManagedUid, isObjectIdHex, isPlausibleToken, newInviteExpiry, sortMembers, type MemberView } from "./helpers";
+import { actsFor, expenseRole, generateInviteToken, isGroupAdmin, generateManagedUid, isManagedMember, isManagedUid, isObjectIdHex, isPlausibleToken, newInviteExpiry, sortMembers, type MemberView } from "./helpers";
 
 const m = (name: string, role: "admin" | "member"): MemberView => ({
 	uid: name,
@@ -78,5 +78,29 @@ describe("pessoas sem login", () => {
 		const managed = (name: string): MemberView => ({ ...m(name, "member"), kind: "managed" });
 		const out = sortMembers([managed("Ana Avó"), m("Zé", "member"), managed("Benjamim"), m("Wilson", "admin"), m("Bia", "member")]);
 		expect(out.map((x) => x.name)).toEqual(["Wilson", "Bia", "Zé", "Ana Avó", "Benjamim"]);
+	});
+});
+
+describe("isGroupAdmin / expenseRole", () => {
+	const members = [
+		{ uid: "adm", role: "admin" as const },
+		{ uid: "dono", role: "member" as const },
+		{ uid: "outro", role: "member" as const },
+		{ uid: "m_vo", role: "member" as const, kind: "managed" as const, managedBy: "dono" },
+		{ uid: "m_fake", role: "admin" as const, kind: "managed" as const, managedBy: "outro" },
+	];
+	it("administra quem tem role admin; pessoa sem login nunca administra", () => {
+		expect(isGroupAdmin(members, "adm")).toBe(true);
+		expect(isGroupAdmin(members, "dono")).toBe(false);
+		expect(isGroupAdmin(members, "m_fake")).toBe(false);
+		expect(isGroupAdmin(members, "ninguem")).toBe(false);
+	});
+	it("o dono (ou quem cuida dele) vale como dono; admin como admin; os demais, nada", () => {
+		expect(expenseRole(members, "dono", "dono")).toBe("owner");
+		expect(expenseRole(members, "dono", "m_vo")).toBe("owner");
+		expect(expenseRole(members, "adm", "dono")).toBe("admin");
+		expect(expenseRole(members, "adm", "adm")).toBe("owner");
+		expect(expenseRole(members, "outro", "dono")).toBeNull();
+		expect(expenseRole(members, "ninguem", "dono")).toBeNull();
 	});
 });

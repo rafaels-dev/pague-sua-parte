@@ -5,11 +5,12 @@ import {
 	findExpense,
 	loadPeople,
 	memberGroupsOf,
+	loadPixKeys,
 	mutateShares,
 	releaseReceipts,
 	type ExpenseDoc,
 } from "@/lib/expenses/repo";
-import { dueCents, normalizeShares, payShares, type BatchOutcome, type ShareBatch } from "@/lib/expenses/shares";
+import { dueCents, normalizeShares, payShares, refundCents, refundShares, type BatchOutcome, type RefundOutcome, type ShareBatch } from "@/lib/expenses/shares";
 import type { SniffedFile } from "@/lib/expenses/validation";
 import { actsFor, isObjectIdHex } from "@/lib/groups/helpers";
 import { groupsCollection } from "@/lib/groups/repo";
@@ -20,6 +21,19 @@ import { buildReceivables, EMPTY_RECEIVABLES, type Receivables } from "./receiva
 
 /** Quantas contas cabem num pagamento em lote. */
 export const BATCH_MAX_ITEMS = 50;
+
+/** Despesas com alguma cota paga a mais (devolução a fazer). Só o modelo novo (`paidCents`) pode ter devolução. */
+const HAS_REFUND = {
+	$expr: {
+		$anyElementTrue: {
+			$map: {
+				input: "$shares",
+				as: "s",
+				in: { $and: [{ $isNumber: "$$s.paidCents" }, { $ne: ["$$s.uid", "$paidBy"] }, { $gt: ["$$s.paidCents", "$$s.amountCents"] }] },
+			},
+		},
+	},
+};
 
 // ---------- o que dá para pagar ----------
 
@@ -43,13 +57,27 @@ export async function getPayables(db: Db, uid: string, now: Date = new Date(), g
 			$or: [{ dueDate: { $exists: false } }, { dueDate: null as never }, { dueDate: { $lte: cutoff } }],
 		})
 		.toArray();
+	// Devoluções: despesas pagas por quem `uid` age em que alguém pagou a mais.
+	const refundExpenses = await expensesCollection(db)
+		.find({ groupId: { $in: groups.map((g) => g._id) }, paidBy: { $in: [...acting] }, ...HAS_REFUND })
+		.toArray();
+	// Uma só busca de chaves Pix para todas as devoluções de todos os grupos.
+	const refundUids = new Map<string, string[]>();
+	for (const g of groups) {
+		const gid = g._id.toHexString();
+		refundUids.set(
+			gid,
+			refundExpenses.filter((e) => e.groupId.equals(g._id)).flatMap((e) => normalizeShares(e.shares).filter((s) => refundCents(s, e.paidBy) > 0).map((s) => s.uid)),
+		);
+	}
+	const refundPixes = refundExpenses.length ? await loadPixKeys(db, groups, refundUids) : new Map();
 	const uids = new Set<string>();
-	for (const e of expenses) {
+	for (const e of [...expenses, ...refundExpenses]) {
 		uids.add(e.paidBy);
 		for (const s of e.shares) uids.add(s.uid);
 	}
 	const people = await loadPeople(db, [...uids]);
-	const built = buildPayables({ uid, today, groups, expenses, people });
+	const built = buildPayables({ uid, today, groups, expenses, refundExpenses, refundPixes, people });
 	return groupId === undefined ? built : { ...built, group: { id: groupId, name: groups[0].name } };
 }
 
@@ -69,19 +97,24 @@ export async function getReceivables(db: Db, uid: string, now: Date = new Date()
 	const expenses = await expensesCollection(db)
 		.find({ groupId: { $in: groups.map((g) => g._id) }, paidBy: { $in: [...acting] } })
 		.toArray();
+	// A receber de volta: despesas (de qualquer pagador) em que `uid` ou quem ele cuida pagou a mais.
+	const refundExpenses = await expensesCollection(db)
+		.find({ groupId: { $in: groups.map((g) => g._id) }, "shares.uid": { $in: [...acting] }, ...HAS_REFUND })
+		.toArray();
 	const uids = new Set<string>();
-	for (const e of expenses) {
+	for (const e of [...expenses, ...refundExpenses]) {
 		uids.add(e.paidBy);
 		for (const s of e.shares) uids.add(s.uid);
 	}
 	const people = await loadPeople(db, [...uids]);
-	const built = buildReceivables({ uid, today: todayInSaoPaulo(now), groups, expenses, people });
+	const built = buildReceivables({ uid, today: todayInSaoPaulo(now), groups, expenses, refundExpenses, people });
 	return groupId === undefined ? built : { ...built, group: { id: groupId, name: groups[0].name } };
 }
 
 // ---------- pagar tudo de uma vez ----------
 
-export type BatchItemInput = { groupId: string; expenseId: string; shareUid: string };
+/** `kind: "refund"`: `shareUid` é quem recebe de volta e `uid` age por quem pagou a despesa. Sem `kind` = pagar a parte de `shareUid`. */
+export type BatchItemInput = { groupId: string; expenseId: string; shareUid: string; kind?: "share" | "refund" };
 export type BatchFailReason = "conflict" | "already_paid" | "not_found";
 export type BatchPaid = BatchItemInput & { amountCents: number };
 export type BatchFailed = BatchItemInput & { reason: BatchFailReason };
@@ -96,7 +129,8 @@ export type BatchPayResult =
 	/** Nenhuma conta pôde ser paga (mudaram no meio do caminho). */
 	| { status: "all_failed" };
 
-const itemId = (i: BatchItemInput) => `${i.groupId}:${i.expenseId}:${i.shareUid}`;
+/** Identidade de uma conta do lote: inclui o tipo (parte a pagar x devolução) para nunca confundir as duas. */
+export const itemId = (i: BatchItemInput) => `${i.groupId}:${i.expenseId}:${i.shareUid}:${i.kind === "refund" ? "refund" : "share"}`;
 
 /**
  * Valida o pedido antes de mudar qualquer coisa: grupos de `uid`, despesas existentes, `uid` age por cada cota, cada cota
@@ -125,11 +159,31 @@ export async function validateBatch(
 		const k = `${i.groupId}:${i.expenseId}`;
 		if (!docs.has(k)) docs.set(k, await findExpense(db, i.groupId, i.expenseId));
 	}
+	// Chaves Pix de quem recebe de volta: uma só busca para o pedido inteiro.
+	const refundUids = new Map<string, string[]>();
+	for (const i of items) if (i.kind === "refund") refundUids.set(i.groupId, [...(refundUids.get(i.groupId) ?? []), i.shareUid]);
+	const pixes = refundUids.size ? await loadPixKeys(db, groups, refundUids) : new Map<string, { type: string; key: string; payeeName: string }>();
+	const DIFFERENT = "Essas contas são de destinatários ou chaves Pix diferentes. Pague cada cartão separado.";
 	let recipient: string | null = null;
 	let totalCents = 0;
 	for (const i of items) {
 		const e = docs.get(`${i.groupId}:${i.expenseId}`);
 		if (!e) return { status: "no_expense" };
+		if (i.kind === "refund") {
+			// Devolução: `uid` age por quem pagou a despesa e devolve a `shareUid`, para a chave Pix dele.
+			if (!actsFor(members.get(i.groupId)!, uid, e.paidBy)) return { status: "forbidden" };
+			const s = normalizeShares(e.shares).find((x) => x.uid === i.shareUid);
+			if (!s || s.uid === e.paidBy || actsFor(members.get(i.groupId)!, uid, s.uid)) return { status: "no_share" };
+			const back = refundCents(s, e.paidBy);
+			if (back <= 0) return { status: "invalid", error: "Uma dessas contas já foi paga. Atualize e tente de novo.", field: "items" };
+			const pix = pixes.get(`${i.groupId}:${s.uid}`);
+			if (!pix) return { status: "invalid", error: "Uma dessas pessoas não tem chave Pix cadastrada.", field: "items" };
+			const key = recipientKey({ paidBy: s.uid, pix });
+			if (recipient !== null && key !== recipient) return { status: "invalid", error: DIFFERENT, field: "items" };
+			recipient = key;
+			totalCents += back;
+			continue;
+		}
 		if (!actsFor(members.get(i.groupId)!, uid, i.shareUid)) return { status: "forbidden" };
 		const s = normalizeShares(e.shares).find((x) => x.uid === i.shareUid);
 		if (!s || s.uid === e.paidBy || s.amountCents <= 0) return { status: "no_share" };
@@ -137,7 +191,7 @@ export async function validateBatch(
 		if (due <= 0) return { status: "invalid", error: "Uma dessas contas já foi paga. Atualize e tente de novo.", field: "items" };
 		const key = recipientKey(e);
 		if (recipient !== null && key !== recipient) {
-			return { status: "invalid", error: "Escolha contas de um mesmo destinatário.", field: "items" };
+			return { status: "invalid", error: DIFFERENT, field: "items" };
 		}
 		recipient = key;
 		totalCents += due;
@@ -168,22 +222,27 @@ export async function payBatch(
 		? await putBatchReceipt(store, { batchId, bytes: file.bytes, name: file.name, contentType: file.contentType })
 		: undefined;
 
-	const result = new Map<string, BatchOutcome | BatchFailReason>();
+	const result = new Map<string, BatchOutcome | RefundOutcome | BatchFailReason>();
 	const paidDocs: { groupId: string; eid: string }[] = [];
 	try {
 		const byExpense = new Map<string, BatchItemInput[]>();
 		for (const i of items) byExpense.set(`${i.groupId}:${i.expenseId}`, [...(byExpense.get(`${i.groupId}:${i.expenseId}`) ?? []), i]);
 		for (const list of byExpense.values()) {
 			const { groupId, expenseId } = list[0];
-			const targets = list.map((i) => i.shareUid);
-			let outcomes: BatchOutcome[] = [];
+			const targets = list.filter((i) => i.kind !== "refund").map((i) => i.shareUid);
+			const refundTargets = list.filter((i) => i.kind === "refund").map((i) => i.shareUid);
+			let shareOutcomes: BatchOutcome[] = [];
+			let refundOutcomes: RefundOutcome[] = [];
 			const r = await mutateShares(db, groupId, expenseId, (e) => {
-				const c = payShares(e.shares, e.paidBy, targets, now, uid, receipt, batch);
-				outcomes = c.outcomes;
-				return { shares: c.shares, changed: c.changed };
+				// Partes a pagar e devoluções do mesmo destinatário na mesma despesa: uma escrita só.
+				const c = targets.length ? payShares(e.shares, e.paidBy, targets, now, uid, receipt, batch) : { shares: e.shares, changed: false, outcomes: [] as BatchOutcome[] };
+				const d = refundTargets.length ? refundShares(c.shares, e.paidBy, refundTargets, now, uid, receipt, batch) : { shares: c.shares, changed: false, outcomes: [] as RefundOutcome[] };
+				shareOutcomes = c.outcomes;
+				refundOutcomes = d.outcomes;
+				return { shares: d.shares, changed: c.changed || d.changed };
 			});
 			for (const i of list) {
-				if (r.kind === "ok") result.set(itemId(i), outcomes.find((o) => o.uid === i.shareUid) ?? "not_found");
+				if (r.kind === "ok") result.set(itemId(i), (i.kind === "refund" ? refundOutcomes : shareOutcomes).find((o) => o.uid === i.shareUid) ?? "not_found");
 				else result.set(itemId(i), r.kind === "no_expense" ? "not_found" : "conflict");
 			}
 			if (r.kind === "ok" && r.wrote) paidDocs.push({ groupId, eid: expenseId });
@@ -197,8 +256,11 @@ export async function payBatch(
 	const failed: BatchFailed[] = [];
 	for (const i of items) {
 		const o = result.get(itemId(i));
-		if (o && typeof o === "object" && o.result === "paid") paid.push({ ...i, amountCents: o.amountCents });
-		else failed.push({ ...i, reason: typeof o === "string" ? o : (o?.result as BatchFailReason | undefined) ?? "conflict" });
+		if (o && typeof o === "object" && (o.result === "paid" || o.result === "refunded")) paid.push({ ...i, amountCents: o.amountCents });
+		else {
+			const reason = typeof o === "string" ? o : o?.result === "already_refunded" ? "already_paid" : (o?.result as BatchFailReason | undefined);
+			failed.push({ ...i, reason: reason ?? "conflict" });
+		}
 	}
 	const totalPaidCents = paid.reduce((t, p) => t + p.amountCents, 0);
 
@@ -215,8 +277,11 @@ async function correctBatchTotals(db: Db, uid: string, batchId: string, docs: { 
 	for (const d of docs) {
 		try {
 			await mutateShares(db, d.groupId, d.eid, (e) => ({
-				shares: e.shares.map((s) => (s.batch?.id === batchId && s.markedBy === uid ? { ...s, batch: { ...batch } } : s)),
-				changed: e.shares.some((s) => s.batch?.id === batchId),
+				shares: e.shares.map((s) => {
+					if (s.refund?.batch?.id === batchId) return { ...s, refund: { ...s.refund, batch: { ...batch } } };
+					return s.batch?.id === batchId && s.markedBy === uid ? { ...s, batch: { ...batch } } : s;
+				}),
+				changed: e.shares.some((s) => s.batch?.id === batchId || s.refund?.batch?.id === batchId),
 			}));
 		} catch {
 			console.error("payBatch totals error");

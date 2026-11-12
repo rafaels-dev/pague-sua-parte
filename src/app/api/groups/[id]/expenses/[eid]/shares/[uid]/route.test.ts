@@ -33,7 +33,7 @@ describe("PATCH /expenses/:eid/shares/:uid", () => {
 		setSharePaid.mockResolvedValue({ status: "no_expense" });
 		expect(await out(await patch({ status: "paid" }))).toEqual([404, { error: "Despesa não encontrada." }]);
 		setSharePaid.mockResolvedValue({ status: "forbidden" });
-		expect(await out(await patch({ status: "paid" }))).toEqual([403, { error: "Só quem pagou a despesa pode marcar pagamentos." }]);
+		expect(await out(await patch({ status: "paid" }))).toEqual([403, { error: "Só quem pagou a despesa ou quem administra o grupo pode marcar pagamentos." }]);
 		setSharePaid.mockResolvedValue({ status: "no_share" });
 		expect(await out(await patch({ status: "paid" }))).toEqual([404, { error: "Essa pessoa não participa desta despesa." }]);
 	});

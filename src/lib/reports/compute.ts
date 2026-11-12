@@ -56,6 +56,8 @@ export function referenceFacet(expenses: ExpenseLike[]): Facet {
 				owner.share += s.amountCents;
 				continue;
 			}
+			// Linha de quem saiu da divisão e já teve tudo devolvido (cota 0, nada pago): não é participante.
+			if (s.amountCents === 0 && s.paidCents === 0) continue;
 			const r = row(s.uid);
 			const born = Math.min(s.paidCents, e.amountCents);
 			othersBorn += born;
@@ -82,10 +84,15 @@ const paidOf = (v: string) => ({
 });
 
 export function reportPipeline(match: Record<string, unknown>) {
-	const others = {
-		$filter: { input: "$shares", as: "s", cond: { $ne: ["$$s.uid", "$paidBy"] } },
-	};
 	const paid = paidOf("$$s");
+	const others = {
+		$filter: {
+			input: "$shares",
+			as: "s",
+			// Sem a linha de quem saiu da divisão e já teve tudo devolvido (cota 0, nada pago).
+			cond: { $and: [{ $ne: ["$$s.uid", "$paidBy"] }, { $or: [{ $ne: ["$$s.amountCents", 0] }, { $ne: [paid, 0] }] }] },
+		},
+	};
 	return [
 		{ $match: match },
 		{

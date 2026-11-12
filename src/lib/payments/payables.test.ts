@@ -111,3 +111,41 @@ describe("buildPayables", () => {
 		expect(run([])).toEqual({ recipients: [], truncated: false });
 	});
 });
+
+describe("buildPayables: devoluções", () => {
+	// "me" pagou a despesa e Ana pagou a mais (1500 por uma cota de 1000): me devolve 500 para Ana, no Pix de Ana.
+	const refundExp = (over: Record<string, unknown> = {}) =>
+		exp({
+			paidBy: "me",
+			createdBy: "me",
+			description: "Mercado",
+			pix: { type: "email", key: "me@x.com", payeeName: "Eu" },
+			shares: [{ uid: "me", amountCents: 1000, paidCents: 0 }, { uid: "ana", amountCents: 1000, paidCents: 1500 }],
+			...over,
+		});
+	const pix = new Map([[`${G1.toHexString()}:ana`, { type: "email", key: "ana-atual@x.com", payeeName: "Ana" }]]);
+	const run2 = (expenses: ExpenseDoc[], refundExpenses: ExpenseDoc[], refundPixes = pix) =>
+		buildPayables({ uid: "me", today: TODAY, groups, expenses, refundExpenses, refundPixes, people });
+
+	it("a devolução vira item 'refund' do destinatário (quem recebe de volta), sem vencimento", () => {
+		const r = run2([], [refundExp()]);
+		expect(r.recipients).toHaveLength(1);
+		expect(r.recipients[0]).toMatchObject({ payee: { uid: "ana", name: "Ana" }, pix: { key: "ana-atual@x.com" }, totalCents: 500 });
+		expect(r.recipients[0].items[0]).toMatchObject({ kind: "refund", shareUid: "ana", dueCents: 500, dueDate: null, overdue: false, isYou: true, description: "Mercado" });
+	});
+	it("junta no MESMO destinatário (um Pix) a parte a pagar e a devolução para a mesma pessoa e chave", () => {
+		const owes = exp({ description: "Luz", pix: { type: "email", key: "ana-atual@x.com", payeeName: "Ana" } }); // me deve 1000 a Ana
+		const r = run2([owes], [refundExp()]);
+		expect(r.recipients).toHaveLength(1);
+		expect(r.recipients[0].totalCents).toBe(1500);
+		expect(r.recipients[0].items.map((i) => i.kind).sort()).toEqual(["refund", "share"]);
+	});
+	it("sem chave Pix de quem recebe, ou quando a devolução seria para si mesmo/quem cuida, não entra; só quem paga a despesa devolve", () => {
+		expect(run2([], [refundExp()], new Map()).recipients).toEqual([]);
+		expect(run2([], [refundExp({ shares: [{ uid: "me", amountCents: 1000, paidCents: 0 }, { uid: "m_ben", amountCents: 1000, paidCents: 1500 }] })], new Map([[`${G1.toHexString()}:m_ben`, { type: "email", key: "b@x.com", payeeName: "Ben" }]])).recipients).toEqual([]);
+		expect(run2([], [refundExp({ paidBy: "ana", createdBy: "ana" })]).recipients).toEqual([]);
+	});
+	it("devolução já feita ou parcela paga na medida não entra", () => {
+		expect(run2([], [refundExp({ shares: [{ uid: "me", amountCents: 1000, paidCents: 0 }, { uid: "ana", amountCents: 1000, paidCents: 1000, refund: { cents: 500, at: new Date(), markedBy: "me" } }] })]).recipients).toEqual([]);
+	});
+});

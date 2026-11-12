@@ -34,7 +34,7 @@ export async function PATCH(request: Request, { params }: Ctx) {
 			case "no_expense":
 				return jsonError("Despesa não encontrada.", 404);
 			case "forbidden":
-				return jsonError("Só quem pagou a despesa pode marcar pagamentos.", 403);
+				return jsonError("Só quem pagou a despesa ou quem administra o grupo pode marcar pagamentos.", 403);
 			case "no_share":
 				return jsonError("Essa pessoa não participa desta despesa.", 404);
 			case "conflict":

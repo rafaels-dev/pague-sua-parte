@@ -22,6 +22,7 @@ const daysAgo = (n: number) => {
 const THIS_MONTH_END = `${TODAY.slice(0, 8)}28`;
 
 const item = (o: Partial<PayableItem> & Pick<PayableItem, "expenseId" | "description" | "dueCents">): PayableItem => ({
+	kind: "share",
 	groupId: "1",
 	groupName: "Despesas da vó",
 	shareUid: "a",
@@ -86,7 +87,7 @@ const DONE_PARTIAL: DoneBatch = {
 	hasReceipt: false,
 };
 
-export type PayAllScene = "grupo" | "grupo-vazio" | "lista" | "pix" | "desmarcado" | "nada" | "comprovante" | "comprovante-arquivo" | "pago" | "parcial" | "avisar" | "vazio" | "carregando" | "erro" | "indisponivel";
+export type PayAllScene = "devolucao" | "grupo" | "grupo-vazio" | "lista" | "pix" | "desmarcado" | "nada" | "comprovante" | "comprovante-arquivo" | "pago" | "parcial" | "avisar" | "vazio" | "carregando" | "erro" | "indisponivel";
 
 /** Id (de mentira, mas com cara de id de verdade) do grupo das telas "só deste grupo". */
 export const SCOPE_GROUP_ID = "0123456789abcdef01234567";
@@ -97,8 +98,14 @@ const SCOPED_RECIPIENTS: PayableRecipient[] = RECIPIENTS.map((r) => {
 	return { ...r, items, totalCents: total(items) };
 });
 
+/** Uma devolução (a Maria pagou a mais numa consulta) junto com contas comuns para a mesma Maria, no mesmo Pix. */
+const REFUND_ITEM = item({ kind: "refund", expenseId: "e9", description: "Consulta com a cardiologista", dueCents: 5000, shareUid: "b", shareName: "Rafael Schettino" });
+const REFUND_ITEMS = [...MARIA_ITEMS.slice(0, 2), REFUND_ITEM];
+
 const sceneState = (scene: PayAllScene): PayAllPageState => {
 	switch (scene) {
+		case "devolucao":
+			return { kind: "ready", recipients: [{ ...RECIPIENTS[0], items: REFUND_ITEMS, totalCents: total(REFUND_ITEMS) }], done: [] };
 		case "grupo":
 			return { kind: "ready", recipients: SCOPED_RECIPIENTS, done: [] };
 		case "grupo-vazio":

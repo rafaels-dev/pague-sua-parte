@@ -109,3 +109,38 @@ describe("buildReceivables", () => {
 		expect(run([])).toEqual({ debtors: [], totalCents: 0, nowCents: 0, managedCents: 0, truncated: false });
 	});
 });
+
+describe("buildReceivables: a receber de volta", () => {
+	const refundExp = (over: Record<string, unknown> = {}) =>
+		exp({
+			paidBy: "ana",
+			createdBy: "ana",
+			description: "Mercado",
+			pix: { type: "email", key: "ana@x.com", payeeName: "Ana" },
+			shares: [{ uid: "ana", amountCents: 1000, paidCents: 0 }, { uid: "me", amountCents: 1000, paidCents: 1500 }],
+			...over,
+		});
+	const run2 = (refundExpenses: ExpenseDoc[]) => buildReceivables({ uid: "me", today: "2026-11-15", groups, expenses: [], refundExpenses, people });
+
+	it("quem pagou a despesa (Ana) deve devolver a você; item 'refund' sem vencimento e entra no total", () => {
+		const r = run2([refundExp()]);
+		expect(r.debtors).toHaveLength(1);
+		expect(r.debtors[0]).toMatchObject({ uid: "ana", totalCents: 500, overdueCents: 0 });
+		expect(r.debtors[0].items[0]).toMatchObject({ kind: "refund", dueCents: 500, dueDate: null, payeeIsYou: true, payeeName: "Eu" });
+		expect(r).toMatchObject({ totalCents: 500, nowCents: 500, managedCents: 0 });
+	});
+	it("devolução a quem você cuida entra como 'managed'; o que você mesmo paga a si/à sua casa não entra", () => {
+		const toBen = refundExp({ shares: [{ uid: "ana", amountCents: 1000, paidCents: 0 }, { uid: "m_ben", amountCents: 1000, paidCents: 1300 }] });
+		const r = run2([toBen]);
+		expect(r).toMatchObject({ totalCents: 300, managedCents: 300 });
+		expect(r.debtors[0].items[0]).toMatchObject({ payeeIsYou: false, payeeName: "Benjamim" });
+		const mine = refundExp({ paidBy: "me", shares: [{ uid: "me", amountCents: 1000, paidCents: 0 }, { uid: "m_ben", amountCents: 1000, paidCents: 1300 }] });
+		expect(run2([mine]).debtors).toEqual([]);
+	});
+	it("agrupa com a parte a pagar do mesmo devedor e ignora devolução alheia ou já feita", () => {
+		const others = refundExp({ shares: [{ uid: "ana", amountCents: 1000, paidCents: 0 }, { uid: "bia", amountCents: 1000, paidCents: 1500 }] });
+		expect(run2([others]).debtors).toEqual([]);
+		const done = refundExp({ shares: [{ uid: "ana", amountCents: 1000, paidCents: 0 }, { uid: "me", amountCents: 1000, paidCents: 1000, refund: { cents: 500, at: new Date(), markedBy: "ana" } }] });
+		expect(run2([done]).debtors).toEqual([]);
+	});
+});

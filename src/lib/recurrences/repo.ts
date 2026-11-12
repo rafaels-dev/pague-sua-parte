@@ -1,7 +1,7 @@
 import { ObjectId, type Db } from "mongodb";
 import { directory, expensesCollection, findMemberGroup, loadPeople, type Directory } from "@/lib/expenses/repo";
 import { splitEqually } from "@/lib/expenses/split";
-import { actsFor, isManagedMember, isObjectIdHex } from "@/lib/groups/helpers";
+import { actsFor, expenseRole, isManagedMember, isObjectIdHex } from "@/lib/groups/helpers";
 import type { GroupDoc } from "@/lib/groups/repo";
 import { usersCollection } from "@/lib/users/repo";
 import { recurrencesCollection, type RecurrenceDoc } from "./collection";
@@ -25,8 +25,7 @@ export type RecurrenceItem = {
 	canEdit: boolean;
 };
 
-const isAdmin = (group: GroupDoc, uid: string) => group.members.some((m) => m.uid === uid && m.role === "admin");
-const canEditRec = (r: RecurrenceDoc, group: GroupDoc, uid: string) => actsFor(group.members, uid, r.paidBy) || isAdmin(group, uid);
+const canEditRec = (r: RecurrenceDoc, group: GroupDoc, uid: string) => expenseRole(group.members, uid, r.paidBy) !== null;
 
 function toItem(r: RecurrenceDoc, group: GroupDoc, dir: Directory, uid: string): RecurrenceItem {
 	return {

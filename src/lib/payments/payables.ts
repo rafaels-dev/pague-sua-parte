@@ -3,12 +3,14 @@ import { actsFor } from "@/lib/groups/helpers";
 import type { GroupDoc } from "@/lib/groups/repo";
 import { isDueNow, isPastDue } from "@/lib/expenses/dates";
 import { directory, type ExpenseDoc, type PersonDoc } from "@/lib/expenses/repo";
-import { dueCents, normalizeShares } from "@/lib/expenses/shares";
+import { dueCents, normalizeShares, refundCents } from "@/lib/expenses/shares";
 
 /** Teto de itens em GET /api/me/payables (uma família não chega perto disso). */
 export const PAYABLES_MAX_ITEMS = 200;
 
 export type PayableItem = {
+	/** "refund" = devolução: quem pagou a despesa devolve o que a pessoa pagou a mais (`shareUid` = quem recebe de volta). */
+	kind: "share" | "refund";
 	groupId: string;
 	groupName: string;
 	expenseId: string;
@@ -53,13 +55,16 @@ export function buildPayables(args: {
 	today: string;
 	groups: Pick<GroupDoc, "_id" | "name" | "members">[];
 	expenses: ExpenseDoc[];
+	/** Despesas pagas por quem `uid` age e que têm devolução a fazer, com a chave Pix de quem recebe (chave do mapa: `${groupId}:${uid}`). Quem não tem chave fica de fora. */
+	refundExpenses?: ExpenseDoc[];
+	refundPixes?: Map<string, { type: string; key: string; payeeName: string }>;
 	people: Map<string, PersonDoc>;
 	max?: number;
 }): Payables {
 	const { uid, today, groups, expenses, people } = args;
 	const max = args.max ?? PAYABLES_MAX_ITEMS;
 	const byGroup = new Map(groups.map((g) => [g._id.toHexString(), g]));
-	type Row = { item: PayableItem; e: ExpenseDoc; group: Pick<GroupDoc, "_id" | "name" | "members"> };
+	type Row = { item: PayableItem; e: ExpenseDoc; group: Pick<GroupDoc, "_id" | "name" | "members">; pix?: { type: string; key: string; payeeName: string }; payeeUid?: string };
 	const rows: Row[] = [];
 	for (const e of expenses) {
 		const group = byGroup.get(e.groupId.toHexString());
@@ -72,6 +77,7 @@ export function buildPayables(args: {
 				e,
 				group,
 				item: {
+					kind: "share",
 					groupId: group._id.toHexString(),
 					groupName: group.name,
 					expenseId: e._id.toHexString(),
@@ -88,6 +94,38 @@ export function buildPayables(args: {
 			});
 		}
 	}
+	// Devoluções: quem pagou a despesa (ou quem age por ele) devolve a quem pagou a mais; o Pix é o de quem recebe de volta.
+	for (const e of args.refundExpenses ?? []) {
+		const group = byGroup.get(e.groupId.toHexString());
+		if (!group || !actsFor(group.members, uid, e.paidBy)) continue;
+		const dir = directory(group as GroupDoc, people, uid);
+		for (const s of normalizeShares(e.shares)) {
+			const back = refundCents(s, e.paidBy);
+			const pix = args.refundPixes?.get(`${group._id.toHexString()}:${s.uid}`);
+			if (back <= 0 || !pix || actsFor(group.members, uid, s.uid)) continue;
+			rows.push({
+				e,
+				group,
+				pix,
+				payeeUid: s.uid,
+				item: {
+					kind: "refund",
+					groupId: group._id.toHexString(),
+					groupName: group.name,
+					expenseId: e._id.toHexString(),
+					description: e.description,
+					shareUid: s.uid,
+					shareName: dir.name(e.paidBy),
+					isYou: e.paidBy === uid,
+					dueCents: back,
+					dueDate: null,
+					overdue: false,
+					installment: e.installment ? { number: e.installment.number, count: e.installment.count } : null,
+					recurrence: Boolean(e.recurrence),
+				},
+			});
+		}
+	}
 	rows.sort(
 		(a, b) =>
 			(a.item.dueDate ?? "￿").localeCompare(b.item.dueDate ?? "￿") ||
@@ -97,15 +135,15 @@ export function buildPayables(args: {
 	);
 	const truncated = rows.length > max;
 	const byRecipient = new Map<string, PayableRecipient>();
-	for (const { item, e, group } of rows.slice(0, max)) {
-		const id = recipientId(e);
+	for (const { item, e, group, pix, payeeUid } of rows.slice(0, max)) {
+		const id = pix && payeeUid ? recipientId({ paidBy: payeeUid, pix }) : recipientId(e);
 		let r = byRecipient.get(id);
 		if (!r) {
 			const dir = directory(group as GroupDoc, people, uid);
 			r = {
 				id,
-				payee: { uid: e.paidBy, name: dir.name(e.paidBy), picture: dir.picture(e.paidBy), kind: dir.kind(e.paidBy) },
-				pix: { type: e.pix.type, key: e.pix.key, payeeName: e.pix.payeeName },
+				payee: { uid: payeeUid ?? e.paidBy, name: dir.name(payeeUid ?? e.paidBy), picture: dir.picture(payeeUid ?? e.paidBy), kind: dir.kind(payeeUid ?? e.paidBy) },
+				pix: pix ? { type: pix.type, key: pix.key, payeeName: pix.payeeName } : { type: e.pix.type, key: e.pix.key, payeeName: e.pix.payeeName },
 				totalCents: 0,
 				items: [],
 			};

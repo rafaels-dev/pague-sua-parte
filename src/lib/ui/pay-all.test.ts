@@ -21,6 +21,7 @@ import {
 } from "./pay-all";
 
 const item = (o: Partial<PayableItem> = {}): PayableItem => ({
+	kind: "share",
 	groupId: "g1",
 	groupName: "Despesas da vó",
 	expenseId: "e1",

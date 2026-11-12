@@ -30,7 +30,7 @@ export async function PUT(request: Request, { params }: Ctx) {
 			case "no_expense":
 				return jsonError("Despesa não encontrada.", 404);
 			case "forbidden":
-				return jsonError("Só quem pagou a despesa pode mudar quem divide.", 403);
+				return jsonError("Só quem pagou a despesa ou quem administra o grupo pode mudar quem divide.", 403);
 			case "invalid":
 				return jsonError(res.error, 422, res.field);
 			case "conflict":

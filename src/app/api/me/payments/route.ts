@@ -16,7 +16,7 @@ const BAD_ITEMS = "Escolha de 1 a 50 contas, sem repetir.";
 const hex24 = z.string().regex(/^[0-9a-f]{24}$/i);
 const bodySchema = z.object({
 	items: z
-		.array(z.object({ groupId: hex24, expenseId: hex24, shareUid: z.string().min(1).max(200) }))
+		.array(z.object({ groupId: hex24, expenseId: hex24, shareUid: z.string().min(1).max(200), kind: z.enum(["share", "refund"]).optional() }))
 		.min(1)
 		.max(50),
 });

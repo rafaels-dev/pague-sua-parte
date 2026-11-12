@@ -59,6 +59,20 @@ export function actsFor(members: MemberLike[], caller: string, uid: string): boo
 	return members.some((m) => m.uid === uid && m.kind === "managed" && m.managedBy === caller);
 }
 
+/** `uid` administra o grupo? (pessoa sem login nunca administra, mesmo que o cadastro diga "admin") */
+export function isGroupAdmin(members: MemberLike[], uid: string): boolean {
+	return members.some((m) => m.uid === uid && m.role === "admin" && m.kind !== "managed");
+}
+
+/**
+ * Como `caller` gerencia uma despesa paga por `paidBy`: "owner" (é quem pagou ou age por quem pagou), "admin"
+ * (administra o grupo) ou null (nenhum dos dois: não pode mexer). Única fonte desta regra; o dono vale primeiro.
+ */
+export function expenseRole(members: MemberLike[], caller: string, paidBy: string): "owner" | "admin" | null {
+	if (actsFor(members, caller, paidBy)) return "owner";
+	return isGroupAdmin(members, caller) ? "admin" : null;
+}
+
 export type MemberView = {
 	uid: string;
 	name: string;

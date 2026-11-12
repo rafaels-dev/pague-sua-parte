@@ -131,6 +131,30 @@ export function parseExpenseInput(raw: unknown, now: Date = new Date()): { ok: t
 	};
 }
 
+export type ExpenseEdit = {
+	description: string;
+	amountCents: number;
+	date: string;
+	participantUids: string[];
+	/** Vencimento (compra no cartão); ausente = sem vencimento (à vista). */
+	dueDate?: string;
+};
+
+/**
+ * Corpo de `PATCH .../expenses/:eid`: o estado completo dos campos editáveis (mesmas regras do lançamento).
+ * `date` é obrigatório (não vale "hoje" por omissão); parcelas e quem pagou não se editam por aqui.
+ */
+export function parseExpenseEdit(raw: unknown, now: Date = new Date()): { ok: true; value: ExpenseEdit } | Invalid {
+	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return { ok: false, status: 422, error: "Dados inválidos.", field: "description" };
+	const body = raw as Record<string, unknown>;
+	if (typeof body.date !== "string") return { ok: false, status: 422, error: "Data inválida.", field: "date" };
+	const parsed = parseExpenseInput({ ...body, installments: undefined, paidByUid: undefined }, now);
+	if (!parsed.ok) return parsed;
+	const { description, amountCents, date, participantUids, dueDate } = parsed.value;
+	// A relação vencimento x data é conferida no repo, só quando uma das duas datas mudou (despesas antigas podem ter vencimento antes da data).
+	return { ok: true, value: { description, amountCents, date, participantUids, ...(dueDate ? { dueDate } : {}) } };
+}
+
 export type ParticipantsScope = "this" | "following";
 const participantsSchema = z.object({ participantUids: schema.shape.participantUids, scope: z.unknown().optional() });
 

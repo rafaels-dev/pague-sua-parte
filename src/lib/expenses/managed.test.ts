@@ -125,12 +125,13 @@ describe("permissões de dono quando o pagador é sem login", () => {
 		expect(written).toMatchObject({ paidCents: 1000, markedBy: "u2", method: "manual" });
 		expect(expenses.updateOne.mock.calls[0][0]).toMatchObject({ paidBy: "m_ben" });
 	});
-	it("mudar participantes: responsável sim; quem não cuida não; admin não", async () => {
+	it("mudar participantes: responsável sim; admin sim; quem não cuida e não administra não", async () => {
 		expect((await updateParticipants(mockDb().db, GID, EID, "u2", ["m_ben", "u1"])).status).toBe("ok");
-		for (const who of ["u3", "u1"]) expect((await updateParticipants(mockDb().db, GID, EID, who, ["m_ben", "u1"])).status).toBe("forbidden");
+		expect((await updateParticipants(mockDb().db, GID, EID, "u1", ["m_ben", "u1"])).status).toBe("ok");
+		expect((await updateParticipants(mockDb().db, GID, EID, "u3", ["m_ben", "u1"])).status).toBe("forbidden");
 	});
-	it("marcar pago: outro membro e admin → forbidden, nada gravado", async () => {
-		for (const who of ["u3", "u1"]) {
+	it("marcar pago: outro membro → forbidden, nada gravado", async () => {
+		for (const who of ["u3"]) {
 			const { db, expenses } = mockDb();
 			expect((await setSharePaid(db, GID, EID, who, "u2", "paid")).status).toBe("forbidden");
 			expect(expenses.updateOne).not.toHaveBeenCalled();
@@ -273,7 +274,7 @@ describe("modelo antigo (status 'paid', sem paidCents)", () => {
 		const race = mockDb({ expense: benExpense({ paidBy: "u2", shares: [S("u2", 1000), S("u1", 1000)] }) });
 		race.expenses.deleteOne.mockResolvedValue({ deletedCount: 0 });
 		expect((await deleteExpense(race.db, store, GID, EID, "u2")).status).toBe("has_payment");
-		expect(race.expenses.deleteOne.mock.calls[0][0].shares).toEqual({ $not: { $elemMatch: { $or: [{ paidCents: { $gt: 0 } }, { status: "paid" }] } } });
+		expect(race.expenses.deleteOne.mock.calls[0][0].shares).toEqual({ $not: { $elemMatch: { $or: [{ paidCents: { $gt: 0 } }, { status: "paid" }, { refund: { $exists: true } }, { receipt: { $exists: true } }] } } });
 	});
 	it("status deriva como paid e hasPayments enxerga", async () => {
 		expect(hasPayments(legacy() as never)).toBe(true);

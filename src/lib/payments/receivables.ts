@@ -2,12 +2,14 @@ import { actsFor } from "@/lib/groups/helpers";
 import type { GroupDoc } from "@/lib/groups/repo";
 import { isDueNow, isPastDue } from "@/lib/expenses/dates";
 import { directory, type ExpenseDoc, type PersonDoc } from "@/lib/expenses/repo";
-import { dueCents, normalizeShares } from "@/lib/expenses/shares";
+import { dueCents, normalizeShares, refundCents } from "@/lib/expenses/shares";
 
 /** Teto de itens em GET /api/me/receivables (mesmo teto de /api/me/payables). */
 export const RECEIVABLES_MAX_ITEMS = 200;
 
 export type ReceivableItem = {
+	/** "refund" = a receber de volta: a pessoa pagou a mais e quem pagou a despesa vai devolver. */
+	kind: "share" | "refund";
 	groupId: string;
 	groupName: string;
 	expenseId: string;
@@ -53,8 +55,8 @@ export const EMPTY_RECEIVABLES: Receivables = { debtors: [], totalCents: 0, nowC
 
 /**
  * Tudo o que ainda devem a `uid`, por devedor. Entra a cota PENDENTE (deve > 0) de qualquer pessoa, em despesas pagas por
- * quem `uid` age (ele mesmo ou quem ele cuida). Sem filtro de vencimento: é o "a receber" completo do resumo. Reembolsos
- * (o que `uid` deve devolver) não entram. Itens: vencimento (vencidos primeiro, sem data por último) e descrição;
+ * quem `uid` age (ele mesmo ou quem ele cuida). Sem filtro de vencimento: é o "a receber" completo do resumo. Também entram
+ * as devoluções que lhe são devidas ("A receber de volta", `kind: "refund"`); o que `uid` deve devolver não entra. Itens: vencimento (vencidos primeiro, sem data por último) e descrição;
  * devedores: total decrescente. Passando de `max` itens, ficam os primeiros nessa ordem (`truncated`).
  */
 export function buildReceivables(args: {
@@ -62,6 +64,8 @@ export function buildReceivables(args: {
 	today: string;
 	groups: Pick<GroupDoc, "_id" | "name" | "members">[];
 	expenses: ExpenseDoc[];
+	/** Despesas (de qualquer pagador) em que `uid` ou quem ele cuida tem devolução a receber. */
+	refundExpenses?: ExpenseDoc[];
 	people: Map<string, PersonDoc>;
 	max?: number;
 }): Receivables {
@@ -81,6 +85,7 @@ export function buildReceivables(args: {
 				shareUid: s.uid,
 				group,
 				item: {
+					kind: "share",
 					groupId: group._id.toHexString(),
 					groupName: group.name,
 					expenseId: e._id.toHexString(),
@@ -92,6 +97,36 @@ export function buildReceivables(args: {
 					recurrence: Boolean(e.recurrence),
 					payeeIsYou: e.paidBy === uid,
 					payeeName: dir.name(e.paidBy),
+				},
+			});
+		}
+	}
+	// A receber de volta: a pessoa (ou quem ela cuida) pagou a mais; o devedor é quem pagou a despesa.
+	for (const e of args.refundExpenses ?? []) {
+		const group = byGroup.get(e.groupId.toHexString());
+		if (!group) continue;
+		const dir = directory(group as GroupDoc, people, uid);
+		for (const s of normalizeShares(e.shares)) {
+			const back = refundCents(s, e.paidBy);
+			// Devolver para si mesmo ou entre pessoas da mesma casa (você e quem você cuida) não é "quem me deve".
+			// O que M, que você cuida, deve a VOCÊ entra (é o "a receber" do início); o que você paga a M, não.
+			if (back <= 0 || !actsFor(group.members, uid, s.uid) || e.paidBy === uid || (actsFor(group.members, uid, e.paidBy) && s.uid !== uid)) continue;
+			rows.push({
+				shareUid: e.paidBy,
+				group,
+				item: {
+					kind: "refund",
+					groupId: group._id.toHexString(),
+					groupName: group.name,
+					expenseId: e._id.toHexString(),
+					description: e.description,
+					dueCents: back,
+					dueDate: null,
+					overdue: false,
+					installment: e.installment ? { number: e.installment.number, count: e.installment.count } : null,
+					recurrence: Boolean(e.recurrence),
+					payeeIsYou: s.uid === uid,
+					payeeName: dir.name(s.uid),
 				},
 			});
 		}

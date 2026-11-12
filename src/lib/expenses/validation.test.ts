@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkFileLimits, parseExpenseInput, parseParticipantsInput, sanitizeFileName, sniffContentType, sniffFiles, todayInSaoPaulo } from "./validation";
+import { checkFileLimits, parseExpenseEdit, parseExpenseInput, parseParticipantsInput, sanitizeFileName, sniffContentType, sniffFiles, todayInSaoPaulo } from "./validation";
 
 const bytes = (...b: number[]) => new Uint8Array([...b, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
 const JPEG = bytes(0xff, 0xd8, 0xff, 0xe0);
@@ -174,5 +174,26 @@ describe("parseExpenseInput: vencimento e parcelas", () => {
 	it("installments nulo é como ausente", () => {
 		const r = p({ installments: null });
 		expect(r.ok && "installments" in r.value).toBe(false);
+	});
+});
+
+describe("parseExpenseEdit", () => {
+	const edit = { ...ok, date: "2026-11-10" };
+	it("aceita o estado completo; vencimento opcional", () => {
+		expect(parseExpenseEdit(edit, now)).toEqual({ ok: true, value: { description: "Mercado", amountCents: 1000, date: "2026-11-10", participantUids: ["a"] } });
+		expect(parseExpenseEdit({ ...edit, dueDate: "2026-12-10" }, now)).toMatchObject({ ok: true, value: { dueDate: "2026-12-10" } });
+	});
+	it("exige a data (não vale hoje por omissão) e ignora parcelas e quem pagou", () => {
+		expect(parseExpenseEdit(ok, now)).toMatchObject({ ok: false, field: "date" });
+		const r = parseExpenseEdit({ ...edit, installments: { count: 3 }, paidByUid: "x" }, now);
+		expect(r).toMatchObject({ ok: true });
+		expect(r.ok && Object.keys(r.value).sort()).toEqual(["amountCents", "date", "description", "participantUids"]);
+	});
+	it("mesmas regras do lançamento e vencimento não pode ser antes da despesa", () => {
+		expect(parseExpenseEdit({ ...edit, amountCents: 0 }, now)).toMatchObject({ ok: false, field: "amountCents" });
+		expect(parseExpenseEdit({ ...edit, participantUids: [] }, now)).toMatchObject({ ok: false, field: "participantUids" });
+		expect(parseExpenseEdit({ ...edit, date: "2026-12-30" }, now)).toMatchObject({ ok: false, field: "date" });
+		expect(parseExpenseEdit({ ...edit, dueDate: "2026-11-01" }, now)).toMatchObject({ ok: true }); // a relação é conferida no repo
+		expect(parseExpenseEdit(null, now)).toMatchObject({ ok: false });
 	});
 });

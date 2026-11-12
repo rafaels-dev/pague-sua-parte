@@ -7,6 +7,8 @@ import { ReceiptSheetContent } from "@/components/expenses/receipt-sheet";
 import type { ReceiptMode } from "@/lib/ui/receipts";
 import type { PickedFile } from "@/components/expenses/use-attachments";
 import { ExpenseDetailView, SharePaidContent, sharePaidTitle } from "@/components/expenses/expense-detail";
+import { buildExpenseStatusText, expenseSummaryIntro } from "@/lib/ui/expense-summary";
+import { buildGroupSummaryText, type GroupSummaryData } from "@/lib/ui/group-summary";
 import { ShareExpenseContent } from "@/components/expenses/expense-share";
 import { ResplitContent } from "@/components/expenses/resplit-sheet";
 import { useWhoSplits } from "@/components/expenses/who-splits";
@@ -227,6 +229,21 @@ const GROUP_SUMMARY_SETTLED: MeSummary = {
 	managed: GROUP_SUMMARY.managed.map((m) => ({ ...m, toReceiveCents: 0, toPayCents: 0, toReceiveNowCents: 0, toPayNowCents: 0 })),
 };
 
+const GROUP_SUMMARY_TEXT: GroupSummaryData = {
+	groupName: "Despesas da vó",
+	totalOpenCents: 35333,
+	overdueCents: 10000,
+	debts: [
+		{ fromName: "Maria das Dores Silva", toName: "Rafael Schettino", cents: 10000, overdue: true, refund: false },
+		{ fromName: "Maria das Dores Silva", toName: "José Pereira", cents: 3333, overdue: false, refund: false },
+		{ fromName: "Rafael Schettino", toName: "Ana Paula", cents: 5000, overdue: false, refund: true },
+		{ fromName: "José Pereira", toName: "Rafael Schettino", cents: 17000, overdue: false, refund: false },
+	],
+	moreDebts: 0,
+	upToDate: ["Ana Paula", "Benjamim"],
+	moreUpToDate: 0,
+};
+
 export function MockGroup({
 	empty = false,
 	framed = true,
@@ -235,7 +252,10 @@ export function MockGroup({
 	help = false,
 	fixed,
 	summary,
+	summarySheet = false,
 }: Readonly<{
+	/** Abre o sheet "Compartilhar resumo" do grupo. */
+	summarySheet?: boolean;
 	empty?: boolean;
 	framed?: boolean;
 	care?: boolean;
@@ -246,9 +266,25 @@ export function MockGroup({
 	summary?: "valores" | "em-dia" | "carregando";
 }>) {
 	const group = care ? CARE_GROUP : MOCK_GROUP;
+	const [summaryOpen, setSummaryOpen] = useState(summarySheet);
 	return (
 		<Shell pathname="/app/grupos/1" framed={framed} user={care ? CARE_USER : USER}>
+			<Sheet open={summaryOpen} onClose={() => setSummaryOpen(false)} title="Compartilhar resumo">
+				<ShareExpenseContent
+					text={buildGroupSummaryText(GROUP_SUMMARY_TEXT, "https://pague-sua-parte.app/app/grupos/1")}
+					intro="Mande o resumo para o grupo ver quem deve a quem. É o mesmo para todo mundo."
+					canShare
+					copyFailed={false}
+					dismissLabel="Fechar"
+					whatsappLabel="Compartilhar no WhatsApp"
+					preview
+					onCopy={noop}
+					onShare={noop}
+					onClose={() => setSummaryOpen(false)}
+				/>
+			</Sheet>
 			<GroupDetailView
+				onShareSummary={() => setSummaryOpen(true)}
 				group={group}
 				onMemberOptions={noop}
 				summary={summary ? <GroupSummaryView groupId={group.id} loading={summary === "carregando"} summary={summary === "em-dia" ? GROUP_SUMMARY_SETTLED : GROUP_SUMMARY} /> : undefined}
@@ -422,7 +458,10 @@ export function MockNewExpense({
 	care = false,
 	payer,
 	pay,
+	editing = false,
 }: Readonly<{
+	/** Tela "Editar despesa" (administrador editando a despesa de outra pessoa). */
+	editing?: boolean;
 	/** Começa em "Só eu". */
 	alone?: boolean;
 	/** Como foi pago ao abrir (à vista por padrão). */
@@ -464,6 +503,7 @@ export function MockNewExpense({
 	return (
 		<Shell pathname="/app/grupos/1/despesas/nova" framed={framed} user={care ? CARE_USER : USER}>
 			<NewExpenseFormView
+				editing={editing}
 				groupId="1"
 				members={list}
 				payerUid={payerUid}
@@ -531,12 +571,17 @@ const ATTACHMENTS: AttachmentView[] = [
 	{ id: "x3", name: "nota-da-consulta.pdf", contentType: "application/pdf", size: 1_200_000, url: null, state: "ready" },
 ];
 
-type RawDetail = Omit<ExpenseDetailData, "canHelp" | "helpAsUids" | "helpShareCents" | "ownerAlone">;
-export type MockMode = "help-alone" | "help-split" | "helped" | "help-care" | "installment" | "overdue" | "owner-installment" | "monthly" | "batch" | "debtor" | "payer" | "partial" | "refund" | "owner-return" | "recalc" | "two-parts" | "care-paid" | "self-owner" | "self-debtor";
+type RawDetail = Omit<ExpenseDetailData, "canHelp" | "helpAsUids" | "helpShareCents" | "ownerAlone" | "canEdit" | "adminOnly">;
+export type MockMode = "help-alone" | "help-split" | "helped" | "help-care" | "installment" | "overdue" | "owner-installment" | "monthly" | "batch" | "debtor" | "payer" | "partial" | "refund" | "owner-return" | "recalc" | "two-parts" | "care-paid" | "self-owner" | "self-debtor" | "admin-view" | "refund-pay" | "refund-nopix" | "refund-done";
 const isCare = (mode: MockMode) => mode === "two-parts" || mode === "care-paid" || mode === "help-care";
 
 type MS = Partial<ExpenseShare> & Pick<ExpenseShare, "uid" | "name" | "amountCents" | "status">;
 const share = (s: MS): ExpenseShare => ({
+	markedByAdmin: false,
+	markedByName: null,
+	refund: null,
+	canRefund: false,
+	canUndoRefund: false,
 	helped: false,
 	batch: null,
 	picture: null,
@@ -726,6 +771,8 @@ function helpDetail(mode: "help-alone" | "help-split" | "helped" | "help-care"):
 		canDelete: false,
 		canMarkPaid: false,
 		canEditParticipants: false,
+		canEdit: false,
+		adminOnly: false,
 		paidBy: owner,
 		pix: { type: "cpf" as const, key: "52998224725", payeeName: owner.name },
 		attachments: [],
@@ -769,7 +816,8 @@ function helpDetail(mode: "help-alone" | "help-split" | "helped" | "help-care"):
 
 function detail(mode: MockMode): ExpenseDetailData {
 	if (mode === "help-alone" || mode === "help-split" || mode === "helped" || mode === "help-care") return helpDetail(mode);
-	return { ...NO_HELP, ...rawDetail(mode) };
+	const raw = rawDetail(mode);
+	return { ...NO_HELP, canEdit: raw.canMarkPaid, adminOnly: false, ...raw, ...(mode === "admin-view" ? { canEdit: true, adminOnly: true, canMarkPaid: true, canEditParticipants: true, canDelete: true } : {}) };
 }
 
 function rawDetail(mode: MockMode): RawDetail {
@@ -777,7 +825,7 @@ function rawDetail(mode: MockMode): RawDetail {
 	if (mode === "owner-installment") return ownerInstallmentDetail();
 	if (mode === "monthly") return monthlyDetail();
 	if (isCare(mode)) return careDetail(mode as "two-parts" | "care-paid");
-	const youOwner = mode === "payer" || mode === "owner-return" || mode === "recalc" || mode === "self-owner";
+	const youOwner = mode === "payer" || mode === "owner-return" || mode === "recalc" || mode === "self-owner" || mode === "refund-pay" || mode === "refund-nopix" || mode === "refund-done";
 	const owner = youOwner ? { ...A, picture: null, isYou: true, kind: "user" as const, youManage: false } : { ...B, picture: null, isYou: false, kind: "user" as const, youManage: false };
 	const base = {
 		id: "e1",
@@ -800,7 +848,30 @@ function rawDetail(mode: MockMode): RawDetail {
 		participantUids: shares.filter((s) => s.participates).map((s) => s.uid),
 	});
 	const RECEIPT = { name: "comprovante-pix.png", contentType: "image/png", size: 210_000 };
+	const MARIA_PIX = { type: "cpf" as const, key: "11144477735", payeeName: B.name };
 	switch (mode) {
+		case "admin-view":
+			// Rafael administra o grupo; a Maria pagou a conta. O José foi marcado como pago pelo Rafael (admin).
+			return out("Consulta com a cardiologista", 45000, 1, [
+				share({ ...B, amountCents: 15000, status: "payer" }),
+				share({ ...A, amountCents: 15000, status: "pending", isYou: true }),
+				share({ uid: "c", name: "José", amountCents: 15000, status: "paid", paidAt: PAID_AT, method: "manual", markedByAdmin: true, markedByName: "Rafael Schettino" }),
+			]);
+		case "refund-pay":
+		case "refund-nopix":
+			// Rafael pagou a conta; a Maria pagou 200,00 por uma parte que agora é de 150,00: Rafael deve devolver 50,00.
+			return out("Consulta com a cardiologista", 45000, 1, [
+				share({ ...A, amountCents: 15000, status: "payer", isYou: true }),
+				share({ ...B, amountCents: 15000, status: "refund", paidCents: 20000, refundCents: 5000, paidAt: PAID_AT, method: "self", canRefund: true, refundPix: mode === "refund-nopix" ? null : MARIA_PIX }),
+				share({ uid: "c", name: "José", amountCents: 15000, status: "pending" }),
+			]);
+		case "refund-done":
+			return out("Consulta com a cardiologista", 45000, 1, [
+				share({ ...A, amountCents: 15000, status: "payer", isYou: true }),
+				share({ ...B, amountCents: 15000, status: "paid", paidCents: 15000, paidAt: PAID_AT, method: "self", receipt: RECEIPT, refund: { cents: 5000, at: PAID_AT, byAdmin: false, markedByName: null, receipt: { name: "devolucao-pix.png", contentType: "image/png", size: 190_000 }, batch: null }, canUndoRefund: true }),
+				share({ uid: "d", name: "Ana Paula", amountCents: 0, status: "paid", paidCents: 0, participates: false, refund: { cents: 11250, at: PAID_AT, byAdmin: true, markedByName: "Rafael Schettino", receipt: null, batch: null }, canUndoRefund: true }),
+				share({ uid: "c", name: "José", amountCents: 15000, status: "pending" }),
+			]);
 		case "batch":
 			// Rafael pagou 3 contas de uma vez para Maria (R$ 350,00 no total) e enviou um comprovante só.
 			return out("Remédios da farmácia", 28990, 2, [
@@ -881,8 +952,11 @@ export function MockExpense({
 	scopeSheet,
 	helpSheet = false,
 	receiptSheet,
+	summarySheet = false,
 }: Readonly<{
 	mode: MockMode;
+	/** Abre o sheet "Compartilhar resumo" desta despesa. */
+	summarySheet?: boolean;
 	/** Abre o sheet "Já paguei" (pay) ou "Anexar comprovante" (attach), vazio ou com um arquivo escolhido. */
 	receiptSheet?: { mode: ReceiptMode; filled?: boolean };
 	/** Abre o sheet "Quero ajudar". */
@@ -902,6 +976,7 @@ export function MockExpense({
 	const [qrOpen, setQrOpen] = useState<string | null>(qrInitial ? "a" : null);
 	const [action, setAction] = useState(confirm ?? null);
 	const [shareOpen, setShareOpen] = useState(shareSheet);
+	const [summaryOpen, setSummaryOpen] = useState(summarySheet);
 	const [helpOpen, setHelpOpen] = useState(helpSheet);
 	const [helpWho, setHelpWho] = useState("eu");
 	const [resplitOpen, setResplitOpen] = useState(!!resplit);
@@ -934,7 +1009,7 @@ export function MockExpense({
 				onAskDelete={() => setScopeStep("delete")}
 				onMarkPaid={(uid) => setAction({ uid, mode: "paid" })}
 				onUndoPaid={(uid) => setAction({ uid, mode: "pending" })}
-				onGiveBack={(uid) => setAction({ uid, mode: "refund" })}
+				onGiveBack={(uid) => (mode.startsWith("refund") ? setReceiptOpen("refund") : setAction({ uid, mode: "refund" }))}
 				onEditParticipants={() => (expense.installment ? setScopeStep("resplit") : setResplitOpen(true))}
 				onShare={() => setShareOpen(true)}
 				onHelp={() => setHelpOpen(true)}
@@ -942,12 +1017,28 @@ export function MockExpense({
 				onViewReceipt={() => setReceiptView(true)}
 				onAttachReceipt={() => setReceiptOpen("attach")}
 				onTellPaid={() => {}}
+				onEdit={noop}
+				onShareSummary={() => setSummaryOpen(true)}
 			/>
-			<Sheet open={receiptOpen !== null} onClose={() => setReceiptOpen(null)} title={receiptOpen === "attach" ? "Anexar comprovante" : "Já paguei"}>
+			<Sheet open={summaryOpen} onClose={() => setSummaryOpen(false)} title="Compartilhar resumo">
+				<ShareExpenseContent
+					text={buildExpenseStatusText(expense, "https://pague-sua-parte.app/app/grupos/1/despesas/e1")}
+					intro={expenseSummaryIntro()}
+					canShare
+					copyFailed={false}
+					dismissLabel="Fechar"
+					whatsappLabel="Compartilhar no WhatsApp"
+					preview
+					onCopy={noop}
+					onShare={noop}
+					onClose={() => setSummaryOpen(false)}
+				/>
+			</Sheet>
+			<Sheet open={receiptOpen !== null} onClose={() => setReceiptOpen(null)} title={receiptOpen === "attach" ? "Anexar comprovante" : receiptOpen === "refund" ? "Devolvi" : "Já paguei"}>
 				{receiptOpen && (
 					<ReceiptSheetContent
 						mode={receiptOpen}
-						payeeName={expense.pix.payeeName}
+						payeeName={receiptOpen === "refund" ? "Maria das Dores Silva" : expense.pix.payeeName}
 						items={receiptItems}
 						problems={[]}
 						processing={false}

@@ -73,3 +73,12 @@ describe("receiptDoneMessage", () => {
 		expect(receiptDoneMessage("attach")).toBe("Comprovante enviado!");
 	});
 });
+
+import { receiptDoneMessage as doneMsg } from "./receipts";
+describe("receiptDoneMessage (devolução)", () => {
+	it("devolução tem mensagem própria", () => {
+		expect(doneMsg("refund")).toBe("Devolução registrada!");
+		expect(doneMsg("pay")).toBe("Pagamento avisado!");
+		expect(doneMsg("attach")).toBe("Comprovante enviado!");
+	});
+});

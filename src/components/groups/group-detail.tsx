@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
-import { Avatar, Button, EmptyState, Icon, IconButton, List, ListItem, Sheet, Skeleton, Snackbar } from "@/components/ui";
+import { Avatar, Banner, Button, EmptyState, Icon, IconButton, List, ListItem, Sheet, Skeleton, Snackbar } from "@/components/ui";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { ExpenseList } from "@/components/expenses/expense-list";
 import { clearFlash, peekFlash } from "@/components/expenses/types";
@@ -20,6 +20,9 @@ import { endPeriodProblem, firstDueDate, periodOf } from "@/lib/ui/recurrences";
 import { detectPixKeyType } from "@/lib/pix/key";
 import { managedCaption } from "@/lib/ui/managed";
 import { GroupSummaryLive } from "@/components/home-summary";
+import { ShareExpenseContent } from "@/components/expenses/expense-share";
+import { copyText } from "@/lib/ui/clipboard";
+import { buildGroupLink, buildGroupSummaryText, normalizeGroupSummary, type GroupSummaryData } from "@/lib/ui/group-summary";
 import { InvitePanel } from "./invite-panel";
 import { MemberSheetContent } from "./member-sheet";
 import {
@@ -54,7 +57,10 @@ export function GroupDetailView({
 	recurrences,
 	expenses,
 	onMemberOptions,
+	onShareSummary,
 }: Readonly<{
+	/** Abre o sheet "Compartilhar resumo" (WhatsApp), para qualquer membro. */
+	onShareSummary?: () => void;
 	group: Group;
 	/** Resumo do grupo logo abaixo do título (a pagar / a receber, "Pagar tudo", quem você cuida). */
 	summary?: React.ReactNode;
@@ -75,6 +81,11 @@ export function GroupDetailView({
 				<Button href={`/app/grupos/${encodeURIComponent(group.id)}/relatorio`} variant="outlined" size="md" icon="bar_chart" fullWidth className="md:w-auto">
 					Relatório
 				</Button>
+				{onShareSummary && (
+					<Button onClick={onShareSummary} variant="text" size="md" icon="share" className="-ml-4 md:ml-0">
+						Compartilhar resumo
+					</Button>
+				)}
 			</div>
 
 			{/* As pessoas ficam recolhidas: a tela é das despesas. Abre sozinho só quando ainda não há mais ninguém para dividir. */}
@@ -171,6 +182,9 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 	// Começa com o recado deixado pela tela anterior (ex.: "Despesa apagada."), se houver.
 	const [snack, setSnack] = useState<string | null>(() => peekFlash());
 	const openedFromLink = useRef(false);
+	// "Compartilhar resumo": o texto do grupo inteiro, igual para qualquer membro.
+	const [summary, setSummary] = useState<{ kind: "closed" } | { kind: "loading" } | { kind: "error"; message: string } | { kind: "ready"; data: GroupSummaryData }>({ kind: "closed" });
+	const [summaryCopyFailed, setSummaryCopyFailed] = useState(false);
 	// Despesas fixas: lista e o sheet de opções / edição / encerrar.
 	const [recurrences, setRecurrences] = useState<RecurrencesState>({ kind: "loading" });
 	const [recSheet, setRecSheet] = useState<RecSheet | null>(null);
@@ -379,6 +393,15 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 		}
 	}
 
+	function openSummary() {
+		setSummary({ kind: "loading" });
+		setSummaryCopyFailed(false);
+		apiFetch<unknown>(`/api/groups/${encodeURIComponent(id)}/summary`)
+			.then((d) => setSummary({ kind: "ready", data: normalizeGroupSummary(d) }))
+			.catch((e) => setSummary({ kind: "error", message: e instanceof ApiError ? e.message : "Não foi possível montar o resumo. Tente de novo." }));
+	}
+	const summaryText = summary.kind === "ready" && group ? buildGroupSummaryText(summary.data, buildGroupLink(window.location.origin, group.id)) : "";
+
 	const memberUrl = (m: Member) => `/api/groups/${encodeURIComponent(id)}/members/${encodeURIComponent(m.uid)}`;
 
 	if (error) {
@@ -425,7 +448,48 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 				recurrences={<RecurrencesDetails state={recurrences} onOptions={(r) => openRecSheet("options", r)} />}
 				expenses={<ExpenseList groupId={group.id} />}
 				onMemberOptions={(m) => openSheet({ kind: "options", uid: m.uid }, m)}
+				onShareSummary={openSummary}
 			/>
+			<Sheet open={summary.kind !== "closed"} onClose={() => setSummary({ kind: "closed" })} title="Compartilhar resumo">
+				{summary.kind === "loading" && (
+					<p role="status" className="py-8 text-center text-body-large text-on-surface-variant">
+						Montando o resumo...
+					</p>
+				)}
+				{summary.kind === "error" && (
+					<div className="space-y-4">
+						<Banner tone="error" icon="error" role="alert">
+							{summary.message}
+						</Banner>
+						<Button icon="refresh" fullWidth onClick={openSummary}>
+							Tentar de novo
+						</Button>
+					</div>
+				)}
+				{summary.kind === "ready" && (
+					<div className="space-y-4">
+						<ShareExpenseContent
+							text={summaryText}
+							intro="Mande o resumo para o grupo ver quem deve a quem. É o mesmo para todo mundo."
+							canShare={typeof navigator !== "undefined" && typeof navigator.share === "function"}
+							copyFailed={summaryCopyFailed}
+							dismissLabel="Fechar"
+							whatsappLabel="Compartilhar no WhatsApp"
+							preview
+							onCopy={() =>
+								void copyText(summaryText).then((ok) => {
+									setSummaryCopyFailed(!ok);
+									if (ok) setSnack("Mensagem copiada!");
+								})
+							}
+							onShare={() => {
+								void navigator.share({ text: summaryText }).catch(() => {});
+							}}
+							onClose={() => setSummary({ kind: "closed" })}
+						/>
+					</div>
+				)}
+			</Sheet>
 			<Sheet
 				open={!!recSelected}
 				onClose={closeRecSheet}

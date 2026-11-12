@@ -518,7 +518,7 @@ describe("participantes: scope following", () => {
 			expect((await updateParticipants(db, GID, id(docs[0]), uid, ["u1", "u2"], "following", NOW)).status).toBe(expected);
 			if (expected === "forbidden") expect(expenses.updateOne).not.toHaveBeenCalled();
 		}
-		for (const [uid, expected] of [["u2", "ok"], ["u3", "forbidden"], ["u1", "forbidden"]] as const) {
+		for (const [uid, expected] of [["u2", "ok"], ["u3", "forbidden"], ["u1", "ok"]] as const) {
 			const docs = seriesDocs(2, { paidBy: "m_ben", createdBy: "u2", shares: [S("m_ben", 1000), S("u1", 1000), S("u2", 1000)] });
 			const { db } = fakeDb({ docs });
 			expect((await updateParticipants(db, GID, id(docs[0]), uid, ["m_ben", "u1"], "following", NOW)).status).toBe(expected);

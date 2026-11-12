@@ -21,6 +21,7 @@ const daysAgo = (n: number) => {
 const THIS_MONTH_END = `${TODAY.slice(0, 8)}28`;
 
 const item = (o: Partial<ReceivableItem> & Pick<ReceivableItem, "expenseId" | "description" | "dueCents">): ReceivableItem => ({
+	kind: "share",
 	groupId: "1",
 	groupName: "Despesas da vó",
 	dueDate: null,
@@ -72,7 +73,7 @@ const dataOf = (debtors: Debtor[]): Receivables => ({
 	truncated: false,
 });
 
-export type ReceivablesScene = "grupo" | "grupo-vazio" | "lista" | "whatsapp" | "whatsapp-cuidado" | "vazio" | "carregando" | "erro" | "indisponivel";
+export type ReceivablesScene = "devolucao" | "grupo" | "grupo-vazio" | "lista" | "whatsapp" | "whatsapp-cuidado" | "vazio" | "carregando" | "erro" | "indisponivel";
 
 const SCOPE = { id: SCOPE_GROUP_ID, name: "Despesas da vó" };
 const SCOPED_DEBTORS: Debtor[] = DEBTORS.flatMap((d) => {
@@ -80,8 +81,22 @@ const SCOPED_DEBTORS: Debtor[] = DEBTORS.flatMap((d) => {
 	return items.length === 0 ? [] : [{ ...d, items, totalCents: items.reduce((s, i) => s + i.dueCents, 0), overdueCents: items.filter((i) => i.overdue).reduce((s, i) => s + i.dueCents, 0) }];
 });
 
+/** A Maria deve uma conta comum e também devolver o que o Rafael pagou a mais. */
+const REFUND_DEBTORS: Debtor[] = [
+	debtor({
+		uid: "b",
+		name: "Maria das Dores Silva",
+		items: [
+			item({ expenseId: "e2", description: "Mercado do mês", dueCents: 10000, dueDate: daysAgo(6), overdue: true }),
+			item({ kind: "refund", expenseId: "e9", description: "Consulta com a cardiologista", dueCents: 5000 }),
+		],
+	}),
+];
+
 const sceneState = (scene: ReceivablesScene): ReceivablesPageState => {
 	switch (scene) {
+		case "devolucao":
+			return { kind: "ready", data: dataOf(REFUND_DEBTORS) };
 		case "grupo":
 			return { kind: "ready", data: dataOf(SCOPED_DEBTORS) };
 		case "grupo-vazio":

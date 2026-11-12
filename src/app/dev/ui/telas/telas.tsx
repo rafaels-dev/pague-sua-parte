@@ -16,6 +16,26 @@ export function Telas({ tela }: Readonly<{ tela: string }>) {
 					<GoogleButtonView />
 				</LandingView>
 			);
+		case "admin-despesa":
+			return <MockExpense mode="admin-view" framed={false} />;
+		case "admin-despesa-resumo":
+			return <MockExpense mode="admin-view" summarySheet framed={false} />;
+		case "devolver-pix":
+			return <MockExpense mode="refund-pay" framed={false} />;
+		case "devolver-sem-pix":
+			return <MockExpense mode="refund-nopix" framed={false} />;
+		case "devolvi-comprovante":
+			return <MockExpense mode="refund-pay" receiptSheet={{ mode: "refund", filled: true }} framed={false} />;
+		case "devolucao-feita":
+			return <MockExpense mode="refund-done" framed={false} />;
+		case "grupo-resumo":
+			return <MockGroup summary="valores" summarySheet framed={false} />;
+		case "editar-despesa":
+			return <MockNewExpense framed={false} editing initial={{ amountCents: 45000, description: "Consulta com a cardiologista" }} />;
+		case "pagar-tudo-devolucao":
+			return <MockPayAll scene="devolucao" framed={false} />;
+		case "quem-me-deve-devolucao":
+			return <MockReceivables scene="devolucao" framed={false} />;
 		case "grupo-vazio":
 			return <MockGroup empty framed={false} />;
 		case "nova":

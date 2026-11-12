@@ -96,3 +96,13 @@ describe("reportPipeline", () => {
 		expect(JSON.stringify(pipe)).not.toMatch(/email|pix/i);
 	});
 });
+
+describe("relatório: quem saiu da divisão e já teve tudo devolvido (cota 0, nada pago)", () => {
+	it("não vira participante do relatório (a referência em JS ignora a linha)", () => {
+		const f = referenceFacet([{ paidBy: "u1", amountCents: 2000, date: "2026-11-10", shares: [S("u1", 1000), S("u2", 1000, 1000), S("zz", 0, 0)] }]);
+		expect(f.people.map((r) => r._id).sort()).toEqual(["u1", "u2"]);
+	});
+	it("o pipeline do banco filtra a mesma linha", () => {
+		expect(JSON.stringify(reportPipeline({}))).toContain('"$or":[{"$ne":["$$s.amountCents",0]}');
+	});
+});

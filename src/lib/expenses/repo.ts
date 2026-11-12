@@ -1,6 +1,6 @@
 import { ObjectId, type Db } from "mongodb";
 import { groupsCollection, type GroupDoc } from "@/lib/groups/repo";
-import { actsFor, isManagedMember, isManagedUid, isObjectIdHex } from "@/lib/groups/helpers";
+import { actsFor, expenseRole, isManagedMember, isManagedUid, isObjectIdHex } from "@/lib/groups/helpers";
 import type { PixKey } from "@/lib/pix/key";
 import {
 	deleteAttachments,
@@ -13,6 +13,7 @@ import {
 import { materializeSafely } from "@/lib/recurrences/materialize";
 import { usersCollection, type UserDoc } from "@/lib/users/repo";
 import { getBalancesForUids, sumBalances, ZERO_BALANCE } from "./balances";
+import { groupDebts } from "./group-debts";
 import { installmentDueDates, isPastDue, todayInSaoPaulo } from "./dates";
 import {
 	addHelper,
@@ -24,6 +25,7 @@ import {
 	orderShares,
 	participantUidsOf,
 	payShare,
+	receiptKeysOfShare,
 	recalcShares,
 	refundCents,
 	settleShare,
@@ -35,7 +37,7 @@ import {
 	type ShareStatus,
 } from "./shares";
 import { splitEqually } from "./split";
-import type { ExpenseInput, ParticipantsScope, SniffedFile } from "./validation";
+import type { ExpenseEdit, ExpenseInput, ParticipantsScope, SniffedFile } from "./validation";
 
 export type { ExpenseShare, ShareMethod, ShareStatus } from "./shares";
 
@@ -134,10 +136,14 @@ export type ExpenseDetail = {
 	date: string;
 	createdAt: string;
 	canDelete: boolean;
-	/** Quem lançou a despesa (paidBy) pode marcar as partes dos outros como pagas. */
+	/** Quem pagou a despesa (ou o administrador do grupo) pode marcar as partes dos outros como pagas. */
 	canMarkPaid: boolean;
-	/** Só quem pagou pode mudar quem divide. */
+	/** Quem pagou (ou o administrador) pode mudar quem divide. */
 	canEditParticipants: boolean;
+	/** Quem pagou (ou o administrador) pode editar descrição, valor, datas e a divisão. */
+	canEdit: boolean;
+	/** Você gerencia esta despesa só porque administra o grupo (não foi você quem pagou). */
+	adminOnly: boolean;
 	/** O usuário poderia entrar na divisão ("Quero ajudar") como ele mesmo. */
 	canHelp: boolean;
 	/** Pessoas sem login que o usuário cuida e poderiam entrar na divisão. */
@@ -168,10 +174,23 @@ export type ExpenseDetail = {
 		managedByName: string | null;
 		paidAt: string | null;
 		method: ShareMethod | null;
+		/** Marcada como paga pelo administrador do grupo (e não por quem pagou); `markedByName` = quem marcou. */
+		markedByAdmin: boolean;
+		markedByName: string | null;
 		/** Só para quem pode baixar (a pessoa, quem age por ela ou por quem pagou); null para os demais. */
 		receipt: { name: string; contentType: string; size: number } | null;
 		/** Pago num lote ("pagar tudo de uma vez"); visível para quem vê o comprovante. */
 		batch: { totalCents: number; count: number } | null;
+		/** Devolução já feita (o que a pessoa pagou a mais voltou para ela); `receipt` só para quem pode ver. */
+		refund: { cents: number; at: string; byAdmin: boolean; markedByName: string | null; receipt: { name: string; contentType: string; size: number } | null; batch: { totalCents: number; count: number } | null } | null;
+		/** Você (quem pagou ou o administrador) pode marcar a devolução desta pessoa, ou desfazê-la. */
+		canRefund: boolean;
+		canUndoRefund: boolean;
+		/**
+		 * Só para quem paga a devolução (quem pagou a despesa ou age por ele): a chave Pix de quem recebe de volta.
+		 * `null` = a pessoa não tem chave Pix cadastrada (a tela explica); ausente = você não paga esta devolução.
+		 */
+		refundPix?: { type: string; key: string; payeeName: string } | null;
 		/** Você age por esta pessoa e a parte dela está pendente: pode avisar que pagou. */
 		canPay: boolean;
 		/** Você age por esta pessoa e ela já pagou o valor todo: pode anexar ou trocar o comprovante. */
@@ -224,8 +243,7 @@ export function helpInfo(
 
 /** Quem age pelo dono (ele mesmo ou o responsável por ele, no grupo de agora) ou administra o grupo. */
 function canDeleteExpense(e: ExpenseDoc, group: GroupDoc, uid: string) {
-	const isAdmin = group.members.some((m) => m.uid === uid && m.role === "admin");
-	return (actsFor(group.members, uid, e.paidBy) || isAdmin) && !hasPayments(e);
+	return expenseRole(group.members, uid, e.paidBy) !== null && !hasPayments(e);
 }
 
 /** Parcelas que ainda existem da série de `e` (inclui `e`). `known` evita a consulta quando já estão em memória. */
@@ -252,11 +270,60 @@ async function seriesOf(db: Db, e: ExpenseDoc, known?: ExpenseDoc[]) {
 	return { count: e.installment.count, items };
 }
 
+export type PixInfo = { type: string; key: string; payeeName: string };
+
+/**
+ * Única busca de chave Pix de quem recebe (uma devolução, por exemplo): a da própria pessoa, ou, se é uma pessoa sem login,
+ * a cadastrada no grupo para ela. Uma consulta só ao banco para todas as pessoas e grupos pedidos.
+ * Chave do mapa: `${groupId}:${uid}`; quem não tem chave Pix fica de fora.
+ */
+export async function loadPixKeys(
+	db: Db,
+	groups: Pick<GroupDoc, "_id" | "members">[],
+	uidsByGroup: Map<string, string[]>,
+): Promise<Map<string, PixInfo>> {
+	const out = new Map<string, PixInfo>();
+	const real = new Set<string>();
+	const realByGroup: [string, string][] = [];
+	for (const g of groups) {
+		const gid = g._id.toHexString();
+		for (const u of new Set(uidsByGroup.get(gid) ?? [])) {
+			const m = g.members.find((x) => x.uid === u);
+			// Quem saiu do grupo não tem a chave Pix servida a ninguém: a chave só circula entre membros do mesmo grupo.
+			if (!m) continue;
+			if (m.kind === "managed") {
+				if (m.pixKey) out.set(`${gid}:${u}`, { type: m.pixKey.type, key: m.pixKey.key, payeeName: m.name?.trim() || "Participante" });
+			} else {
+				real.add(u);
+				realByGroup.push([gid, u]);
+			}
+		}
+	}
+	if (real.size > 0) {
+		const users = await usersCollection(db)
+			.find({ _id: { $in: [...real] } }, { projection: { name: 1, displayName: 1, pixKey: 1 } })
+			.toArray();
+		const byId = new Map(users.map((u) => [u._id, u]));
+		for (const [gid, u] of realByGroup) {
+			const user = byId.get(u);
+			if (user?.pixKey) out.set(`${gid}:${u}`, { type: user.pixKey.type, key: user.pixKey.key, payeeName: personName(user) });
+		}
+	}
+	return out;
+}
+
 async function toDetail(db: Db, e: ExpenseDoc, group: GroupDoc, uid: string, now: Date, known?: ExpenseDoc[]): Promise<ExpenseDetail> {
-	const people = await loadPeople(db, uidsToLoad(group, [...new Set([e.paidBy, ...e.shares.map((s) => s.uid)])]));
+	const markers = e.shares.flatMap((s) => [...(s.markedByAdmin && s.markedBy ? [s.markedBy] : []), ...(s.refund?.byAdmin ? [s.refund.markedBy] : [])]);
+	const people = await loadPeople(db, uidsToLoad(group, [...new Set([e.paidBy, ...e.shares.map((s) => s.uid), ...markers])]));
 	const dir = directory(group, people, uid);
 	const view = (u: string) => ({ uid: u, name: dir.name(u), picture: dir.picture(u), isYou: u === uid });
-	const owns = actsFor(group.members, uid, e.paidBy);
+	const role = expenseRole(group.members, uid, e.paidBy);
+	// Quem pagou (ou o administrador do grupo) gerencia a despesa: marca pagamentos, muda a divisão, edita, vê comprovantes.
+	const owns = role !== null;
+	// A chave Pix de quem recebe de volta só vai para quem paga a devolução (não para o administrador nem para os outros).
+	const gid = group._id.toHexString();
+	const refundPixes =
+		role === "owner" ? await loadPixKeys(db, [group], new Map([[gid, e.shares.filter((s) => refundCents(s, e.paidBy) > 0).map((s) => s.uid)]])) : null;
 	return {
 		id: e._id.toHexString(),
 		groupId: e.groupId.toHexString(),
@@ -267,6 +334,8 @@ async function toDetail(db: Db, e: ExpenseDoc, group: GroupDoc, uid: string, now
 		canDelete: canDeleteExpense(e, group, uid),
 		canMarkPaid: owns,
 		canEditParticipants: owns,
+		canEdit: owns,
+		adminOnly: role === "admin",
 		...helpInfo(e, group.members, uid),
 		participantUids: participantUidsOf(e.shares),
 		paidBy: { ...view(e.paidBy), kind: dir.kind(e.paidBy), youManage: dir.youManage(e.paidBy) },
@@ -288,6 +357,21 @@ async function toDetail(db: Db, e: ExpenseDoc, group: GroupDoc, uid: string, now
 				status,
 				paidAt: s.paidCents > 0 && s.paidAt ? new Date(s.paidAt).toISOString() : null,
 				method: s.paidCents > 0 ? (s.method ?? null) : null,
+				markedByAdmin: s.paidCents > 0 && s.method === "manual" && s.markedByAdmin === true,
+				markedByName: s.paidCents > 0 && s.method === "manual" && s.markedByAdmin === true && s.markedBy ? dir.name(s.markedBy) : null,
+				refund: s.refund
+					? {
+							cents: s.refund.cents,
+							at: new Date(s.refund.at).toISOString(),
+							byAdmin: s.refund.byAdmin === true,
+							markedByName: s.refund.byAdmin ? dir.name(s.refund.markedBy) : null,
+							receipt: s.refund.receipt && (actsForShare || owns) ? { name: s.refund.receipt.name, contentType: s.refund.receipt.contentType, size: s.refund.receipt.size } : null,
+							batch: s.refund.batch && (actsForShare || owns) ? { totalCents: s.refund.batch.totalCents, count: s.refund.batch.count } : null,
+						}
+					: null,
+				canRefund: owns && status === "refund",
+				canUndoRefund: owns && s.refund !== undefined,
+				...(refundPixes && status === "refund" ? { refundPix: refundPixes.get(`${gid}:${s.uid}`) ?? null } : {}),
 				receipt:
 					s.receipt && (actsForShare || owns) ? { name: s.receipt.name, contentType: s.receipt.contentType, size: s.receipt.size } : null,
 				batch: s.batch && (actsForShare || owns) ? { totalCents: s.batch.totalCents, count: s.batch.count } : null,
@@ -516,7 +600,7 @@ export async function listExpenses(db: Db, groupId: string, uid: string, now: Da
 			refundCount,
 			attachmentCount: d.attachments.length,
 			managed: d.shares
-				.filter((s) => s.uid !== d.paidBy && dir.youManage(s.uid))
+				.filter((s) => s.uid !== d.paidBy && dir.youManage(s.uid) && (s.amountCents > 0 || refundCents(s, d.paidBy) > 0))
 				.map((s) => ({
 					uid: s.uid,
 					name: dir.name(s.uid),
@@ -553,14 +637,16 @@ export async function getAttachmentRef(db: Db, groupId: string, eid: string, aid
 
 export type ReceiptRef = { status: "ok"; key: string; name: string; contentType: string } | { status: "not_found" };
 
-/** Comprovante da cota de `targetUid`: só para quem age por ela ou por quem pagou a despesa. */
-export async function getReceiptRef(db: Db, groupId: string, eid: string, targetUid: string, uid: string): Promise<ReceiptRef> {
+/** Comprovante da cota de `targetUid`: só para quem age por ela, por quem pagou a despesa, ou administra o grupo. */
+export async function getReceiptRef(db: Db, groupId: string, eid: string, targetUid: string, uid: string, kind: "payment" | "refund" = "payment"): Promise<ReceiptRef> {
 	const group = await findMemberGroup(db, groupId, uid);
 	if (!group) return { status: "not_found" };
 	const e = await findExpense(db, groupId, eid);
-	const r = e?.shares.find((s) => s.uid === targetUid)?.receipt;
+	const share = e?.shares.find((s) => s.uid === targetUid);
+	const r = kind === "refund" ? share?.refund?.receipt : share?.receipt;
 	if (!e || !r) return { status: "not_found" };
-	if (!actsFor(group.members, uid, targetUid) && !actsFor(group.members, uid, e.paidBy)) return { status: "not_found" };
+	// Vê o comprovante: a própria pessoa (ou quem age por ela), quem pagou a despesa e o administrador do grupo.
+	if (!actsFor(group.members, uid, targetUid) && expenseRole(group.members, uid, e.paidBy) === null) return { status: "not_found" };
 	return { status: "ok", key: r.key, name: r.name, contentType: r.contentType };
 }
 
@@ -574,7 +660,9 @@ export type DeleteResult =
 	| { status: "has_payment" };
 
 /** Filtro atômico: nenhuma cota com pagamento (quem pagou tem sempre paidCents 0; o modelo antigo `status: 'paid'` também conta). */
-const NO_PAYMENTS = { shares: { $not: { $elemMatch: { $or: [{ paidCents: { $gt: 0 } }, { status: "paid" }] } } } };
+const NO_PAYMENTS = {
+	shares: { $not: { $elemMatch: { $or: [{ paidCents: { $gt: 0 } }, { status: "paid" }, { refund: { $exists: true } }, { receipt: { $exists: true } }] } } },
+};
 
 /**
  * Apaga do armazenamento só os objetos que nenhuma despesa restante referencia (parcelas compartilham anexos).
@@ -602,9 +690,12 @@ export async function releaseReceipts(db: Db, store: AttachmentStore, keys: stri
 	const unique = [...new Set(keys)];
 	if (unique.length === 0) return;
 	const still = await expensesCollection(db)
-		.find({ "shares.receipt.key": { $in: unique } }, { projection: { "shares.receipt.key": 1 } })
+		.find(
+			{ $or: [{ "shares.receipt.key": { $in: unique } }, { "shares.refund.receipt.key": { $in: unique } }] },
+			{ projection: { "shares.receipt.key": 1, "shares.refund.receipt.key": 1 } },
+		)
 		.toArray();
-	const referenced = new Set(still.flatMap((d) => d.shares.flatMap((s) => (s.receipt ? [s.receipt.key] : []))));
+	const referenced = new Set(still.flatMap((d) => d.shares.flatMap(receiptKeysOfShare)));
 	await deleteAttachments(
 		store,
 		unique.filter((k) => !referenced.has(k)),
@@ -627,8 +718,7 @@ export async function deleteExpense(
 	if (!group) return { status: "no_group" };
 	const e = await findExpense(db, groupId, eid);
 	if (!e) return { status: "no_expense" };
-	const isAdmin = group.members.some((m) => m.uid === uid && m.role === "admin");
-	const allowed = (x: { paidBy: string }) => actsFor(group.members, uid, x.paidBy) || isAdmin;
+	const allowed = (x: { paidBy: string }) => expenseRole(group.members, uid, x.paidBy) !== null;
 	if (!allowed(e)) return { status: "forbidden" };
 	if (hasPayments(e)) return { status: "has_payment" };
 
@@ -656,7 +746,7 @@ export async function deleteExpense(
 	return { status: "ok", deleted: res.deletedCount, kept: targets.length - res.deletedCount };
 }
 
-const receiptKeysOf = (e: { shares: ExpenseShare[] }): string[] => e.shares.flatMap((s) => (s.receipt ? [s.receipt.key] : []));
+const receiptKeysOf = (e: { shares: ExpenseShare[] }): string[] => e.shares.flatMap(receiptKeysOfShare);
 
 /** Esta parcela e as seguintes da mesma série, em ordem (normalizadas). */
 async function followingOf(db: Db, e: ExpenseDoc): Promise<ExpenseDoc[]> {
@@ -674,7 +764,10 @@ async function followingOf(db: Db, e: ExpenseDoc): Promise<ExpenseDoc[]> {
 const CONFLICT_RETRIES = 1;
 const versionFilter = (e: ExpenseDoc) => (e.version === undefined ? { version: { $exists: false } } : { version: e.version });
 
-export type Mutation = (e: ExpenseDoc) => { shares: ExpenseShare[]; changed: boolean } | { error: unknown };
+/** `set`/`unset`: outros campos da despesa gravados junto com as cotas, na mesma escrita (e na mesma checagem de versão). */
+export type Mutation = (
+	e: ExpenseDoc,
+) => { shares: ExpenseShare[]; changed: boolean; set?: Partial<Omit<ExpenseDoc, "_id">>; unset?: "dueDate"[] } | { error: unknown };
 export type Mutated =
 	| { kind: "ok"; doc: ExpenseDoc; before: ExpenseDoc; wrote: boolean }
 	| { kind: "no_expense" }
@@ -696,10 +789,16 @@ export async function mutateShares(db: Db, groupId: string, eid: string, mutate:
 		const now = new Date();
 		const res = await expensesCollection(db).updateOne(
 			{ _id: e._id, groupId: e.groupId, paidBy: e.paidBy, ...versionFilter(e) },
-			{ $set: { shares: m.shares, updatedAt: now }, $inc: { version: 1 } },
+			{
+				$set: { ...m.set, shares: m.shares, updatedAt: now },
+				...(m.unset?.length ? { $unset: Object.fromEntries(m.unset.map((k) => [k, ""])) } : {}),
+				$inc: { version: 1 },
+			},
 		);
 		if (res.matchedCount > 0) {
-			return { kind: "ok", doc: { ...e, shares: m.shares, version: (e.version ?? 0) + 1, updatedAt: now }, before: e, wrote: true };
+			const doc: ExpenseDoc = { ...e, ...m.set, shares: m.shares, version: (e.version ?? 0) + 1, updatedAt: now };
+			for (const k of m.unset ?? []) delete doc[k];
+			return { kind: "ok", doc, before: e, wrote: true };
 		}
 	}
 	return { kind: "conflict" };
@@ -716,7 +815,7 @@ export type MarkShareResult =
 	| { status: "conflict" };
 
 /**
- * Quem pagou a despesa quita (paid) ou desfaz (pending) a cota de outra pessoa. "Quitar" vale tanto para
+ * Quem pagou a despesa, ou o administrador do grupo, quita (paid) ou desfaz (pending) a cota de outra pessoa. "Quitar" vale tanto para
  * receber o que falta quanto para devolver um reembolso. Idempotente.
  */
 export async function setSharePaid(
@@ -732,14 +831,69 @@ export async function setSharePaid(
 	const group = await findMemberGroup(db, groupId, uid);
 	if (!group) return { status: "no_group" };
 	const r = await mutateShares(db, groupId, eid, (e) => {
-		if (!actsFor(group.members, uid, e.paidBy)) return { error: "forbidden" };
-		const change = status === "paid" ? settleShare(e.shares, e.paidBy, targetUid, new Date(), uid) : undoShare(e.shares, e.paidBy, targetUid);
+		const role = expenseRole(group.members, uid, e.paidBy);
+		if (!role) return { error: "forbidden" };
+		const change = status === "paid" ? settleShare(e.shares, e.paidBy, targetUid, new Date(), uid, role === "admin") : undoShare(e.shares, e.paidBy, targetUid);
 		return change ?? { error: "no_share" };
 	});
 	if (r.kind === "no_expense") return { status: "no_expense" };
 	if (r.kind === "conflict") return { status: "conflict" };
 	if (r.kind === "rejected") return { status: r.error === "forbidden" ? "forbidden" : "no_share" };
 	if (store && r.wrote) await releaseReceipts(db, store, droppedReceiptKeys(r.before.shares, r.doc.shares));
+	return { status: "ok", expense: await toDetail(db, r.doc, group, uid, now) };
+}
+
+// ---------- "Devolvi" (com comprovante opcional) ----------
+
+/**
+ * Quem pagou a despesa (ou quem age por ele), ou o administrador do grupo, marca que a devolução à pessoa foi feita,
+ * com comprovante opcional. O comprovante da devolução é outro documento: o do pagamento original continua na cota.
+ * O arquivo só sobe depois de validar a permissão e é apagado se nada for gravado. Idempotente.
+ */
+export async function refundShare(
+	db: Db,
+	store: AttachmentStore,
+	args: { groupId: string; eid: string; uid: string; targetUid: string; file?: SniffedFile; now?: Date },
+): Promise<MarkShareResult> {
+	const { groupId, eid, uid, targetUid, file } = args;
+	const now = args.now ?? new Date();
+	const group = await findMemberGroup(db, groupId, uid);
+	if (!group) return { status: "no_group" };
+	const current = await findExpense(db, groupId, eid);
+	if (!current) return { status: "no_expense" };
+	const role = expenseRole(group.members, uid, current.paidBy);
+	if (!role) return { status: "forbidden" };
+	const target = current.shares.find((s) => s.uid === targetUid);
+	if (!target || target.uid === current.paidBy) return { status: "no_share" };
+	if (target.paidCents <= target.amountCents) {
+		// Segundo toque em "Devolvi": já devolvida, é sucesso sem gravar nada (e sem subir outro comprovante).
+		if (target.refund) return { status: "ok", expense: await toDetail(db, current, group, uid, now) };
+		return { status: "no_share" };
+	}
+
+	const receipt = file
+		? await putReceipt(store, { groupId, expenseId: current._id.toHexString(), bytes: file.bytes, name: file.name, contentType: file.contentType })
+		: undefined;
+	let r: Mutated;
+	try {
+		r = await mutateShares(db, groupId, eid, (x) => {
+			if (!expenseRole(group.members, uid, x.paidBy)) return { error: "forbidden" };
+			// Confere de novo com a despesa lida AGORA: se alguém mexeu no meio do caminho, nunca quita uma parte pendente por engano.
+			const t = x.shares.find((y) => y.uid === targetUid);
+			if (!t || t.uid === x.paidBy) return { error: "no_share" };
+			if (t.paidCents === t.amountCents && t.refund) return { shares: x.shares, changed: false }; // já devolvida (idempotente)
+			if (t.paidCents <= t.amountCents) return { error: "no_share" };
+			return settleShare(x.shares, x.paidBy, targetUid, now, uid, role === "admin", receipt) ?? { error: "no_share" };
+		});
+	} catch (err) {
+		if (receipt) await deleteAttachments(store, [receipt.key]);
+		throw err;
+	}
+	if (receipt && !(r.kind === "ok" && r.wrote)) await deleteAttachments(store, [receipt.key]);
+	if (r.kind === "no_expense") return { status: "no_expense" };
+	if (r.kind === "conflict") return { status: "conflict" };
+	if (r.kind === "rejected") return { status: r.error === "forbidden" ? "forbidden" : "no_share" };
+	if (r.wrote) await releaseReceipts(db, store, droppedReceiptKeys(r.before.shares, r.doc.shares));
 	return { status: "ok", expense: await toDetail(db, r.doc, group, uid, now) };
 }
 
@@ -826,7 +980,7 @@ export async function updateParticipants(
 
 	const memberUids = new Set(group.members.map((m) => m.uid));
 	const mutation: Mutation = (e) => {
-		if (!actsFor(group.members, uid, e.paidBy)) return { error: { status: "forbidden" } };
+		if (!expenseRole(group.members, uid, e.paidBy)) return { error: { status: "forbidden" } };
 		if (participantUids.length === 0 || new Set(participantUids).size !== participantUids.length) {
 			return { error: { status: "invalid", field: "participantUids", error: "Escolha quem divide a despesa." } };
 		}
@@ -889,6 +1043,80 @@ export async function updateParticipants(
 	if (store) await releaseReceipts(db, store, written.flatMap((w) => droppedReceiptKeys(w.before.shares, w.doc.shares)));
 	const mine = written.find((w) => w.doc._id.equals(first._id))?.doc ?? first;
 	return { status: "ok", expense: await toDetail(db, mine, group, uid, now) };
+}
+
+// ---------- editar a despesa ----------
+
+export type EditExpenseResult =
+	| { status: "ok"; expense: ExpenseDetail }
+	| { status: "no_group" }
+	| { status: "no_expense" }
+	| { status: "forbidden" }
+	| { status: "invalid"; error: string; field: string }
+	| { status: "conflict" };
+
+const sameSplit = (a: ExpenseShare[], b: ExpenseShare[]) =>
+	a.length === b.length && a.every((x) => b.some((y) => y.uid === x.uid && y.amountCents === x.amountCents));
+
+/**
+ * Edita descrição, valor, data, vencimento e quem divide. Quem pagou a despesa ou o administrador do grupo pode.
+ * As cotas são refeitas por `recalcShares` (a mesma regra de "Mudar quem divide"): o que cada um já pagou e os
+ * comprovantes ficam; quem pagou a mais passa a ter reembolso (`refundCents`) e quem saiu da divisão depois de pagar
+ * fica com cota 0 e o pago como reembolso. Tudo numa só escrita com checagem de `version`.
+ * Vale só para esta despesa (uma parcela não muda as outras). Quem pagou e a chave Pix não mudam.
+ */
+export async function editExpense(
+	db: Db,
+	store: AttachmentStore,
+	args: { groupId: string; eid: string; uid: string; input: ExpenseEdit; now?: Date },
+): Promise<EditExpenseResult> {
+	const { groupId, eid, uid, input } = args;
+	const now = args.now ?? new Date();
+	const group = await findMemberGroup(db, groupId, uid);
+	if (!group) return { status: "no_group" };
+	const memberUids = new Set(group.members.map((m) => m.uid));
+	const r = await mutateShares(db, groupId, eid, (e) => {
+		if (!expenseRole(group.members, uid, e.paidBy)) return { error: { status: "forbidden" } };
+		if (input.participantUids.length === 0 || new Set(input.participantUids).size !== input.participantUids.length) {
+			return { error: { status: "invalid", field: "participantUids", error: "Escolha quem divide a despesa." } };
+		}
+		// Só quem está ENTRANDO na divisão precisa ser do grupo; quem já dividia e saiu do grupo pode continuar na divisão.
+		const already = new Set(participantUidsOf(e.shares));
+		if (!input.participantUids.every((p) => memberUids.has(p) || already.has(p))) {
+			return { error: { status: "invalid", field: "participantUids", error: "Escolha apenas pessoas que estão no grupo." } };
+		}
+		// Vencimento antes da data: só barra quando a pessoa mexeu em uma das duas datas (despesas antigas podem ter essa combinação).
+		if (input.dueDate && input.dueDate < input.date && (input.date !== e.date || input.dueDate !== e.dueDate)) {
+			return { error: { status: "invalid", field: "dueDate", error: "O vencimento não pode ser antes da data da despesa." } };
+		}
+		if (e.installment && !input.dueDate) {
+			return { error: { status: "invalid", field: "dueDate", error: "Uma parcela precisa de data de vencimento." } };
+		}
+		let shares: ExpenseShare[];
+		try {
+			shares = recalcShares(e.shares, e.paidBy, input.amountCents, input.participantUids);
+		} catch {
+			return { error: { status: "invalid", field: "amountCents", error: "Esse valor é pequeno demais para dividir entre tantas pessoas." } };
+		}
+		const splitSame = sameSplit(e.shares, shares);
+		const changed =
+			e.description !== input.description ||
+			e.amountCents !== input.amountCents ||
+			e.date !== input.date ||
+			(e.dueDate ?? null) !== (input.dueDate ?? null) ||
+			!splitSame;
+		return {
+			shares: splitSame ? e.shares : shares,
+			changed,
+			set: { description: input.description, amountCents: input.amountCents, date: input.date, ...(input.dueDate ? { dueDate: input.dueDate } : {}) },
+			...(input.dueDate ? {} : { unset: ["dueDate" as const] }),
+		};
+	});
+	if (r.kind === "no_expense") return { status: "no_expense" };
+	if (r.kind === "conflict") return { status: "conflict" };
+	if (r.kind === "rejected") return r.error as { status: "forbidden" } | { status: "invalid"; error: string; field: string };
+	if (r.wrote) await releaseReceipts(db, store, droppedReceiptKeys(r.before.shares, r.doc.shares));
+	return { status: "ok", expense: await toDetail(db, r.doc, group, uid, now) };
 }
 
 // ---------- quero ajudar ----------
@@ -992,5 +1220,72 @@ export async function getSummary(db: Db, uid: string, now: Date = new Date(), gr
 	return {
 		...sumBalances(groups.map((g) => balances.get(`${g._id.toHexString()}:${uid}`) ?? ZERO_BALANCE)),
 		managed: managedList.map((m) => ({ ...m, ...(balances.get(`${m.groupId}:${m.uid}`) ?? ZERO_BALANCE) })),
+	};
+}
+
+// ---------- resumo do grupo (para compartilhar) ----------
+
+export const SUMMARY_DEBT_CAP = 100;
+export const SUMMARY_NAMES_CAP = 30;
+
+export type GroupSummaryView = {
+	groupId: string;
+	groupName: string;
+	/** Soma de tudo o que ainda está em aberto no grupo (dívidas já compensadas entre cada dupla). */
+	totalOpenCents: number;
+	/** Parte do total que já venceu. */
+	overdueCents: number;
+	/** Quem deve a quem (só nomes: nunca chave Pix nem códigos de usuário). Limitado a `SUMMARY_DEBT_CAP`. */
+	debts: { fromName: string; toName: string; cents: number; overdue: boolean; refund: boolean }[];
+	/** Dívidas que não couberam em `debts`. */
+	moreDebts: number;
+	/** Quem não deve nada. Limitado a `SUMMARY_NAMES_CAP`. */
+	upToDate: string[];
+	moreUpToDate: number;
+	/** Havia despesas em aberto demais: os totais e a lista de quem está em dia NÃO são confiáveis (o texto avisa). */
+	partial: boolean;
+};
+
+export const SUMMARY_DOC_LIMIT = 5000;
+
+/** O mesmo resumo para qualquer membro (não é o saldo pessoal de quem pede). null se o grupo não existe ou `uid` não é membro. */
+export async function getGroupSummary(db: Db, groupId: string, uid: string, now: Date = new Date()): Promise<GroupSummaryView | null> {
+	const group = await findMemberGroup(db, groupId, uid);
+	if (!group) return null;
+	await materializeSafely(db, [group._id], now);
+	const docs = await expensesCollection(db)
+		.aggregate<Pick<ExpenseDoc, "paidBy" | "shares" | "dueDate">>([
+			{ $match: { groupId: group._id } },
+			{
+				$match: {
+					$expr: {
+						$anyElementTrue: {
+							$map: { input: "$shares", as: "s", in: { $and: [{ $ne: ["$$s.uid", "$paidBy"] }, { $ne: [SHARE_PAID, "$$s.amountCents"] }] } },
+						},
+					},
+				},
+			},
+			{ $project: { paidBy: 1, shares: 1, dueDate: 1 } },
+			{ $sort: { _id: 1 } },
+			{ $limit: SUMMARY_DOC_LIMIT + 1 },
+		])
+		.toArray();
+	const partial = docs.length > SUMMARY_DOC_LIMIT;
+	const debts = groupDebts(partial ? docs.slice(0, SUMMARY_DOC_LIMIT) : docs, todayInSaoPaulo(now));
+	const people = await loadPeople(db, group.members.map((m) => m.uid));
+	const dir = directory(group, people, uid);
+	const debtors = new Set(debts.map((d) => d.fromUid));
+	const names = group.members.filter((m) => !debtors.has(m.uid)).map((m) => dir.name(m.uid));
+	names.sort((a, b) => a.localeCompare(b, "pt-BR"));
+	return {
+		groupId: group._id.toHexString(),
+		groupName: group.name,
+		totalOpenCents: debts.reduce((t, d) => t + d.cents, 0),
+		overdueCents: debts.reduce((t, d) => t + d.overdueCents, 0),
+		debts: debts.slice(0, SUMMARY_DEBT_CAP).map((d) => ({ fromName: dir.name(d.fromUid), toName: dir.name(d.toUid), cents: d.cents, overdue: d.overdueCents > 0, refund: d.kind === "refund" })),
+		moreDebts: Math.max(0, debts.length - SUMMARY_DEBT_CAP),
+		upToDate: names.slice(0, SUMMARY_NAMES_CAP),
+		moreUpToDate: Math.max(0, names.length - SUMMARY_NAMES_CAP),
+		partial,
 	};
 }

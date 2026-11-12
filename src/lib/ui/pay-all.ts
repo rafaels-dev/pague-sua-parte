@@ -5,6 +5,8 @@ import type { PixKeyType } from "@/lib/pix/key";
 /** "Pagar tudo de uma vez": o que a pessoa tem a pagar agora, por quem recebe (formato de `GET /api/me/payables`). */
 
 export type PayableItem = {
+	/** "refund" = devolução: você devolve o que esta pessoa (`shareUid`) pagou a mais. */
+	kind: "share" | "refund";
 	groupId: string;
 	groupName: string;
 	expenseId: string;
@@ -32,8 +34,8 @@ export type FailReason = "conflict" | "already_paid" | "not_found";
 
 export type BatchResult = {
 	batchId: string;
-	paid: { groupId: string; expenseId: string; shareUid: string; amountCents: number }[];
-	failed: { groupId: string; expenseId: string; shareUid: string; reason: FailReason }[];
+	paid: { kind: "share" | "refund"; groupId: string; expenseId: string; shareUid: string; amountCents: number }[];
+	failed: { kind: "share" | "refund"; groupId: string; expenseId: string; shareUid: string; reason: FailReason }[];
 	totalPaidCents: number;
 	hasReceipt: boolean;
 };
@@ -43,8 +45,8 @@ const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v)
 const PIX_TYPES: PixKeyType[] = ["cpf", "cnpj", "email", "phone", "random"];
 
 /** Identifica um item (a parte de uma pessoa numa despesa). */
-export function itemKey(i: Pick<PayableItem, "groupId" | "expenseId" | "shareUid">): string {
-	return `${i.groupId}:${i.expenseId}:${i.shareUid}`;
+export function itemKey(i: Pick<PayableItem, "groupId" | "expenseId" | "shareUid"> & { kind?: "share" | "refund" }): string {
+	return `${i.groupId}:${i.expenseId}:${i.shareUid}:${i.kind === "refund" ? "refund" : "share"}`;
 }
 
 function normalizeItem(raw: unknown): PayableItem | null {
@@ -55,6 +57,7 @@ function normalizeItem(raw: unknown): PayableItem | null {
 	const number = inst ? num(inst.number) : 0;
 	const count = inst ? num(inst.count) : 0;
 	return {
+		kind: r.kind === "refund" ? "refund" : "share",
 		groupId: r.groupId,
 		groupName: str(r.groupName),
 		expenseId: r.expenseId,
@@ -104,7 +107,7 @@ export function normalizeBatchResult(raw: unknown): BatchResult {
 	const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
 	const ref = (e: unknown) => {
 		const x = (e && typeof e === "object" ? e : {}) as Record<string, unknown>;
-		return { groupId: str(x.groupId), expenseId: str(x.expenseId), shareUid: str(x.shareUid) };
+		return { kind: x.kind === "refund" ? ("refund" as const) : ("share" as const), groupId: str(x.groupId), expenseId: str(x.expenseId), shareUid: str(x.shareUid) };
 	};
 	const paid = (Array.isArray(r.paid) ? r.paid : []).map((e) => ({ ...ref(e), amountCents: num((e as Record<string, unknown> | null)?.amountCents) }));
 	const failed = (Array.isArray(r.failed) ? r.failed : []).map((e) => {
@@ -159,6 +162,27 @@ export function failReasonText(reason: FailReason): string {
 		default:
 			return "mudou agora há pouco";
 	}
+}
+
+/** Etiqueta de uma conta que é devolução. */
+export const REFUND_CHIP = "Devolução";
+
+/** Pedido de pagamento em lote: cada conta com o seu tipo (parte a pagar ou devolução). */
+export function batchRequestItems(items: Pick<PayableItem, "groupId" | "expenseId" | "shareUid" | "kind">[]) {
+	return items.map(({ groupId, expenseId, shareUid, kind }) => ({ groupId, expenseId, shareUid, ...(kind === "refund" ? { kind } : {}) }));
+}
+
+/** Final da chave Pix para distinguir dois cartões da mesma pessoa: "terminada em 1234" (e-mail e chaves curtas aparecem inteiros no Pix). */
+export function pixTail(key: string): string {
+	const t = key.trim();
+	return t.length > 4 ? `Chave Pix terminada em ${t.slice(-4)}` : `Chave Pix ${t}`;
+}
+
+/** Ids dos destinatários cuja pessoa aparece em mais de um cartão (chaves Pix diferentes): esses cartões levam o final da chave. */
+export function ambiguousRecipientIds(recipients: Pick<PayableRecipient, "id" | "payee">[]): Set<string> {
+	const count = new Map<string, number>();
+	for (const r of recipients) count.set(r.payee.uid, (count.get(r.payee.uid) ?? 0) + 1);
+	return new Set(recipients.filter((r) => (count.get(r.payee.uid) ?? 0) > 1).map((r) => r.id));
 }
 
 /** "1 conta" / "3 contas". */

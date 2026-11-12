@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	refundShares,
 	balanceOf,
 	dueCents,
 	droppedReceiptKeys,
@@ -135,13 +136,14 @@ describe("settleShare / undoShare", () => {
 		const r = settleShare([sh(OWNER, 1000), sh("a", 1000, 300)], OWNER, "a", NOW, OWNER)!;
 		expect(r.shares[1].paidCents).toBe(1000);
 	});
-	it("quitar reembolso de não participante remove a linha", () => {
+	it("quitar reembolso de não participante mantém a linha, com o registro da devolução", () => {
 		const r = settleShare(base, OWNER, "r", NOW, OWNER)!;
-		expect(r.shares.map((s) => s.uid)).toEqual([OWNER, "a"]);
+		expect(r.shares.map((s) => s.uid)).toEqual([OWNER, "a", "r"]);
+		expect(r.shares[2]).toMatchObject({ amountCents: 0, paidCents: 0, refund: { cents: 400, markedBy: OWNER, at: NOW } });
 	});
 	it("quitar reembolso de quem ainda participa: paidCents iguala a cota", () => {
 		const r = settleShare([sh(OWNER, 500), sh("a", 750, 1000, { paidAt: NOW })], OWNER, "a", new Date(), OWNER)!;
-		expect(r.shares[1]).toMatchObject({ amountCents: 750, paidCents: 750, markedBy: OWNER, method: "manual" });
+		expect(r.shares[1]).toMatchObject({ amountCents: 750, paidCents: 750, paidAt: NOW, refund: { cents: 250, markedBy: OWNER } });
 		expect(shareStatus(r.shares[1], OWNER)).toBe("paid");
 	});
 	it("idempotente: quitar de novo não muda paidAt", () => {
@@ -301,7 +303,7 @@ describe("comprovantes: payShare, undoShare, recalcShares", () => {
 		const left = recalcShares(paid, OWNER, 3000, [OWNER, "b"]);
 		expect(left.find((s) => s.uid === "a")).toMatchObject({ amountCents: 0, paidCents: 1000, method: "self", receipt: R });
 		expect(droppedReceiptKeys(paid, left)).toEqual([]);
-		expect(droppedReceiptKeys(paid, settleShare(left, OWNER, "a", NOW, OWNER)!.shares)).toEqual([R.key]);
+		expect(droppedReceiptKeys(paid, settleShare(left, OWNER, "a", NOW, OWNER)!.shares)).toEqual([]); // a devolução não apaga o comprovante do pagamento
 	});
 	it("normalizeShare não mexe em receipt de cota nova", () => {
 		const s = { ...sh("a", 1000, 1000), receipt: R };
@@ -351,5 +353,136 @@ describe("payShares (lote)", () => {
 		expect(swapped.find((s) => s.uid === "a")).not.toHaveProperty("batch");
 		expect(swapped.find((s) => s.uid === "b")).toMatchObject({ receipt: R, batch: BATCH });
 		expect(droppedReceiptKeys(paid, swapped)).toEqual([]); // "b" ainda referencia a chave
+	});
+});
+
+describe("devolução (refund): registro, desfazer, lote e admin", () => {
+	const R = { id: "x", key: "receipts/g/e/refund1", name: "devolucao.png", contentType: "image/png", size: 10 };
+	const PAY = { id: "p", key: "receipts/g/e/pay1", name: "pagamento.png", contentType: "image/png", size: 10 };
+	const start = [sh(OWNER, 500), sh("a", 750, 1000, { paidAt: NOW, method: "self", markedBy: "a", receipt: PAY })];
+
+	it("devolver guarda o registro e deixa o pagamento original (paidAt, method, comprovante) intacto", () => {
+		const r = settleShare(start, OWNER, "a", new Date("2026-11-12T12:00:00Z"), "adm", true, R)!;
+		expect(r.shares[1]).toMatchObject({
+			paidCents: 750,
+			paidAt: NOW,
+			method: "self",
+			receipt: PAY,
+			refund: { cents: 250, markedBy: "adm", byAdmin: true, receipt: R },
+		});
+		expect(shareStatus(r.shares[1], OWNER)).toBe("paid");
+		expect(refundCents(r.shares[1], OWNER)).toBe(0);
+		expect(droppedReceiptKeys(start, r.shares)).toEqual([]);
+	});
+	it("devolver sem admin não marca byAdmin; repetir é idempotente", () => {
+		const once = settleShare(start, OWNER, "a", NOW, OWNER)!;
+		expect(once.shares[1].refund).toEqual({ cents: 250, at: NOW, markedBy: OWNER });
+		expect(settleShare(once.shares, OWNER, "a", NOW, OWNER)!.changed).toBe(false);
+	});
+	it("desfazer a devolução devolve o valor a receber e solta só o comprovante da devolução", () => {
+		const done = settleShare(start, OWNER, "a", NOW, OWNER, false, R)!.shares;
+		const undone = undoShare(done, OWNER, "a")!;
+		expect(undone.shares[1]).toEqual(start[1]);
+		expect(shareStatus(undone.shares[1], OWNER)).toBe("refund");
+		expect(droppedReceiptKeys(done, undone.shares)).toEqual([R.key]);
+	});
+	it("quem saiu da divisão: a linha fica (cota 0, nada pago) com a devolução inteira; desfazer volta ao reembolso", () => {
+		const left = recalcShares(start, OWNER, 1500, [OWNER]);
+		expect(left.find((x) => x.uid === "a")).toMatchObject({ amountCents: 0, paidCents: 1000 });
+		const done = settleShare(left, OWNER, "a", NOW, OWNER)!.shares;
+		expect(done.find((x) => x.uid === "a")).toMatchObject({ amountCents: 0, paidCents: 0, refund: { cents: 1000 } });
+		expect(undoShare(done, OWNER, "a")!.shares.find((x) => x.uid === "a")).toMatchObject({ amountCents: 0, paidCents: 1000 });
+	});
+	it("mudar o valor da cota apaga o registro de uma devolução antiga (e solta o comprovante dela)", () => {
+		const done = settleShare(start, OWNER, "a", NOW, OWNER, false, R)!.shares;
+		const same = recalcShares(done, OWNER, 1500, [OWNER, "a"]);
+		expect(same.find((x) => x.uid === "a")!.refund).toBeDefined();
+		const changed = recalcShares(done, OWNER, 3000, [OWNER, "a"]);
+		expect(changed.find((x) => x.uid === "a")).not.toHaveProperty("refund");
+		expect(droppedReceiptKeys(done, changed)).toEqual([R.key]);
+	});
+	it("refundShares: várias devoluções, um comprovante e um lote; não deve / dono / inexistente", () => {
+		const shares = [sh(OWNER, 0), sh("a", 100, 400), sh("b", 100, 300), sh("c", 100, 100)];
+		const batch = { id: "L", totalCents: 500, count: 2 };
+		const r = refundShares(shares, OWNER, ["a", "b", "c", OWNER, "zz"], NOW, OWNER, R, batch);
+		expect(r.outcomes).toEqual([
+			{ uid: OWNER, result: "not_found" },
+			{ uid: "a", result: "refunded", amountCents: 300 },
+			{ uid: "b", result: "refunded", amountCents: 200 },
+			{ uid: "c", result: "already_refunded" },
+			{ uid: "zz", result: "not_found" },
+		]);
+		expect(r.shares.find((x) => x.uid === "a")).toMatchObject({ paidCents: 100, refund: { cents: 300, receipt: R, batch } });
+		expect(r.shares.find((x) => x.uid === "c")).toEqual(shares[3]);
+		expect(refundShares(shares, OWNER, ["c"], NOW, OWNER, undefined, batch).changed).toBe(false);
+	});
+	it("marcar como pago pelo administrador registra markedByAdmin; o dono ou 'já paguei' limpam; desfazer remove", () => {
+		const adm = settleShare([sh(OWNER, 100), sh("a", 100)], OWNER, "a", NOW, "adm", true)!.shares;
+		expect(adm[1]).toMatchObject({ markedBy: "adm", method: "manual", markedByAdmin: true });
+		expect(undoShare(adm, OWNER, "a")!.shares[1]).toEqual(sh("a", 100, 0));
+		const partial = [sh(OWNER, 100), sh("a", 200, 100, { markedBy: "adm", method: "manual", markedByAdmin: true, paidAt: NOW })];
+		expect(payShare(partial, OWNER, "a", NOW, "a")!.shares[1]).not.toHaveProperty("markedByAdmin");
+		expect(settleShare(partial, OWNER, "a", NOW, OWNER)!.shares[1]).not.toHaveProperty("markedByAdmin");
+	});
+});
+
+describe("devolução parcial e saída da divisão (registro nunca fica velho)", () => {
+	const R = { id: "x", key: "receipts/g/e/refund1", name: "dev.png", contentType: "image/png", size: 10 };
+	it("pagou 1000, cota cai para 600, 'Devolvi' 400, depois sai da divisão: o registro some e os 600 voltam a ser 'a receber de volta'", () => {
+		const start = [sh(OWNER, 500), sh("a", 600, 1000, { paidAt: NOW, method: "self", markedBy: "a" })];
+		const refunded = settleShare(start, OWNER, "a", NOW, OWNER, false, R)!.shares;
+		expect(refunded[1]).toMatchObject({ paidCents: 600, refund: { cents: 400 } });
+		const left = recalcShares(refunded, OWNER, 1500, [OWNER]);
+		const a = left.find((x) => x.uid === "a")!;
+		expect(a).toMatchObject({ amountCents: 0, paidCents: 600 });
+		expect(a).not.toHaveProperty("refund");
+		expect(shareStatus(a, OWNER)).toBe("refund");
+		expect(refundCents(a, OWNER)).toBe(600);
+		expect(droppedReceiptKeys(refunded, left)).toEqual([R.key]); // o comprovante da devolução antiga é solto
+		// desfazer não existe mais (nada foi devolvido ainda sobre o novo valor); devolver agora registra os 600
+		expect(settleShare(left, OWNER, "a", NOW, OWNER)!.shares.find((x) => x.uid === "a")).toMatchObject({ paidCents: 0, refund: { cents: 600 } });
+	});
+	it("qualquer mudança de valor da cota apaga o registro (inclusive para 0); mesmo valor mantém", () => {
+		const refunded = settleShare([sh(OWNER, 500), sh("a", 600, 1000)], OWNER, "a", NOW, OWNER)!.shares;
+		expect(recalcShares(refunded, OWNER, 1200, [OWNER, "a"]).find((x) => x.uid === "a")!.refund).toBeDefined();
+		expect(recalcShares(refunded, OWNER, 1800, [OWNER, "a"]).find((x) => x.uid === "a")).not.toHaveProperty("refund");
+	});
+	it("hasPayments: cota com devolução registrada ou comprovante conta como pagamento, mesmo com paidCents 0", () => {
+		const zero = [sh(OWNER, 1500), sh("a", 0, 0, { refund: { cents: 1000, at: NOW, markedBy: OWNER } })];
+		expect(hasPayments({ paidBy: OWNER, shares: zero })).toBe(true);
+		expect(hasPayments({ paidBy: OWNER, shares: [sh(OWNER, 1000), sh("a", 1000, 0, { receipt: { id: "r", key: "k", name: "n", contentType: "image/png", size: 1 } })] })).toBe(true);
+		expect(hasPayments({ paidBy: OWNER, shares: [sh(OWNER, 1000), sh("a", 1000)] })).toBe(false);
+	});
+	it("refundShares sobre cota pendente nunca a quita: already_refunded e nada muda", () => {
+		const r = refundShares([sh(OWNER, 0), sh("a", 100, 40)], OWNER, ["a"], NOW, OWNER, undefined, { id: "L", totalCents: 1, count: 1 });
+		expect(r.changed).toBe(false);
+		expect(r.outcomes).toEqual([{ uid: "a", result: "already_refunded" }]);
+	});
+});
+
+describe("linha de quem saiu e já teve tudo devolvido (cota 0, nada pago, com histórico)", () => {
+	const R = { id: "x", key: "receipts/g/e/refund1", name: "dev.png", contentType: "image/png", size: 10 };
+	const PAY = { id: "p", key: "receipts/g/e/pay1", name: "pag.png", contentType: "image/png", size: 10 };
+	const settledLeft = () => {
+		const start = [sh(OWNER, 500), sh("a", 750, 1000, { paidAt: NOW, method: "self", markedBy: "a", receipt: PAY })];
+		const left = recalcShares(start, OWNER, 1500, [OWNER]);
+		return settleShare(left, OWNER, "a", NOW, OWNER, false, R)!.shares; // a: amount 0, paid 0, refund{R}, receipt PAY
+	};
+	it("A: recalcular de novo sem a pessoa (outra edição) mantém a linha intacta, com os dois comprovantes", () => {
+		const settled = settledLeft();
+		expect(settled.find((x) => x.uid === "a")).toMatchObject({ amountCents: 0, paidCents: 0, refund: { cents: 1000 }, receipt: PAY });
+		const again = recalcShares(settled, OWNER, 2000, [OWNER, "b"]);
+		expect(again.find((x) => x.uid === "a")).toEqual(settled.find((x) => x.uid === "a"));
+		expect(droppedReceiptKeys(settled, again)).toEqual([]);
+	});
+	it("A: linha zerada sem histórico (sem devolução nem comprovante) continua sumindo", () => {
+		expect(recalcShares([sh(OWNER, 500), sh("z", 0, 0)], OWNER, 1000, [OWNER]).some((x) => x.uid === "z")).toBe(false);
+	});
+	it("B: ao voltar para a divisão começa limpa (sem paidAt, método, markedBy, comprovante nem devolução) e solta os comprovantes", () => {
+		const settled = settledLeft();
+		const back = recalcShares(settled, OWNER, 3000, [OWNER, "a"]);
+		expect(back.find((x) => x.uid === "a")).toEqual(sh("a", 1500, 0));
+		expect(shareStatus(back.find((x) => x.uid === "a")!, OWNER)).toBe("pending");
+		expect(droppedReceiptKeys(settled, back).sort()).toEqual([PAY.key, R.key].sort());
 	});
 });

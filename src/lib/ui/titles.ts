@@ -15,6 +15,8 @@ export function screenInfo(pathname: string, search = ""): ScreenInfo {
 	if (pathname === "/app/grupos/novo") return { title: "Criar grupo", back: "/app", nav: "/app" };
 	const report = /^\/app\/grupos\/([^/]+)\/relatorio$/.exec(pathname);
 	if (report) return { title: "Relatório", back: `/app/grupos/${report[1]}`, nav: "/app" };
+	const editing = /^\/app\/grupos\/([^/]+)\/despesas\/([^/]+)\/editar$/.exec(pathname);
+	if (editing) return { title: "Editar despesa", back: `/app/grupos/${editing[1]}/despesas/${editing[2]}`, nav: "/app" };
 	const expense = /^\/app\/grupos\/([^/]+)\/despesas\/([^/]+)$/.exec(pathname);
 	if (expense) {
 		if (expense[2] === "nova") return { title: "Lançar despesa", back: `/app/grupos/${expense[1]}`, nav: "/app" };

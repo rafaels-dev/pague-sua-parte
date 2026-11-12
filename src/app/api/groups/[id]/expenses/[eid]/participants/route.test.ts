@@ -40,7 +40,7 @@ describe("PUT /expenses/:eid/participants", () => {
 		updateParticipants.mockResolvedValue({ status: "no_expense" });
 		expect(await out(await put({ participantUids: ["u1"] }))).toEqual([404, { error: "Despesa não encontrada." }]);
 		updateParticipants.mockResolvedValue({ status: "forbidden" });
-		expect(await out(await put({ participantUids: ["u1"] }))).toEqual([403, { error: "Só quem pagou a despesa pode mudar quem divide." }]);
+		expect(await out(await put({ participantUids: ["u1"] }))).toEqual([403, { error: "Só quem pagou a despesa ou quem administra o grupo pode mudar quem divide." }]);
 		updateParticipants.mockResolvedValue({ status: "invalid", field: "amountCents", error: "pequeno" });
 		expect(await out(await put({ participantUids: ["u1"] }))).toEqual([422, { error: "pequeno", field: "amountCents" }]);
 		updateParticipants.mockResolvedValue({ status: "conflict" });

@@ -17,9 +17,10 @@ import { installmentSplitLine, monthlySplitLine, splitPreview } from "@/lib/ui/s
 import { cx } from "@/lib/ui/cx";
 import { AttachmentPicker } from "./attachment-picker";
 import { PaymentChoice, type PaymentKind } from "./payment-choice";
-import { setFlash } from "./types";
+import { normalizeExpense, setFlash, type ExpenseDetailData } from "./types";
+import { splitMembersFor } from "./resplit-sheet";
 import { useAttachments } from "./use-attachments";
-import { WhoSplits, type SplitMode } from "./who-splits";
+import { modeFor, WhoSplits, type SplitMode } from "./who-splits";
 
 export type FormErrors = Partial<Record<"amount" | "description" | "date" | "dueDate" | "installments" | "dayOfMonth" | "endPeriod" | "participants" | "files" | "form", string>>;
 
@@ -89,6 +90,8 @@ export type NewExpenseFormViewProps = {
 	/** Texto do botão enquanto envia (ex.: "Enviando anexos..."). */
 	busyLabel?: string;
 	attachments: React.ReactNode;
+	/** Editando uma despesa que já existe: sem escolher quem pagou, sem anexos, sem parcelas/todo mês. */
+	editing?: boolean;
 	onAmount: (cents: number) => void;
 	onDescription: (v: string) => void;
 	onDate: (v: string) => void;
@@ -117,8 +120,9 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 	const total = p.payment === "installments" ? "em cada parcela" : monthly ? "em cada mês" : "no total";
 	const payerQuestion = monthly ? "Quem paga?" : "Quem pagou?";
 	const preview = splitPreview(p.amountCents, p.selected, payerUid, payerName);
+	const editing = !!p.editing;
 	const payerChoice =
-		payerOptions.length > 1 ? (
+		!editing && payerOptions.length > 1 ? (
 			<fieldset className="space-y-2">
 				<legend className="text-title-large">{payerQuestion}</legend>
 				{payerOptions.length <= 3 ? (
@@ -134,7 +138,7 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 				{payerIsManaged && payer.hasPixKey !== false && <p className="text-body-large text-on-surface-variant">Você lança no nome de {payer.name}. O dinheiro vai para a chave Pix de {payer.name}.</p>}
 			</fieldset>
 		) : null;
-	const blocker = p.selfNoPixKey && !payerIsManaged ? (
+	const blocker = editing ? null : p.selfNoPixKey && !payerIsManaged ? (
 		<NoPixKeyBlock returnTo={`/app/grupos/${encodeURIComponent(p.groupId)}/despesas/nova`} />
 	) : payerIsManaged && payer.hasPixKey === false ? (
 		<ManagedNoPixKeyBlock groupId={p.groupId} uid={payer.uid} name={payer.name} />
@@ -160,6 +164,9 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 			{payerChoice}
 			<MoneyField id="campo-valor" label={p.payment === "installments" ? "Valor de cada parcela" : monthly ? "Valor de cada mês" : "Quanto custou?"} cents={p.amountCents} onChange={p.onAmount} error={p.errors.amount} autoFocus={payerOptions.length <= 1} />
 
+			{editing ? (
+				<EditPaymentField payment={p.payment} onPayment={p.onPayment} dueDate={p.dueDate} onDueDate={p.onDueDate} purchaseDate={p.date} error={p.errors.dueDate} />
+			) : (
 			<PaymentChoice
 				payment={p.payment}
 				onPayment={p.onPayment}
@@ -175,6 +182,7 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 				onEndPeriod={p.onEndPeriod}
 				errors={p.errors}
 			/>
+			)}
 
 			<TextField
 				id="campo-descricao"
@@ -253,7 +261,12 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 				)}
 			</fieldset>
 
-			{!monthly && p.attachments}
+			{!monthly && !editing && p.attachments}
+			{editing && (
+				<p className="text-body-large text-on-surface-variant">
+					Quem já pagou continua como pago, com o comprovante. Se a parte de alguém ficar menor do que ele pagou, a diferença aparece como &ldquo;a receber de volta&rdquo;.
+				</p>
+			)}
 
 			{p.errors.form && (
 				<Banner tone="error" icon="error" role="alert">
@@ -263,9 +276,48 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 
 			{/* No fim do formulário, de propósito: a pessoa passa por tudo antes de lançar. */}
 			<Button type="submit" fullWidth loading={p.busy} icon={p.busy ? undefined : "check"}>
-				{p.busy ? (p.busyLabel ?? (monthly ? "Criando..." : "Lançando...")) : monthly ? "Criar despesa fixa" : "Lançar despesa"}
+				{editing ? (p.busy ? "Salvando..." : "Salvar alterações") : p.busy ? (p.busyLabel ?? (monthly ? "Criando..." : "Lançando...")) : monthly ? "Criar despesa fixa" : "Lançar despesa"}
 			</Button>
 		</form>
+	);
+}
+
+/** Ao editar: "À vista" ou "Cartão" (com a data da próxima fatura). Parcela só muda o vencimento. */
+function EditPaymentField({
+	payment,
+	onPayment,
+	dueDate,
+	onDueDate,
+	purchaseDate,
+	error,
+}: Readonly<{ payment: PaymentKind; onPayment: (p: PaymentKind) => void; dueDate: string; onDueDate: (v: string) => void; purchaseDate: string; error?: string }>) {
+	const installment = payment === "installments";
+	return (
+		<div className="space-y-3">
+			{!installment && (
+				<SegmentedButton
+					label="Como foi pago"
+					value={payment === "card" ? "card" : "cash"}
+					options={[
+						{ value: "cash", label: "À vista" },
+						{ value: "card", label: "Cartão" },
+					]}
+					onChange={(v) => onPayment(v === "card" ? "card" : "cash")}
+				/>
+			)}
+			{(payment === "card" || installment) && (
+				<TextField
+					id="campo-vencimento"
+					type="date"
+					floatLabel
+					label={installment ? "Vencimento desta parcela" : "Data da próxima fatura"}
+					value={dueDate}
+					min={purchaseDate}
+					onChange={(ev) => onDueDate(ev.target.value)}
+					error={error}
+				/>
+			)}
+		</div>
 	);
 }
 
@@ -304,7 +356,7 @@ const SERVER_FIELD: Record<string, keyof FormErrors> = {
 	files: "files",
 };
 
-export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
+export function NewExpenseForm({ groupId, editExpenseId }: Readonly<{ groupId: string; editExpenseId?: string }>) {
 	const router = useRouter();
 	const { user } = useAuth();
 	const [group, setGroup] = useState<Group | null>(null);
@@ -312,6 +364,8 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 	const [noPixKey, setNoPixKey] = useState(false);
 	const [payerUid, setPayerUid] = useState<string | null>(null);
 	const [reloadKey, setReloadKey] = useState(0);
+	// Edição: a despesa carregada (a tela só aparece para quem pode editar).
+	const [editing, setEditing] = useState<ExpenseDetailData | null>(null);
 
 	const [amountCents, setAmountCents] = useState(0);
 	const [description, setDescription] = useState("");
@@ -333,12 +387,29 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 	useEffect(() => {
 		if (!user) return;
 		let cancelled = false;
-		Promise.all([apiFetch<Group>(`/api/groups/${encodeURIComponent(groupId)}`), apiFetch<{ pixKey: unknown | null }>("/api/me")])
-			.then(([g, me]) => {
+		Promise.all([
+			apiFetch<Group>(`/api/groups/${encodeURIComponent(groupId)}`),
+			apiFetch<{ pixKey: unknown | null }>("/api/me"),
+			editExpenseId ? apiFetch<ExpenseDetailData>(`/api/groups/${encodeURIComponent(groupId)}/expenses/${encodeURIComponent(editExpenseId)}`) : Promise.resolve(null),
+		])
+			.then(([g, me, ex]) => {
 				if (cancelled) return;
 				const detail = normalizeGroupDetail(g);
 				setGroup(detail);
 				setNoPixKey(!me.pixKey);
+				if (ex) {
+					const exp = normalizeExpense(ex);
+					setEditing(exp);
+					setAmountCents(exp.amountCents);
+					setDescription(exp.description);
+					setDate(exp.date);
+					setDateOpen(true);
+					setDueDate(exp.dueDate ?? "");
+					setPayment(exp.installment ? "installments" : exp.dueDate ? "card" : "cash");
+					setSelected(exp.participantUids);
+					setSplitMode(modeFor(exp.participantUids, detail.members.map((m) => m.uid)));
+					return;
+				}
 				setSelected((cur) => cur ?? detail.members.map((m) => m.uid));
 			})
 			.catch((e) => {
@@ -349,7 +420,7 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 		return () => {
 			cancelled = true;
 		};
-	}, [user, groupId, reloadKey]);
+	}, [user, groupId, reloadKey, editExpenseId]);
 
 	// Depois de mostrar os erros, leva o foco ao primeiro campo com problema.
 	useEffect(() => {
@@ -389,13 +460,21 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 			</EmptyState>
 		);
 	}
-	if (!group || !selected) return <NewExpenseSkeleton />;
+	if (!group || !selected || (editExpenseId && !editing)) return <NewExpenseSkeleton />;
+	if (editing && !editing.canEdit) {
+		return (
+			<EmptyState tone="error" icon="error" role="alert" title="Você não pode editar" action={<Button href={`/app/grupos/${encodeURIComponent(groupId)}/despesas/${encodeURIComponent(editing.id)}`}>Voltar para a despesa</Button>}>
+				Só quem pagou a despesa ou quem administra o grupo pode editá-la.
+			</EmptyState>
+		);
+	}
+	const formMembers = editing ? splitMembersFor(editing, group.members) : group.members;
 	const myUid = group.members.find((m) => m.isYou)?.uid ?? "";
 	const hasManaged = group.members.some((m) => m.kind === "managed" && m.youManage);
-	const payer = payerUid ?? myUid;
+	const payer = editing ? editing.paidBy.uid : (payerUid ?? myUid);
 	const payerIsManaged = payer !== myUid && group.members.some((m) => m.uid === payer);
 	// Sem pessoas sem celular para cuidar, a falta da chave Pix troca a tela inteira; com elas, o aviso aparece no formulário.
-	if (noPixKey && !hasManaged) {
+	if (noPixKey && !hasManaged && !editing) {
 		return (
 			<div className="mx-auto max-w-xl">
 				<NoPixKeyBlock returnTo={`/app/grupos/${encodeURIComponent(groupId)}/despesas/nova`} />
@@ -476,10 +555,41 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 		}
 	}
 
+	/** Editar uma despesa que já existe: manda o estado completo dos campos editáveis. */
+	async function submitEdit() {
+		if (!editing) return;
+		setErrors({});
+		setBusy(true);
+		try {
+			await apiFetch(`/api/groups/${encodeURIComponent(groupId)}/expenses/${encodeURIComponent(editing.id)}`, {
+				method: "PATCH",
+				body: JSON.stringify({
+					description: description.trim(),
+					amountCents,
+					date,
+					participantUids: selected,
+					...(payment === "card" || payment === "installments" ? { dueDate } : {}),
+				}),
+			});
+			setFlash("Despesa atualizada.");
+			router.push(`/app/grupos/${encodeURIComponent(groupId)}/despesas/${encodeURIComponent(editing.id)}`);
+		} catch (err) {
+			setBusy(false);
+			if (err instanceof ApiError) {
+				if (err.status === 409) return showErrors({ form: `${err.message} Volte para a despesa e abra a edição de novo.` });
+				const key = err.field ? SERVER_FIELD[err.field] : undefined;
+				if (key) return showErrors({ [key]: err.message });
+				return showErrors({ form: err.message });
+			}
+			showErrors({ form: "Não foi possível salvar. Tente de novo." });
+		}
+	}
+
 	async function submit(withoutAttachmentOk = false) {
 		if (busy) return;
 		const e = validate();
 		if (Object.keys(e).length > 0) return showErrors(e);
+		if (editing) return submitEdit();
 		if (payment === "monthly") return submitMonthly();
 		// Sem anexo, pergunta antes: o comprovante ajuda os outros a confiar na despesa.
 		if (att.items.length === 0 && !withoutAttachmentOk) return setConfirmNoAttachment(true);
@@ -524,7 +634,8 @@ export function NewExpenseForm({ groupId }: Readonly<{ groupId: string }>) {
 		<>
 			<NewExpenseFormView
 				groupId={groupId}
-				members={group.members}
+				members={formMembers}
+				editing={!!editing}
 				payerUid={payer}
 				selfNoPixKey={noPixKey}
 				onPayer={(uid) => {

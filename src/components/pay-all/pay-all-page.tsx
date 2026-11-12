@@ -11,6 +11,7 @@ import { useLocationSearch } from "@/lib/ui/use-location-search";
 import { groupParam, normalizeScopeGroup, scopedApiUrl } from "@/lib/ui/group-scope";
 import {
 	buildPayAllShareText,
+	batchRequestItems,
 	itemKey,
 	normalizeBatchResult,
 	normalizePayables,
@@ -93,7 +94,7 @@ export function PayAllPage() {
 		setFileError(null);
 		try {
 			const body = new FormData();
-			body.append("data", JSON.stringify({ items: chosen.map(({ groupId, expenseId, shareUid }) => ({ groupId, expenseId, shareUid })) }));
+			body.append("data", JSON.stringify({ items: batchRequestItems(chosen) }));
 			if (file) body.append("file", file);
 			const res = normalizeBatchResult(await apiFetch<unknown>("/api/me/payments", { method: "POST", body }));
 			const paidKeys = new Set(res.paid.map(itemKey));

@@ -7,9 +7,10 @@ vi.mock("@/lib/db/client", () => ({ getDb: vi.fn().mockResolvedValue({ fake: tru
 vi.mock("@/lib/storage/attachments", () => ({ getAttachmentStore: () => ({ fakeStore: true }) }));
 const getExpenseDetail = vi.fn();
 const deleteExpense = vi.fn();
-vi.mock("@/lib/expenses/repo", () => ({ getExpenseDetail, deleteExpense }));
+const editExpense = vi.fn();
+vi.mock("@/lib/expenses/repo", () => ({ getExpenseDetail, deleteExpense, editExpense }));
 
-const { GET, DELETE } = await import("./route");
+const { GET, DELETE, PATCH } = await import("./route");
 const ctx = { params: Promise.resolve({ id: "g", eid: "e" }) };
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -58,5 +59,34 @@ describe("DELETE /expenses/:eid", () => {
 		requireUser.mockRejectedValue(new UnauthorizedError("x"));
 		expect((await del()).status).toBe(401);
 		expect(deleteExpense).not.toHaveBeenCalled();
+	});
+});
+
+describe("PATCH /expenses/:eid (editar)", () => {
+	const body = { description: "Feira", amountCents: 4000, date: "2026-11-10", participantUids: ["u1", "u2"] };
+	const patch = (b: unknown) => PATCH(new Request("http://x", { method: "PATCH", body: typeof b === "string" ? b : JSON.stringify(b) }), ctx);
+	const out = async (res: Response) => [res.status, await res.json()];
+	it("200 com o detalhe e repassa quem edita e os campos", async () => {
+		editExpense.mockResolvedValue({ status: "ok", expense: { id: "e", canEdit: true } });
+		expect(await out(await patch(body))).toEqual([200, { id: "e", canEdit: true }]);
+		expect(editExpense).toHaveBeenCalledWith({ fake: true }, { fakeStore: true }, { groupId: "g", eid: "e", uid: "u1", input: body });
+	});
+	it("mensagens do contrato: 404, 403 (dono ou admin), 422 e 409", async () => {
+		editExpense.mockResolvedValue({ status: "no_group" });
+		expect(await out(await patch(body))).toEqual([404, { error: "Grupo não encontrado." }]);
+		editExpense.mockResolvedValue({ status: "no_expense" });
+		expect(await out(await patch(body))).toEqual([404, { error: "Despesa não encontrada." }]);
+		editExpense.mockResolvedValue({ status: "forbidden" });
+		expect(await out(await patch(body))).toEqual([403, { error: "Só quem pagou a despesa ou quem administra o grupo pode editar." }]);
+		editExpense.mockResolvedValue({ status: "invalid", error: "Esse valor é pequeno demais para dividir entre tantas pessoas.", field: "amountCents" });
+		expect((await patch(body)).status).toBe(422);
+		editExpense.mockResolvedValue({ status: "conflict" });
+		expect(await out(await patch(body))).toEqual([409, { error: "Essa despesa acabou de ser alterada. Tente de novo." }]);
+	});
+	it("422 para corpo inválido, sem chamar o repo; 401 sem login", async () => {
+		for (const b of ["not json", {}, { ...body, date: undefined }, { ...body, amountCents: 0 }, null]) expect((await patch(b)).status).toBe(422);
+		expect(editExpense).not.toHaveBeenCalled();
+		requireUser.mockRejectedValue(new UnauthorizedError("x"));
+		expect((await patch(body)).status).toBe(401);
 	});
 });

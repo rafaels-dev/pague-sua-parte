@@ -7,7 +7,7 @@ import { formatBRL } from "@/lib/money";
 import { todayISO } from "@/lib/ui/dates";
 import { dueShort, installmentLabel, untilEndOfMonthLine } from "@/lib/ui/due-dates";
 import { receivablesUrl } from "@/lib/ui/group-scope";
-import { debtorCaption, payeeNote, type Debtor, type Receivables, type ReceivableItem } from "@/lib/ui/receivables";
+import { debtorCaption, payeeNote, REFUND_BACK_CHIP, type Debtor, type Receivables, type ReceivableItem } from "@/lib/ui/receivables";
 import { RECURRING_CHIP } from "@/lib/ui/recurrences";
 
 export type ReceivablesPageState =
@@ -24,10 +24,11 @@ function ItemRow({ item, today, showGroup = true }: Readonly<{ item: ReceivableI
 	const due = dueShort(item.dueDate, item.overdue, today);
 	const note = payeeNote(item);
 	const chips = [
+		item.kind === "refund" && { tone: "ok" as const, text: REFUND_BACK_CHIP },
 		note && { tone: "wait" as const, text: note },
 		item.installment && { tone: "neutral" as const, text: installmentLabel(item.installment) },
 		item.recurrence && { tone: "neutral" as const, text: RECURRING_CHIP },
-	].filter((c): c is { tone: "wait" | "neutral"; text: string } => !!c);
+	].filter((c): c is { tone: "wait" | "neutral" | "ok"; text: string } => !!c);
 	return (
 		<li>
 			<Link

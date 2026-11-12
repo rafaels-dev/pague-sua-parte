@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildCollectText, collectLink, debtorCaption, firstName, normalizeReceivables, payeeNote, type Debtor, type ReceivableItem } from "./receivables";
 
 const item = (description: string, dueCents = 1000, o: Partial<ReceivableItem> = {}): ReceivableItem => ({
+	kind: "share",
 	groupId: "g1",
 	groupName: "Casa",
 	expenseId: description,

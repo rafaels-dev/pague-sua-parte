@@ -15,6 +15,9 @@ import {
 	selectedItems,
 	selectedTotal,
 	selectionLabel,
+	REFUND_CHIP,
+	ambiguousRecipientIds,
+	pixTail,
 	type FailReason,
 	type PayableItem,
 	type PayableRecipient,
@@ -55,10 +58,12 @@ function ItemRow({
 }: Readonly<{ item: PayableItem; checked: boolean; onToggle: () => void; today: string; showGroup?: boolean }>) {
 	const due = dueShort(item.dueDate, item.overdue, today);
 	const chips = [
-		!item.isYou && { tone: "wait" as const, text: `Parte de ${item.shareName}` },
+		item.kind === "refund" && { tone: "ok" as const, text: REFUND_CHIP },
+		item.kind !== "refund" && !item.isYou && { tone: "wait" as const, text: `Parte de ${item.shareName}` },
+		item.kind === "refund" && !item.isYou && { tone: "wait" as const, text: `Devolução de ${item.shareName}` },
 		item.installment && { tone: "neutral" as const, text: installmentLabel(item.installment) },
 		item.recurrence && { tone: "neutral" as const, text: RECURRING_CHIP },
-	].filter((c): c is { tone: "wait" | "neutral"; text: string } => !!c);
+	].filter((c): c is { tone: "wait" | "neutral" | "ok"; text: string } => !!c);
 	return (
 		<li>
 			<label className="flex min-h-14 cursor-pointer items-start gap-3 py-3">
@@ -96,8 +101,11 @@ export function RecipientCardView({
 	onCopyKey,
 	onPaid,
 	showGroup = true,
+	keyHint = false,
 }: Readonly<{
 	showGroup?: boolean;
+	/** A mesma pessoa tem dois cartões (chaves Pix diferentes): mostra o final da chave. */
+	keyHint?: boolean;
 	recipient: PayableRecipient;
 	card: CardState;
 	onToggleItem: (key: string) => void;
@@ -122,6 +130,7 @@ export function RecipientCardView({
 						Para {recipient.payee.name}
 					</h2>
 				</div>
+				{keyHint && <p className="mt-1 text-body-large text-on-surface-variant">{pixTail(recipient.pix.key)}</p>}
 				<p className="money mt-3 text-display-small font-bold text-error">{formatBRL(total)}</p>
 				<p className="text-body-large text-on-surface-variant">{selectionLabel(chosen.length, recipient.items.length)}</p>
 			</div>
@@ -326,6 +335,7 @@ export function PayAllView({
 			</div>
 		);
 	}
+	const ambiguous = ambiguousRecipientIds(recipients);
 	return (
 		<div className="mx-auto max-w-2xl space-y-5">
 			{note}
@@ -345,6 +355,7 @@ export function PayAllView({
 					onCopyKey={() => onCopyKey(r.id)}
 					onPaid={() => onPaid(r.id)}
 					showGroup={!scope}
+					keyHint={ambiguous.has(r.id)}
 				/>
 			))}
 			{recipients.length === 0 && (

@@ -11,6 +11,7 @@ export function ShareExpenseContent({
 	copyFailed,
 	dismissLabel = "Agora não",
 	whatsappLabel = "Avisar no WhatsApp",
+	preview = false,
 	onCopy,
 	onShare,
 	onClose,
@@ -21,6 +22,8 @@ export function ShareExpenseContent({
 	copyFailed: boolean;
 	dismissLabel?: string;
 	whatsappLabel?: string;
+	/** Mostra a mensagem pronta antes dos botões (resumos). */
+	preview?: boolean;
 	onCopy: () => void;
 	onShare: () => void;
 	onClose: () => void;
@@ -28,6 +31,11 @@ export function ShareExpenseContent({
 	return (
 		<div className="space-y-4">
 			<p className="text-body-large text-on-surface-variant">{intro}</p>
+			{preview && (
+				<pre aria-label="Prévia da mensagem" className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-shape-md bg-surface-container-high p-4 font-sans text-body-large text-on-surface">
+					{text}
+				</pre>
+			)}
 			<div className="flex flex-col gap-3">
 				<Button href={buildWhatsAppUrl(text)} target="_blank" rel="noopener noreferrer" icon="share" fullWidth>
 					{whatsappLabel}

@@ -3,7 +3,7 @@ import { ObjectId, type Db } from "mongodb";
 import type { ExpenseDoc } from "@/lib/expenses/repo";
 import { releaseReceipts } from "@/lib/expenses/repo";
 import type { AttachmentStore } from "@/lib/storage/attachments";
-import { payBatch, validateBatch } from "./repo";
+import { itemId, payBatch, validateBatch } from "./repo";
 
 const G1 = new ObjectId("507f1f77bcf86cd799439011");
 const G2 = new ObjectId("507f1f77bcf86cd799439012");
@@ -49,7 +49,7 @@ function fakeDb(docs: ExpenseDoc[], opts: { failOn?: ObjectId; throwOn?: ObjectI
 		}),
 		find: vi.fn((f: Record<string, { $in?: string[] }>) => ({
 			toArray: async () => {
-				const keys = f["shares.receipt.key"]?.$in ?? [];
+				const keys = f["shares.receipt.key"]?.$in ?? (f as unknown as { $or: Record<string, { $in: string[] }>[] }).$or?.[0]?.["shares.receipt.key"]?.$in ?? [];
 				return [...state.values()].filter((d) => d.shares.some((s) => s.receipt && keys.includes(s.receipt.key))).map((d) => copy(d));
 			},
 		})),
@@ -66,7 +66,8 @@ function fakeDb(docs: ExpenseDoc[], opts: { failOn?: ObjectId; throwOn?: ObjectI
 			toArray: async () => GROUPS.filter((g) => f._id.$in.some((id) => id.equals(g._id)) && g.members.some((x) => x.uid === f["members.uid"])),
 		})),
 	};
-	const db = { collection: (n: string) => (n === "expenses" ? expenses : groups) } as unknown as Db;
+	const users = { find: vi.fn(() => ({ toArray: async () => [] })) };
+	const db = { collection: (n: string) => (n === "expenses" ? expenses : n === "users" ? users : groups) } as unknown as Db;
 	return { db, state, expenses, get: (id: ObjectId) => state.get(id.toHexString())! };
 }
 const fakeStore = () =>
@@ -84,7 +85,7 @@ describe("validateBatch", () => {
 	});
 	it("recusa destinatários diferentes (mesma pessoa com outra chave Pix) sem mudar nada", async () => {
 		const { db, expenses } = fakeDb(base());
-		expect(await validateBatch(db, "me", [it1(G1, E1), it1(G1, E3)])).toEqual({ status: "invalid", error: "Escolha contas de um mesmo destinatário.", field: "items" });
+		expect(await validateBatch(db, "me", [it1(G1, E1), it1(G1, E3)])).toEqual({ status: "invalid", error: "Essas contas são de destinatários ou chaves Pix diferentes. Pague cada cartão separado.", field: "items" });
 		expect(expenses.updateOne).not.toHaveBeenCalled();
 	});
 	it("recusa pagador diferente com mesma chave", async () => {
@@ -243,5 +244,19 @@ describe("releaseReceipts (objeto compartilhado)", () => {
 		f.state.delete(E2.toHexString());
 		await releaseReceipts(f.db, store, ["receipts/batch/b/r", "receipts/batch/b/r"]);
 		expect(store.delete).toHaveBeenCalledWith(["receipts/batch/b/r"]);
+	});
+});
+
+describe("identidade das contas do lote (parte x devolução)", () => {
+	const base = { groupId: G1.toHexString(), expenseId: E1.toHexString(), shareUid: "me" };
+	it("o tipo faz parte da identidade: mesma despesa e pessoa, tipos diferentes, não colidem", () => {
+		expect(itemId(base)).not.toBe(itemId({ ...base, kind: "refund" }));
+		expect(itemId(base)).toBe(itemId({ ...base, kind: "share" }));
+	});
+	it("uma parte e uma devolução da mesma despesa e pessoa não são 'repetidas' na validação", async () => {
+		const { db } = fakeDb([mk(E1, G1)]);
+		const r = await validateBatch(db, "me", [base, { ...base, kind: "refund" }]);
+		expect(r).not.toEqual({ status: "invalid", error: "Escolha de 1 a 50 contas, sem repetir.", field: "items" });
+		expect((await validateBatch(db, "me", [{ ...base, kind: "refund" }, { ...base, kind: "refund" }])).status).toBe("invalid"); // repetida de verdade
 	});
 });
