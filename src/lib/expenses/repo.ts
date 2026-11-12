@@ -1,6 +1,6 @@
 import { ObjectId, type Db } from "mongodb";
 import { groupsCollection, type GroupDoc } from "@/lib/groups/repo";
-import { actsFor, expenseRole, isManagedMember, isManagedUid, isObjectIdHex } from "@/lib/groups/helpers";
+import { actsFor, canLaunchPaidBy, expenseRole, isGroupAdmin, isManagedMember, isManagedUid, isObjectIdHex } from "@/lib/groups/helpers";
 import type { PixKey } from "@/lib/pix/key";
 import {
 	deleteAttachments,
@@ -10,11 +10,16 @@ import {
 	type AttachmentMeta,
 	type AttachmentStore,
 } from "@/lib/storage/attachments";
-import { materializeSafely } from "@/lib/recurrences/materialize";
+import { describeError } from "@/lib/api/http";
+import { payerPix } from "./payer-pix";
+import { recurrencesCollection } from "@/lib/recurrences/collection";
+import { buildRecurringExpense, materializeSafely } from "@/lib/recurrences/materialize";
+import { currentPeriod, dueDateFor } from "@/lib/recurrences/period";
 import { usersCollection, type UserDoc } from "@/lib/users/repo";
 import { getBalancesForUids, sumBalances, ZERO_BALANCE } from "./balances";
 import { groupDebts } from "./group-debts";
-import { installmentDueDates, isPastDue, todayInSaoPaulo } from "./dates";
+import { buildOpenLists, UPCOMING_DAYS, type OpenExpense, type OpenSource, type UpcomingPayment } from "./group-open";
+import { addDays, installmentDueDates, isPastDue, todayInSaoPaulo } from "./dates";
 import {
 	addHelper,
 	droppedReceiptKeys,
@@ -49,7 +54,8 @@ export type ExpenseDoc = {
 	description: string;
 	amountCents: number;
 	date: string;
-	pix: PixKey & { payeeName: string };
+	/** Chave de quem pagou NO LANÇAMENTO. Ausente quando quem pagou não tinha chave no lançamento (o administrador lançando por outra pessoa, ou um mês de despesa fixa gerado sem chave): vale a atual dele (`fillMissingPix`). */
+	pix?: PixKey & { payeeName: string };
 	shares: ExpenseShare[];
 	/** Cresce a cada escrita em `shares` (concorrência otimista). Ausente em documentos antigos = 0. */
 	version?: number;
@@ -155,7 +161,10 @@ export type ExpenseDetail = {
 	/** Quem divide agora (cotas com valor > 0). */
 	participantUids: string[];
 	paidBy: { uid: string; name: string; picture: string | null; isYou: boolean; kind: "user" | "managed"; youManage: boolean };
-	pix: { type: string; key: string; payeeName: string };
+	/** `null` = quem pagou ainda não cadastrou a chave Pix (ninguém consegue pagar pelo app até cadastrar). */
+	pix: { type: string; key: string; payeeName: string } | null;
+	/** Quem lançou, quando não é quem pagou nem alguém que age por ele (o administrador lançando por outro). */
+	launchedBy: { name: string; admin: boolean } | null;
 	shares: {
 		uid: string;
 		name: string;
@@ -312,9 +321,34 @@ export async function loadPixKeys(
 	return out;
 }
 
+const PIX_TYPES: string[] = ["cpf", "cnpj", "email", "phone", "random"];
+
+/**
+ * Despesas sem cópia da chave Pix (lançadas pelo administrador por alguém sem chave, ou mês de despesa fixa gerado sem chave) usam a atual de quem pagou.
+ * Chave de formato inválido conta como ausente.
+ * Sem chave ainda, a despesa fica de fora (não há como pagar). Uma só consulta para todas.
+ */
+export async function fillMissingPix<T extends { groupId: ObjectId; paidBy: string; pix?: ExpenseDoc["pix"] }>(
+	db: Db,
+	groups: Pick<GroupDoc, "_id" | "members">[],
+	expenses: T[],
+): Promise<(T & { pix: NonNullable<ExpenseDoc["pix"]> })[]> {
+	const missing = expenses.filter((e) => !e.pix);
+	if (missing.length === 0) return expenses as (T & { pix: NonNullable<ExpenseDoc["pix"]> })[];
+	const byGroup = new Map<string, string[]>();
+	for (const e of missing) byGroup.set(e.groupId.toHexString(), [...(byGroup.get(e.groupId.toHexString()) ?? []), e.paidBy]);
+	const keys = await loadPixKeys(db, groups, byGroup);
+	const out: (T & { pix: NonNullable<ExpenseDoc["pix"]> })[] = [];
+	for (const e of expenses) {
+		const pix = e.pix ?? keys.get(`${e.groupId.toHexString()}:${e.paidBy}`);
+		if (pix && PIX_TYPES.includes(pix.type) && typeof pix.key === "string" && pix.key.trim() !== "") out.push({ ...e, pix: { type: pix.type as PixKey["type"], key: pix.key, payeeName: pix.payeeName } });
+	}
+	return out;
+}
+
 async function toDetail(db: Db, e: ExpenseDoc, group: GroupDoc, uid: string, now: Date, known?: ExpenseDoc[]): Promise<ExpenseDetail> {
 	const markers = e.shares.flatMap((s) => [...(s.markedByAdmin && s.markedBy ? [s.markedBy] : []), ...(s.refund?.byAdmin ? [s.refund.markedBy] : [])]);
-	const people = await loadPeople(db, uidsToLoad(group, [...new Set([e.paidBy, ...e.shares.map((s) => s.uid), ...markers])]));
+	const people = await loadPeople(db, uidsToLoad(group, [...new Set([e.paidBy, e.createdBy, ...e.shares.map((s) => s.uid), ...markers].filter(Boolean))]));
 	const dir = directory(group, people, uid);
 	const view = (u: string) => ({ uid: u, name: dir.name(u), picture: dir.picture(u), isYou: u === uid });
 	const role = expenseRole(group.members, uid, e.paidBy);
@@ -324,6 +358,9 @@ async function toDetail(db: Db, e: ExpenseDoc, group: GroupDoc, uid: string, now
 	const gid = group._id.toHexString();
 	const refundPixes =
 		role === "owner" ? await loadPixKeys(db, [group], new Map([[gid, e.shares.filter((s) => refundCents(s, e.paidBy) > 0).map((s) => s.uid)]])) : null;
+	const pix = (await fillMissingPix(db, [group], [e]))[0]?.pix ?? null;
+	const creator = e.createdBy;
+	const launched = creator && creator !== e.paidBy && !actsFor(group.members, creator, e.paidBy) && group.members.some((m) => m.uid === creator);
 	return {
 		id: e._id.toHexString(),
 		groupId: e.groupId.toHexString(),
@@ -339,7 +376,8 @@ async function toDetail(db: Db, e: ExpenseDoc, group: GroupDoc, uid: string, now
 		...helpInfo(e, group.members, uid),
 		participantUids: participantUidsOf(e.shares),
 		paidBy: { ...view(e.paidBy), kind: dir.kind(e.paidBy), youManage: dir.youManage(e.paidBy) },
-		pix: { type: e.pix.type, key: e.pix.key, payeeName: e.pix.payeeName },
+		pix: pix ? { type: pix.type, key: pix.key, payeeName: pix.payeeName } : null,
+		launchedBy: launched ? { name: dir.name(creator), admin: isGroupAdmin(group.members, creator) } : null,
 		shares: orderShares(e.shares, e.paidBy, dir.name).map((s) => {
 			const actsForShare = actsFor(group.members, uid, s.uid);
 			const status = shareStatus(s, e.paidBy);
@@ -427,22 +465,19 @@ export async function createExpense(
 	const group = await findMemberGroup(db, groupId, uid);
 	if (!group) return { status: "no_group" };
 
-	// Quem pagou: o próprio usuário ou uma pessoa sem login que ele cuida (nunca um uid vindo do cliente sem conferir).
+	// Quem pagou: o próprio usuário, quem ele cuida, ou (administrador) qualquer membro. Nunca um uid do cliente sem conferir.
 	const paidBy = input.paidByUid ?? uid;
-	let pix: ExpenseDoc["pix"];
-	if (paidBy === uid) {
-		const payer = await usersCollection(db).findOne({ _id: uid }, { projection: { name: 1, displayName: 1, pixKey: 1 } });
-		if (!payer?.pixKey) return { status: "no_pix" };
-		pix = { type: payer.pixKey.type, key: payer.pixKey.key, payeeName: personName(payer) };
-	} else {
-		if (!isManagedMember(group.members, paidBy) || !actsFor(group.members, uid, paidBy)) {
-			return { status: "invalid", field: "paidByUid", error: "Você só pode lançar despesas pagas por você ou por quem você cuida." };
-		}
-		const managed = group.members.find((m) => m.uid === paidBy)!;
-		const name = managed.name?.trim() || "Participante";
-		if (!managed.pixKey) return { status: "no_pix", name };
-		pix = { type: managed.pixKey.type, key: managed.pixKey.key, payeeName: name };
+	if (!canLaunchPaidBy(group.members, uid, paidBy)) {
+		return { status: "invalid", field: "paidByUid", error: "Você só pode lançar despesas pagas por você, por quem você cuida ou, se for administrador, por alguém do grupo." };
 	}
+	// Só o administrador lançando por OUTRA pessoa pode deixar a chave Pix para depois; nos demais casos ela é exigida.
+	const onBehalf = paidBy !== uid && !actsFor(group.members, uid, paidBy);
+	const found = await payerPix(db, group, paidBy);
+	let pix: ExpenseDoc["pix"];
+	if (found) pix = found;
+	else if (onBehalf) pix = undefined;
+	else if (paidBy === uid) return { status: "no_pix" };
+	else return { status: "no_pix", name: group.members.find((m) => m.uid === paidBy)?.name?.trim() || "Participante" };
 
 	const memberUids = new Set(group.members.map((m) => m.uid));
 	if (!input.participantUids.every((p) => memberUids.has(p))) {
@@ -484,7 +519,7 @@ export async function createExpense(
 			description: input.description,
 			amountCents: input.amountCents,
 			date: input.date,
-			pix: { ...pix },
+			...(pix ? { pix: { ...pix } } : {}),
 			shares: split.map((s) => ({ uid: s.uid, amountCents: s.amountCents, paidCents: 0 })),
 			version: 0,
 			attachments: uploaded.map((a) => ({ ...a })),
@@ -1244,9 +1279,39 @@ export type GroupSummaryView = {
 	moreUpToDate: number;
 	/** Havia despesas em aberto demais: os totais e a lista de quem está em dia NÃO são confiáveis (o texto avisa). */
 	partial: boolean;
+	/** Despesas com algo em aberto (as mais urgentes primeiro), limitadas a `SUMMARY_EXPENSE_CAP`. Só nomes e valores. */
+	expenses: OpenExpense[];
+	/** Despesas em aberto que não couberam em `expenses`. */
+	moreExpenses: number;
+	/** Partes a pagar com vencimento de hoje até daqui a 15 dias, por vencimento. */
+	upcoming: UpcomingPayment[];
+	moreUpcoming: number;
+	/** Soma de TODAS as partes do período (inclusive as cortadas de `upcoming`). */
+	upcomingTotalCents: number;
 };
 
 export const SUMMARY_DOC_LIMIT = 5000;
+export const SUMMARY_EXPENSE_CAP = 40;
+export const SUMMARY_UPCOMING_CAP = 30;
+
+/** Próximo mês de cada despesa fixa que cai nos próximos 15 dias e ainda não virou despesa (só o modelo mensal existe). */
+async function templatesInWindow(db: Db, group: GroupDoc, today: string, now: Date): Promise<OpenSource[]> {
+	const recs = await recurrencesCollection(db).find({ groupId: group._id, active: true }).toArray();
+	const current = currentPeriod(now);
+	const end = addDays(today, UPCOMING_DAYS);
+	const out: OpenSource[] = [];
+	for (const r of recs) {
+		// Só vale o mês SEGUINTE em diante: o de hoje (ou antes) já foi gerado pela leitura, mesmo sem chave Pix (nasce sem cópia da chave).
+		// Se a geração falhou, não se projeta nada.
+		if (r.nextPeriod <= current || (r.endPeriod && r.nextPeriod > r.endPeriod)) continue;
+		if (!group.members.some((m) => m.uid === r.paidBy)) continue;
+		const due = dueDateFor(r.nextPeriod, r.dayOfMonth);
+		if (due < today || due > end) continue;
+		const e = buildRecurringExpense(r, group, r.nextPeriod, null, now);
+		out.push({ _id: `modelo-${r._id.toHexString()}`, paidBy: e.paidBy, shares: e.shares, dueDate: e.dueDate, description: e.description, amountCents: e.amountCents, date: e.date, fromTemplate: true });
+	}
+	return out;
+}
 
 /** O mesmo resumo para qualquer membro (não é o saldo pessoal de quem pede). null se o grupo não existe ou `uid` não é membro. */
 export async function getGroupSummary(db: Db, groupId: string, uid: string, now: Date = new Date()): Promise<GroupSummaryView | null> {
@@ -1254,7 +1319,7 @@ export async function getGroupSummary(db: Db, groupId: string, uid: string, now:
 	if (!group) return null;
 	await materializeSafely(db, [group._id], now);
 	const docs = await expensesCollection(db)
-		.aggregate<Pick<ExpenseDoc, "paidBy" | "shares" | "dueDate">>([
+		.aggregate<Pick<ExpenseDoc, "_id" | "paidBy" | "shares" | "dueDate" | "description" | "amountCents" | "date" | "installment" | "recurrence">>([
 			{ $match: { groupId: group._id } },
 			{
 				$match: {
@@ -1265,18 +1330,27 @@ export async function getGroupSummary(db: Db, groupId: string, uid: string, now:
 					},
 				},
 			},
-			{ $project: { paidBy: 1, shares: 1, dueDate: 1 } },
+			{ $project: { paidBy: 1, shares: 1, dueDate: 1, description: 1, amountCents: 1, date: 1, installment: 1, recurrence: 1 } },
 			{ $sort: { _id: 1 } },
 			{ $limit: SUMMARY_DOC_LIMIT + 1 },
 		])
 		.toArray();
 	const partial = docs.length > SUMMARY_DOC_LIMIT;
-	const debts = groupDebts(partial ? docs.slice(0, SUMMARY_DOC_LIMIT) : docs, todayInSaoPaulo(now));
+	const usable = partial ? docs.slice(0, SUMMARY_DOC_LIMIT) : docs;
+	const today = todayInSaoPaulo(now);
+	const debts = groupDebts(usable, today);
 	const people = await loadPeople(db, group.members.map((m) => m.uid));
 	const dir = directory(group, people, uid);
 	const debtors = new Set(debts.map((d) => d.fromUid));
 	const names = group.members.filter((m) => !debtors.has(m.uid)).map((m) => dir.name(m.uid));
 	names.sort((a, b) => a.localeCompare(b, "pt-BR"));
+	let templates: OpenSource[] = [];
+	try {
+		templates = await templatesInWindow(db, group, today, now);
+	} catch (err) {
+		console.error("templatesInWindow error:", describeError(err));
+	}
+	const lists = buildOpenLists([...usable, ...templates], today, dir.name, { maxExpenses: SUMMARY_EXPENSE_CAP, maxUpcoming: SUMMARY_UPCOMING_CAP });
 	return {
 		groupId: group._id.toHexString(),
 		groupName: group.name,
@@ -1287,5 +1361,10 @@ export async function getGroupSummary(db: Db, groupId: string, uid: string, now:
 		upToDate: names.slice(0, SUMMARY_NAMES_CAP),
 		moreUpToDate: Math.max(0, names.length - SUMMARY_NAMES_CAP),
 		partial,
+		expenses: lists.expenses,
+		moreExpenses: Math.max(0, lists.expenseCount - lists.expenses.length),
+		upcoming: lists.upcoming,
+		moreUpcoming: Math.max(0, lists.upcomingCount - lists.upcoming.length),
+		upcomingTotalCents: lists.upcomingTotalCents,
 	};
 }

@@ -92,14 +92,46 @@ describe("createExpense com paidByUid", () => {
 		expect(expenses.insertOne.mock.calls[0][0]).toMatchObject({ paidBy: "u2", pix: { key: "r@x.com" } });
 	});
 	it("não lança como quem não cuida: outro responsável, outro membro real, uid inexistente, nunca m_ de outro", async () => {
-		for (const [caller, paidByUid] of [["u3", "m_ben"], ["u1", "m_ben"], ["u2", "u3"], ["u2", "m_inexistente"], ["u2", "m_vo"]] as const) {
+		for (const [caller, paidByUid] of [["u3", "m_ben"], ["u2", "u3"], ["u2", "u1"], ["u2", "m_inexistente"], ["u2", "m_vo"]] as const) {
 			const { db, expenses } = mockDb();
 			expect(await create(db, caller, { paidByUid })).toMatchObject({ status: "invalid", field: "paidByUid" });
 			expect(expenses.insertOne).not.toHaveBeenCalled();
 		}
 	});
-	it("até admin só lança por quem cuida (admin não é responsável)", async () => {
-		expect(await create(mockDb().db, "u1", { paidByUid: "m_ben" })).toMatchObject({ status: "invalid", field: "paidByUid" });
+	it("administrador lança por qualquer membro: login ou pessoa sem login; a chave é a do pagador, nunca a do admin", async () => {
+		const m = mockDb();
+		expect((await create(m.db, "u1", { paidByUid: "m_ben" })).status).toBe("ok");
+		expect(m.expenses.insertOne.mock.calls[0][0]).toMatchObject({ paidBy: "m_ben", createdBy: "u1", pix: { key: PIX.key, payeeName: "Benjamim" } });
+		const m2 = mockDb();
+		expect((await create(m2.db, "u1", { paidByUid: "u3" })).status).toBe("ok");
+		expect(m2.expenses.insertOne.mock.calls[0][0]).toMatchObject({ paidBy: "u3", createdBy: "u1", pix: { key: "r@x.com" } });
+	});
+	it("administrador lançando por quem não tem chave Pix: cria sem cópia da chave (vale a atual depois)", async () => {
+		const { db, expenses } = mockDb();
+		expect((await create(db, "u1", { paidByUid: "m_vo", participantUids: ["m_vo", "u1"] })).status).toBe("ok");
+		const doc = expenses.insertOne.mock.calls[0][0];
+		expect(doc).toMatchObject({ paidBy: "m_vo", createdBy: "u1" });
+		expect(doc).not.toHaveProperty("pix");
+	});
+	it("membro comum não lança por outro membro; admin de outro grupo é recusado; pagador fora do grupo também", async () => {
+		const plain = mockDb();
+		expect(await create(plain.db, "u2", { paidByUid: "u3" })).toMatchObject({ status: "invalid", field: "paidByUid" });
+		// "u9" é admin de outro grupo: aqui nem é membro
+		expect(await create(mockDb().db, "u9", { paidByUid: "u3" })).toEqual({ status: "no_group" });
+		expect(await create(mockDb().db, "u1", { paidByUid: "u9" })).toMatchObject({ status: "invalid", field: "paidByUid" });
+		expect(await create(mockDb().db, "u1", { paidByUid: "m_fantasma" })).toMatchObject({ status: "invalid", field: "paidByUid" });
+	});
+	it("pessoa sem login marcada como admin no cadastro não vira administradora", async () => {
+		const m = [...members(), { ...managed("m_adm", "Falso", "u2"), role: "admin" as const }];
+		expect(await create(mockDb({ members: m }).db, "m_adm", { paidByUid: "u3" })).toMatchObject({ status: "invalid", field: "paidByUid" });
+	});
+	it("o detalhe mostra \"lançada por\" só quando o lançador não é o pagador nem age por ele", async () => {
+		const adm = await getExpenseDetail(mockDb({ expense: benExpense({ createdBy: "u1" }) }).db, GID, EID, "u2");
+		expect(adm).toMatchObject({ status: "ok", expense: { launchedBy: { name: "Ana", admin: true } } });
+		const own = await getExpenseDetail(mockDb({ expense: benExpense({ createdBy: "u2" }) }).db, GID, EID, "u2");
+		expect(own).toMatchObject({ expense: { launchedBy: null } });
+		const none = await getExpenseDetail(mockDb({ expense: benExpense({ createdBy: undefined }) }).db, GID, EID, "u2");
+		expect(none).toMatchObject({ expense: { launchedBy: null } });
 	});
 	it("pessoa sem chave Pix: no_pix com o nome", async () => {
 		const { db, expenses } = mockDb();

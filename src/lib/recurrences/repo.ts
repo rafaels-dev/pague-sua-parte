@@ -1,9 +1,9 @@
 import { ObjectId, type Db } from "mongodb";
+import { payerPix } from "@/lib/expenses/payer-pix";
 import { directory, expensesCollection, findMemberGroup, loadPeople, type Directory } from "@/lib/expenses/repo";
 import { splitEqually } from "@/lib/expenses/split";
-import { actsFor, expenseRole, isManagedMember, isObjectIdHex } from "@/lib/groups/helpers";
+import { actsFor, canLaunchPaidBy, expenseRole, isObjectIdHex } from "@/lib/groups/helpers";
 import type { GroupDoc } from "@/lib/groups/repo";
-import { usersCollection } from "@/lib/users/repo";
 import { recurrencesCollection, type RecurrenceDoc } from "./collection";
 import { materializeSafely } from "./materialize";
 import { dueDateFor, resolveParticipants, type ParticipantMode } from "./period";
@@ -107,15 +107,13 @@ export async function createRecurrence(
 	if (!group) return { status: "no_group" };
 
 	const paidBy = input.paidByUid ?? uid;
-	if (paidBy === uid) {
-		const payer = await usersCollection(db).findOne({ _id: uid }, { projection: { pixKey: 1 } });
-		if (!payer?.pixKey) return { status: "no_pix" };
-	} else {
-		if (!isManagedMember(group.members, paidBy) || !actsFor(group.members, uid, paidBy)) {
-			return { status: "invalid", field: "paidByUid", error: "Você só pode lançar despesas pagas por você ou por quem você cuida." };
-		}
-		const managed = group.members.find((m) => m.uid === paidBy)!;
-		if (!managed.pixKey) return { status: "no_pix", name: managed.name?.trim() || "Participante" };
+	if (!canLaunchPaidBy(group.members, uid, paidBy)) {
+		return { status: "invalid", field: "paidByUid", error: "Você só pode lançar despesas pagas por você, por quem você cuida ou, se for administrador, por alguém do grupo." };
+	}
+	// Só o administrador lançando por OUTRA pessoa pode deixar a chave Pix para depois (cada mês usa a chave de quem paga AGORA).
+	const onBehalf = paidBy !== uid && !actsFor(group.members, uid, paidBy);
+	if (!onBehalf && !(await payerPix(db, group, paidBy))) {
+		return paidBy === uid ? { status: "no_pix" } : { status: "no_pix", name: group.members.find((m) => m.uid === paidBy)?.name?.trim() || "Participante" };
 	}
 	if (!allMembers(group, input.participantUids)) return { status: "invalid", ...BAD_MEMBERS };
 	if (!splittable(group, { ...input, paidBy })) return { status: "invalid", ...TOO_SMALL };

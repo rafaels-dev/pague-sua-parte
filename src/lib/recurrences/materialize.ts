@@ -1,28 +1,15 @@
 import { ObjectId, type Db } from "mongodb";
 import { describeError } from "@/lib/api/http";
 import type { ExpenseDoc } from "@/lib/expenses/repo";
+import { payerPix, type PayerPix } from "@/lib/expenses/payer-pix";
 import { splitEqually } from "@/lib/expenses/split";
 import { groupsCollection, type GroupDoc } from "@/lib/groups/repo";
-import { usersCollection } from "@/lib/users/repo";
 import { recurrencesCollection, type RecurrenceDoc } from "./collection";
 import { addPeriods, currentPeriod, dueDateFor, periodsToGenerate, resolveParticipants } from "./period";
 
-type Pix = ExpenseDoc["pix"];
-
-/** Chave Pix de quem paga AGORA (não a de quando a recorrência foi criada); null se não tiver. */
-async function payerPix(db: Db, group: GroupDoc, payer: string): Promise<Pix | null> {
-	const member = group.members.find((m) => m.uid === payer);
-	if (!member) return null;
-	if (member.kind === "managed") {
-		return member.pixKey ? { type: member.pixKey.type, key: member.pixKey.key, payeeName: member.name?.trim() || "Participante" } : null;
-	}
-	const u = await usersCollection(db).findOne({ _id: payer }, { projection: { name: 1, displayName: 1, pixKey: 1 } });
-	if (!u?.pixKey) return null;
-	return { type: u.pixKey.type, key: u.pixKey.key, payeeName: u.displayName?.trim() || u.name || "Participante" };
-}
 
 /** Despesa comum de um mês da recorrência (mesmo formato que `createExpense` produz, sem anexos). */
-export function buildRecurringExpense(r: RecurrenceDoc, group: GroupDoc, period: string, pix: Pix, now: Date): ExpenseDoc {
+export function buildRecurringExpense(r: RecurrenceDoc, group: GroupDoc, period: string, pix: PayerPix | null, now: Date): ExpenseDoc {
 	const memberUids = group.members.map((m) => m.uid);
 	let participants = resolveParticipants(r.participantMode, r.participantUids, memberUids, r.paidBy);
 	let split: { uid: string; amountCents: number }[];
@@ -41,7 +28,7 @@ export function buildRecurringExpense(r: RecurrenceDoc, group: GroupDoc, period:
 		description: r.description,
 		amountCents: r.amountCents,
 		date: `${period}-01`,
-		pix: { ...pix },
+		...(pix ? { pix: { ...pix } } : {}),
 		shares: split.map((s) => ({ uid: s.uid, amountCents: s.amountCents, paidCents: 0 })),
 		version: 0,
 		attachments: [],
@@ -90,8 +77,8 @@ export async function materializeRecurrences(db: Db, groupIds: ObjectId[], now: 
 			if (r.endPeriod && r.nextPeriod > r.endPeriod) await endRecurrence(db, r, now);
 			continue;
 		}
+		// Sem chave Pix agora, o mês nasce sem cópia da chave (vale a atual de quem paga, na leitura), como numa despesa lançada pelo administrador.
 		const pix = await payerPix(db, group, r.paidBy);
-		if (!pix) continue; // sem chave Pix agora: tenta de novo numa leitura futura
 
 		for (const period of periods) {
 			const next = addPeriods(period, 1);

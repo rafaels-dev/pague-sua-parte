@@ -77,7 +77,15 @@ describe("createRecurrence", () => {
 	it("sem Pix: no_pix; pago por pessoa sem login exige quem cuida", async () => {
 		expect(await createRecurrence(mockDb({ payerPix: false }).db, { groupId: GID, uid: "u1", input, now: NOW })).toEqual({ status: "no_pix" });
 		expect(await createRecurrence(mockDb().db, { groupId: GID, uid: "u2", input: { ...input, paidByUid: "m_vo" }, now: NOW })).toMatchObject({ status: "ok" });
-		expect(await createRecurrence(mockDb().db, { groupId: GID, uid: "u1", input: { ...input, paidByUid: "m_vo" }, now: NOW })).toMatchObject({ status: "invalid", field: "paidByUid" });
+		expect(await createRecurrence(mockDb().db, { groupId: GID, uid: "u1", input: { ...input, paidByUid: "m_vo" }, now: NOW })).toMatchObject({ status: "ok" }); // u1 é administrador
+		const plain = [member("u1"), member("u2"), member("u3"), member("m_vo", "member", { kind: "managed", name: "Vó", managedBy: "u2", pixKey: PIX })];
+		expect(await createRecurrence(mockDb({ members: plain }).db, { groupId: GID, uid: "u3", input: { ...input, paidByUid: "m_vo" }, now: NOW })).toMatchObject({ status: "invalid", field: "paidByUid" });
+		expect(await createRecurrence(mockDb({ members: plain }).db, { groupId: GID, uid: "u3", input: { ...input, paidByUid: "u2" }, now: NOW })).toMatchObject({ status: "invalid", field: "paidByUid" });
+	});
+	it("administrador cria por alguém sem chave Pix (cada mês usa a chave de quem paga na hora); comum com cuidada sem chave: no_pix", async () => {
+		const { db, recurrences } = mockDb({ payerPix: false });
+		expect(await createRecurrence(db, { groupId: GID, uid: "u1", input: { ...input, paidByUid: "u2" }, now: NOW })).toMatchObject({ status: "ok" });
+		expect(recurrences.insertOne.mock.calls[0][0]).toMatchObject({ paidBy: "u2", createdBy: "u1" });
 	});
 	it("participantes fora do grupo e valor pequeno demais", async () => {
 		const sel = { ...input, participantMode: "selected" as const, participantUids: ["x"] };

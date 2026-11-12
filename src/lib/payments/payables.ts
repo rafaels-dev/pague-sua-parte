@@ -37,13 +37,17 @@ export type PayableRecipient = {
 export type Payables = { recipients: PayableRecipient[]; truncated: boolean; group?: { id: string; name: string } };
 
 /** Um Pix só paga uma chave: o destinatário é quem pagou a despesa + a chave Pix gravada nela. */
-export const recipientKey = (e: { paidBy: string; pix: { type: string; key: string } }): string =>
-	`${e.paidBy}\n${e.pix.type}\n${e.pix.key}`;
+export const recipientKey = (e: { paidBy: string; pix?: { type: string; key: string } | null }): string | null =>
+	e.pix?.type && e.pix.key ? `${e.paidBy}\n${e.pix.type}\n${e.pix.key}` : null;
+
+/** O id de `recipientKey` (a chave já montada): é o que a tela guarda e devolve ao pagar. */
+export const recipientIdFromKey = (key: string): string => `r_${createHash("sha256").update(key).digest("hex").slice(0, 24)}`;
 
 /** Id estável do destinatário, seguro para chave do React/URL, sem expor a chave Pix. */
-export const recipientId = (e: { paidBy: string; pix: { type: string; key: string } }): string =>
-	`r_${createHash("sha256").update(recipientKey(e)).digest("hex").slice(0, 24)}`;
-
+export const recipientId = (e: { paidBy: string; pix?: { type: string; key: string } | null }): string | null => {
+	const key = recipientKey(e);
+	return key === null ? null : recipientIdFromKey(key);
+};
 /**
  * Tudo o que `uid` pode pagar agora, por destinatário. Entra a cota PENDENTE (deve > 0) de quem `uid` age (ele mesmo
  * ou quem ele cuida) em despesas "a pagar agora": sem vencimento ou vencendo até o fim do mês de hoje (inclui atrasadas),
@@ -68,7 +72,8 @@ export function buildPayables(args: {
 	const rows: Row[] = [];
 	for (const e of expenses) {
 		const group = byGroup.get(e.groupId.toHexString());
-		if (!group || !isDueNow(e.dueDate, today)) continue;
+		// Sem chave Pix de quem pagou (lançada pelo administrador) não há como pagar: some até a chave existir.
+		if (!group || !e.pix || !isDueNow(e.dueDate, today)) continue;
 		const dir = directory(group as GroupDoc, people, uid);
 		for (const s of normalizeShares(e.shares)) {
 			const due = dueCents(s, e.paidBy);
@@ -137,13 +142,14 @@ export function buildPayables(args: {
 	const byRecipient = new Map<string, PayableRecipient>();
 	for (const { item, e, group, pix, payeeUid } of rows.slice(0, max)) {
 		const id = pix && payeeUid ? recipientId({ paidBy: payeeUid, pix }) : recipientId(e);
+		if (id === null) continue; // sem chave Pix não há destinatário: nunca divide id com outro
 		let r = byRecipient.get(id);
 		if (!r) {
 			const dir = directory(group as GroupDoc, people, uid);
 			r = {
 				id,
 				payee: { uid: payeeUid ?? e.paidBy, name: dir.name(payeeUid ?? e.paidBy), picture: dir.picture(payeeUid ?? e.paidBy), kind: dir.kind(payeeUid ?? e.paidBy) },
-				pix: pix ? { type: pix.type, key: pix.key, payeeName: pix.payeeName } : { type: e.pix.type, key: e.pix.key, payeeName: e.pix.payeeName },
+				pix: pix ? { type: pix.type, key: pix.key, payeeName: pix.payeeName } : { type: e.pix!.type, key: e.pix!.key, payeeName: e.pix!.payeeName },
 				totalCents: 0,
 				items: [],
 			};

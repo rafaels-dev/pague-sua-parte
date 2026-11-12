@@ -73,6 +73,16 @@ export function expenseRole(members: MemberLike[], caller: string, paidBy: strin
 	return isGroupAdmin(members, caller) ? "admin" : null;
 }
 
+/**
+ * Quem o `caller` pode apontar como pagador ao lançar uma despesa: ele mesmo, quem ele cuida, ou, sendo administrador
+ * do grupo, qualquer membro atual (com login ou sem). Única fonte desta regra; `payer` precisa estar no grupo.
+ */
+export function canLaunchPaidBy(members: MemberLike[], caller: string, payer: string): boolean {
+	if (!members.some((m) => m.uid === payer)) return false;
+	if (actsFor(members, caller, payer)) return true;
+	return isGroupAdmin(members, caller);
+}
+
 export type MemberView = {
 	uid: string;
 	name: string;

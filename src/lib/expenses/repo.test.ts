@@ -605,6 +605,16 @@ describe("markSelfPaid", () => {
 		expect(store.put).not.toHaveBeenCalled();
 		if (r.status === "ok") expect(r.expense.shares.find((s) => s.uid === "u1")).toMatchObject({ status: "paid", method: "self", receipt: null, canPay: false, canAddReceipt: true });
 	});
+	it("despesa sem chave Pix resolvida: o devedor ainda pode avisar \"Já paguei\" (canPay) e o pagamento é registrado", async () => {
+		const m = statefulDb(expense({ pix: undefined }));
+		const before = await getExpenseDetail(m.db, GID, EID, "u1");
+		if (before.status !== "ok") throw new Error("esperava ok");
+		expect(before.expense.pix).toBeNull();
+		expect(before.expense.shares.find((s) => s.uid === "u1")).toMatchObject({ status: "pending", canPay: true });
+		const r = await pay(m.db, fakeStore());
+		expect(r.status).toBe("ok");
+		expect(m.doc.shares.find((s) => s.uid === "u1")).toMatchObject({ paidCents: 1000, method: "self" });
+	});
 	it("com arquivo: grava em receipts/ e guarda os metadados na cota", async () => {
 		const m = statefulDb(expense());
 		const store = fakeStore();
@@ -1006,6 +1016,60 @@ describe("revisão: corridas, vencimento antigo, resumo parcial e apagar com his
 		expect(r).toMatchObject({ partial: true, totalOpenCents: 5000 * 100 });
 		const few = await getGroupSummary(mockDb({ expenses: docs.slice(0, 3) }).db, GID, "u1");
 		expect(few).toMatchObject({ partial: false, totalOpenCents: 300 });
+	});
+	it("resumo do grupo: lista as despesas em aberto com o que falta, os próximos 15 dias e o mês da despesa fixa que ainda não existe; só nomes", async () => {
+		const docs = [
+			{ _id: new ObjectId(), paidBy: "u2", description: "Mercado", amountCents: 3000, date: "2026-11-01", dueDate: "2026-11-05", shares: [S("u2", 1000), S("u1", 1000), S("u3", 1000, 400)] },
+			{ _id: new ObjectId(), paidBy: "u2", description: "Consulta", amountCents: 1500, date: "2026-11-10", dueDate: "2026-11-20", shares: [S("u2", 500), S("u1", 300, 500), S("u3", 700)] },
+		];
+		const m = mockDb({ expenses: docs });
+		const base = (m.db as unknown as { collection: (n: string) => unknown }).collection;
+		const rec = { _id: new ObjectId(), groupId: new ObjectId(GID), createdBy: "u1", paidBy: "u1", description: "Aluguel", amountCents: 4000, dayOfMonth: 5, participantMode: "all", participantUids: [], startPeriod: "2026-11", nextPeriod: "2026-12", active: true };
+		const far = { ...rec, _id: new ObjectId(), description: "Muito longe", dayOfMonth: 28 };
+		(m.db as unknown as { collection: (n: string) => unknown }).collection = (n: string) =>
+			n === "recurrences" ? { find: vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue([rec, far]) }), updateOne: vi.fn(), insertOne: vi.fn() } : base(n);
+		const r = (await getGroupSummary(m.db, GID, "u1", new Date("2026-11-12T15:00:00Z")))!;
+		// atrasada primeiro; u3 pagou 400 de 1000: faltam 600
+		expect(r.expenses.map((e) => [e.description, e.overdue, e.dueDate])).toEqual([["Mercado", true, "2026-11-05"], ["Consulta", false, "2026-11-20"]]);
+		expect(r.expenses[0]).toMatchObject({ paidByName: "Beto", totalCents: 3000, owes: [{ name: "Aninha", cents: 1000 }, { name: "Participante", cents: 600 }] });
+		expect(r.expenses[1]).toMatchObject({ owes: [{ name: "Participante", cents: 700 }], refunds: [{ name: "Aninha", cents: 200 }] });
+		expect(r.upcoming.map((u) => u.description)).toEqual(["Consulta"]);
+		expect(r.upcomingTotalCents).toBe(700);
+		// o cabeçalho confere com o que as despesas mostram (sem compensação entre as duplas neste cenário)
+		const shown = r.expenses.flatMap((e) => [...e.owes, ...e.refunds]).reduce((t, p) => t + p.cents, 0);
+		expect(shown).toBe(r.totalOpenCents);
+		expect(r.overdueCents).toBe(1600);
+		// só nomes e valores: nada de chave Pix nem de códigos de usuário
+		expect(JSON.stringify(r)).not.toMatch(/ana@x\.com|"u[0-9]"/);
+		// despesa fixa cujo próximo mês cai nos próximos 15 dias entra, rotulada, mesmo sem existir ainda (e a distante não)
+		const later = (await getGroupSummary(m.db, GID, "u1", new Date("2026-11-25T15:00:00Z")))!;
+		expect(later.upcoming.map((u) => [u.dueDate, u.description, u.paidByName])).toEqual([["2026-12-05", "Aluguel (despesa fixa)", "Aninha"]]);
+		expect(later.upcoming[0].owes.reduce((t, x) => t + x.cents, 0)).toBe(3000);
+		expect(later.expenses.some((e) => e.description.startsWith("Aluguel"))).toBe(false);
+	});
+	it("resumo: mês projetado de despesa fixa cujo pagador não tem chave Pix também entra (o mês é criado sem cópia da chave, como o projetado)", async () => {
+		const g = { ...group(), members: [...group().members, { uid: "m_vo", role: "member" as const, kind: "managed" as const, managedBy: "u1", name: "Vovó", joinedAt: new Date() }] };
+		const m = mockDb({ group: g, expenses: [] });
+		const base = (m.db as unknown as { collection: (n: string) => unknown }).collection;
+		const rec = { _id: new ObjectId(), groupId: new ObjectId(GID), createdBy: "u1", paidBy: "m_vo", description: "Plano", amountCents: 4000, dayOfMonth: 5, participantMode: "all", participantUids: [], startPeriod: "2026-11", nextPeriod: "2026-12", active: true };
+		(m.db as unknown as { collection: (n: string) => unknown }).collection = (n: string) =>
+			n === "recurrences" ? { find: vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue([rec]) }), updateOne: vi.fn(), insertOne: vi.fn() } : base(n);
+		const r = (await getGroupSummary(m.db, GID, "u1", new Date("2026-11-25T15:00:00Z")))!;
+		expect(r.upcoming.map((u) => [u.description, u.paidByName])).toEqual([["Plano (despesa fixa)", "Vovó"]]);
+		expect(r.upcoming[0].id).toBe(`modelo-${rec._id.toHexString()}`);
+	});
+	it("despesa sem cópia da chave: chave atual de formato inválido conta como ausente (pix null)", async () => {
+		const doc = expense({ pix: undefined, paidBy: "u2", shares: [S("u2", 1000), S("u1", 1000)] });
+		const bad = mockDb({ expense: doc });
+		bad.users.find.mockReturnValue({ toArray: vi.fn().mockResolvedValue([{ _id: "u2", name: "Beto", pixKey: { type: "zzz", key: "x" } }]) });
+		const r = await getExpenseDetail(bad.db, GID, EID, "u1");
+		if (r.status !== "ok") throw new Error("esperava ok");
+		expect(r.expense.pix).toBeNull();
+		const good = mockDb({ expense: doc });
+		good.users.find.mockReturnValue({ toArray: vi.fn().mockResolvedValue([{ _id: "u2", name: "Beto", pixKey: { type: "email", key: "b@x.com" } }]) });
+		const g = await getExpenseDetail(good.db, GID, EID, "u1");
+		if (g.status !== "ok") throw new Error("esperava ok");
+		expect(g.expense.pix).toEqual({ type: "email", key: "b@x.com", payeeName: "Beto" });
 	});
 	it("apagar: despesa com cota 0 mas devolução registrada (ou comprovante) não pode ser apagada", async () => {
 		const withRefund = expense({ shares: [S("u2", 1500), S("u1", 1500), S("u3", 0, 0, { refund: { cents: 1000, at: new Date(), markedBy: "u2" } })] });

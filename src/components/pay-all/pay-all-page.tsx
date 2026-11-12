@@ -94,7 +94,7 @@ export function PayAllPage() {
 		setFileError(null);
 		try {
 			const body = new FormData();
-			body.append("data", JSON.stringify({ items: batchRequestItems(chosen) }));
+			body.append("data", JSON.stringify({ items: batchRequestItems(chosen), recipientId: r.id }));
 			if (file) body.append("file", file);
 			const res = normalizeBatchResult(await apiFetch<unknown>("/api/me/payments", { method: "POST", body }));
 			const paidKeys = new Set(res.paid.map(itemKey));

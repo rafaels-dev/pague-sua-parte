@@ -57,7 +57,8 @@ Site mobile-first, em pt-BR, para dividir despesas em grupo e pagar por Pix. Pro
 - **Comprovantes**: um mesmo arquivo pode servir a várias partes (lote); o objeto só é apagado quando nenhuma parte o referencia (`releaseReceipts`).
 - **Despesas fixas** (`recurrences`): guarda-se só o modelo mensal; a despesa de cada mês é criada quando o mês chega, de forma preguiçosa e idempotente (`materializeRecurrences`). Nunca pré-criar os meses futuros.
 - **Pagar tudo**: agrupa o que a pessoa deve por destinatário (mesmo recebedor e mesma chave Pix), gera um único Pix e vincula um único comprovante a todas as partes. Pode ser de todos os grupos ou de um só (`?grupo=`).
-- **Permissões**: quem lançou a despesa e o administrador do grupo podem editar, recalcular a divisão, escolher quem participa, marcar partes como pagas e desfazer. Os demais só agem sobre a própria parte (e a de quem cuidam).
+- **Quem pagou**: cada pessoa lança as próprias despesas e as de quem cuida; o administrador pode lançar em nome de qualquer membro atual do grupo (`canLaunchPaidBy`), e a despesa registra `createdBy` ("Lançada por ... (administrador)"). O Pix gravado é sempre o de quem pagou. Se essa pessoa ainda não tem chave, a despesa fica sem `pix` e a chave é resolvida na leitura (`fillMissingPix`); todo código que lê `e.pix` precisa tratar a ausência.
+- **Permissões**: quem pagou a despesa (ou quem cuida dessa pessoa) e o administrador do grupo podem editar, recalcular a divisão, escolher quem participa, marcar partes como pagas e desfazer. Os demais só agem sobre a própria parte (e a de quem cuidam).
 - **Dinheiro** sempre em centavos inteiros (`src/lib/money.ts`); nunca usar ponto flutuante para valores.
 
 ## Testes e conferência

@@ -3,6 +3,7 @@ import { lastDayOfMonth, todayInSaoPaulo } from "@/lib/expenses/dates";
 import {
 	expensesCollection,
 	findExpense,
+	fillMissingPix,
 	loadPeople,
 	memberGroupsOf,
 	loadPixKeys,
@@ -13,10 +14,10 @@ import {
 import { dueCents, normalizeShares, payShares, refundCents, refundShares, type BatchOutcome, type RefundOutcome, type ShareBatch } from "@/lib/expenses/shares";
 import type { SniffedFile } from "@/lib/expenses/validation";
 import { actsFor, isObjectIdHex } from "@/lib/groups/helpers";
-import { groupsCollection } from "@/lib/groups/repo";
+import { groupsCollection, type GroupDoc } from "@/lib/groups/repo";
 import { materializeSafely } from "@/lib/recurrences/materialize";
 import { putBatchReceipt, randomId, type AttachmentMeta, type AttachmentStore } from "@/lib/storage/attachments";
-import { buildPayables, recipientKey, type Payables } from "./payables";
+import { buildPayables, recipientIdFromKey, recipientKey, type Payables } from "./payables";
 import { buildReceivables, EMPTY_RECEIVABLES, type Receivables } from "./receivables";
 
 /** Quantas contas cabem num pagamento em lote. */
@@ -50,13 +51,14 @@ export async function getPayables(db: Db, uid: string, now: Date = new Date(), g
 	const acting = new Set([uid]);
 	for (const g of groups) for (const m of g.members) if (m.kind === "managed" && m.managedBy === uid) acting.add(m.uid);
 	const cutoff = lastDayOfMonth(today);
-	const expenses = await expensesCollection(db)
+	const raw = await expensesCollection(db)
 		.find({
 			groupId: { $in: groups.map((g) => g._id) },
 			"shares.uid": { $in: [...acting] },
 			$or: [{ dueDate: { $exists: false } }, { dueDate: null as never }, { dueDate: { $lte: cutoff } }],
 		})
 		.toArray();
+	const expenses = await fillMissingPix(db, groups, raw);
 	// Devoluções: despesas pagas por quem `uid` age em que alguém pagou a mais.
 	const refundExpenses = await expensesCollection(db)
 		.find({ groupId: { $in: groups.map((g) => g._id) }, paidBy: { $in: [...acting] }, ...HAS_REFUND })
@@ -135,11 +137,14 @@ export const itemId = (i: BatchItemInput) => `${i.groupId}:${i.expenseId}:${i.sh
 /**
  * Valida o pedido antes de mudar qualquer coisa: grupos de `uid`, despesas existentes, `uid` age por cada cota, cada cota
  * deve dinheiro e todas têm o mesmo destinatário (quem pagou + chave Pix). Devolve também o total pedido.
+ * `expectedRecipientId` (o id que a tela recebeu em "contas a pagar"): se a chave Pix de quem recebe mudou desde então, o lote
+ * é recusado em vez de ser registrado como pago para uma chave diferente da que a pessoa viu.
  */
 export async function validateBatch(
 	db: Db,
 	uid: string,
 	items: BatchItemInput[],
+	expectedRecipientId?: string,
 ): Promise<{ status: "ok"; totalCents: number } | Exclude<BatchPayResult, { status: "ok" | "all_failed" }>> {
 	if (items.length === 0 || items.length > BATCH_MAX_ITEMS || new Set(items.map(itemId)).size !== items.length) {
 		return { status: "invalid", error: "Escolha de 1 a 50 contas, sem repetir.", field: "items" };
@@ -159,6 +164,11 @@ export async function validateBatch(
 		const k = `${i.groupId}:${i.expenseId}`;
 		if (!docs.has(k)) docs.set(k, await findExpense(db, i.groupId, i.expenseId));
 	}
+	// Despesas sem cópia da chave (lançadas pelo administrador por quem não tinha): a chave atual de cada pagador, numa só busca.
+	const groupDocs = groups as Pick<GroupDoc, "_id" | "members">[];
+	const resolved = new Map<string, ExpenseDoc>(
+		(await fillMissingPix(db, groupDocs, [...docs.values()].filter((d): d is ExpenseDoc => !!d && !d.pix))).map((d) => [d._id.toHexString(), d as ExpenseDoc]),
+	);
 	// Chaves Pix de quem recebe de volta: uma só busca para o pedido inteiro.
 	const refundUids = new Map<string, string[]>();
 	for (const i of items) if (i.kind === "refund") refundUids.set(i.groupId, [...(refundUids.get(i.groupId) ?? []), i.shareUid]);
@@ -179,6 +189,7 @@ export async function validateBatch(
 			const pix = pixes.get(`${i.groupId}:${s.uid}`);
 			if (!pix) return { status: "invalid", error: "Uma dessas pessoas não tem chave Pix cadastrada.", field: "items" };
 			const key = recipientKey({ paidBy: s.uid, pix });
+			if (key === null) return { status: "invalid", error: "Uma dessas pessoas não tem chave Pix cadastrada.", field: "items" };
 			if (recipient !== null && key !== recipient) return { status: "invalid", error: DIFFERENT, field: "items" };
 			recipient = key;
 			totalCents += back;
@@ -189,12 +200,18 @@ export async function validateBatch(
 		if (!s || s.uid === e.paidBy || s.amountCents <= 0) return { status: "no_share" };
 		const due = dueCents(s, e.paidBy);
 		if (due <= 0) return { status: "invalid", error: "Uma dessas contas já foi paga. Atualize e tente de novo.", field: "items" };
-		const key = recipientKey(e);
+		const withPix = e.pix ? e : resolved.get(e._id.toHexString());
+		if (!withPix) return { status: "invalid", error: "Uma dessas contas ainda não tem chave Pix de quem recebe.", field: "items" };
+		const key = recipientKey(withPix);
+		if (key === null) return { status: "invalid", error: "Uma dessas contas ainda não tem chave Pix de quem recebe.", field: "items" };
 		if (recipient !== null && key !== recipient) {
 			return { status: "invalid", error: DIFFERENT, field: "items" };
 		}
 		recipient = key;
 		totalCents += due;
+	}
+	if (expectedRecipientId !== undefined && (recipient === null || recipientIdFromKey(recipient) !== expectedRecipientId)) {
+		return { status: "invalid", error: "A chave Pix de quem recebe mudou. Volte e confira de novo.", field: "items" };
 	}
 	return { status: "ok", totalCents };
 }
@@ -209,11 +226,11 @@ export async function validateBatch(
 export async function payBatch(
 	db: Db,
 	store: AttachmentStore,
-	args: { uid: string; items: BatchItemInput[]; file?: SniffedFile; now?: Date },
+	args: { uid: string; items: BatchItemInput[]; file?: SniffedFile; now?: Date; recipientId?: string },
 ): Promise<BatchPayResult> {
 	const { uid, items, file } = args;
 	const now = args.now ?? new Date();
-	const checked = await validateBatch(db, uid, items);
+	const checked = await validateBatch(db, uid, items, args.recipientId);
 	if (checked.status !== "ok") return checked;
 
 	const batchId = randomId();

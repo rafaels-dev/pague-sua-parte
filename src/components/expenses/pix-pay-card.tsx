@@ -167,7 +167,8 @@ export function PixPayCard({
 	/** Se a pessoa já pagou uma parte, avisa quanto e que o código é só do que falta. */
 	paidSoFarCents?: number;
 	payeeName: string;
-	pix: { type: PixKeyType; key: string };
+	/** `null` = quem recebe ainda não cadastrou a chave Pix: sem código nem QR, mas "Já paguei" continua valendo (dinheiro, outro meio). */
+	pix: { type: PixKeyType; key: string } | null;
 	/** Código "Copia e Cola"; null se não foi possível gerar. */
 	payload: string | null;
 	qrOpen: boolean;
@@ -208,22 +209,26 @@ export function PixPayCard({
 				)}
 			</div>
 
-			<PixCodeBlock
-				amountCents={shareCents}
-				payeeName={payeeName}
-				pix={pix}
-				payload={payload}
-				qrOpen={qrOpen}
-				codeFallback={codeFallback}
-				onToggleQr={onToggleQr}
-				onCopyCode={onCopyCode}
-				onCopyKey={onCopyKey}
-			/>
+			{pix ? (
+				<PixCodeBlock
+					amountCents={shareCents}
+					payeeName={payeeName}
+					pix={pix}
+					payload={payload}
+					qrOpen={qrOpen}
+					codeFallback={codeFallback}
+					onToggleQr={onToggleQr}
+					onCopyCode={onCopyCode}
+					onCopyKey={onCopyKey}
+				/>
+			) : (
+				<p className="text-body-large text-on-surface-variant">Ainda não há chave Pix de {payeeName} no app.</p>
+			)}
 
 			{canPay && onPaid && (
 				<div className="space-y-2 border-t border-outline-variant pt-4">
 					<p className="text-body-large text-on-surface-variant">
-						{managed && accountName ? `Depois que ${accountName} pagar, avise aqui.` : "Depois de pagar, avise aqui."}
+						{!pix ? "Se pagou de outro jeito, avise aqui." : managed && accountName ? `Depois que ${accountName} pagar, avise aqui.` : "Depois de pagar, avise aqui."}
 					</p>
 					<Button variant="tonal" icon="check" fullWidth onClick={onPaid}>
 						Já paguei

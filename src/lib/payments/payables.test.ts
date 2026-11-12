@@ -97,6 +97,13 @@ describe("buildPayables", () => {
 		expect(r.recipients[0].items.map((i) => i.description)).toEqual(["d0", "d1", "d2"]);
 		expect(r.recipients[0].totalCents).toBe(3000);
 	});
+	it("sem chave Pix não há destinatário: recipientKey/recipientId são null (dois pagadores sem chave nunca dividem id) e a linha é ignorada", () => {
+		const noKey = (paidBy: string) => exp({ paidBy, pix: undefined });
+		expect(recipientKey(noKey("ana"))).toBeNull();
+		expect(recipientId(noKey("ana"))).toBeNull();
+		expect(recipientId({ paidBy: "ana", pix: { type: "email", key: "" } })).toBeNull();
+		expect(run([noKey("ana"), noKey("bia")]).recipients).toEqual([]);
+	});
 	it("id do destinatário é estável, depende de pagador+tipo+chave e não expõe a chave", () => {
 		const a = exp({});
 		expect(recipientId(a)).toBe(recipientId(exp({ description: "outra" })));

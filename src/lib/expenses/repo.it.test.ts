@@ -899,4 +899,45 @@ describe.skipIf(!ENABLED)("integração: despesas no MongoDB real", () => {
 		const nova = ok(await repo.createExpense(db, store, { groupId: g, uid: B, input: { description: "Pão", amountCents: 600, date: "2026-11-10", participantUids: [B, C] }, files: [] })).expense;
 		expect((await repo.deleteExpense(db, store, g, nova.id, A)).status).toBe("ok");
 	});
+
+	it("administrador lança por outro membro: chave do pagador, sem chave fica sem cópia e é pega depois, comum e admin de fora recusados", async () => {
+		const payments = await import("@/lib/payments/repo");
+		const D = uid("d_semchave");
+		await db.collection<{ _id: string }>("users").insertOne({ _id: D, name: "Sem chave", email: `${D}@example.invalid` } as never);
+		const g = await newGroup("admin-lanca", [OWNER, A, B, D]); // OWNER é o administrador
+		const other = await newGroup("outro-grupo", [C]); // C administra outro grupo
+		void other;
+		const input = (paidByUid: string, participantUids: string[]) => ({ description: "Mercado", amountCents: 3000, date: "2026-11-10", participantUids, paidByUid });
+
+		// admin lança por A: a chave gravada é a de A, quem lançou é o admin
+		const d1 = ok(await repo.createExpense(db, store, { groupId: g, uid: OWNER, input: input(A, [A, B]), files: [] })).expense;
+		expect(d1.paidBy.uid).toBe(A);
+		expect(d1.pix).toMatchObject({ key: `${A}@example.invalid` });
+		expect(d1.launchedBy).toMatchObject({ admin: true });
+		let raw = (await rawDocs(g)).find((x) => x._id.toHexString() === d1.id)!;
+		expect(raw).toMatchObject({ paidBy: A, createdBy: OWNER });
+		expect(raw.pix!.key).not.toBe(`${OWNER}@example.invalid`);
+		// A é o dono: A (e o admin, pelo papel) gerenciam; B (comum) não
+		expect(ok(await repo.getExpenseDetail(db, g, d1.id, A)).expense).toMatchObject({ canEdit: true, adminOnly: false, launchedBy: { admin: true } });
+		expect(ok(await repo.getExpenseDetail(db, g, d1.id, B)).expense).toMatchObject({ canEdit: false });
+
+		// membro comum e admin de outro grupo: recusados
+		expect(await repo.createExpense(db, store, { groupId: g, uid: B, input: input(A, [A, B]), files: [] })).toMatchObject({ status: "invalid", field: "paidByUid" });
+		expect(await repo.createExpense(db, store, { groupId: g, uid: C, input: input(A, [A, B]), files: [] })).toEqual({ status: "no_group" });
+		expect(await repo.createExpense(db, store, { groupId: g, uid: OWNER, input: input(C, [C, B]), files: [] })).toMatchObject({ status: "invalid", field: "paidByUid" });
+
+		// pagador sem chave Pix: criada sem cópia da chave; B não consegue pagar ainda, e passa a conseguir quando D cadastra
+		const d2 = ok(await repo.createExpense(db, store, { groupId: g, uid: OWNER, input: input(D, [D, B]), files: [] })).expense;
+		expect(d2.pix).toBeNull();
+		raw = (await rawDocs(g)).find((x) => x._id.toHexString() === d2.id)!;
+		expect(raw).not.toHaveProperty("pix");
+		const today = new Date("2026-11-12T12:00:00Z");
+		expect((await payments.getPayables(db, B, today, g))!.recipients.map((r) => r.payee.uid)).toEqual([A]);
+		await db.collection("users").updateOne({ _id: D } as never, { $set: { pixKey: { type: "email", key: `${D}@example.invalid` } } });
+		expect(ok(await repo.getExpenseDetail(db, g, d2.id, B)).expense.pix).toMatchObject({ key: `${D}@example.invalid` });
+		expect((await payments.getPayables(db, B, today, g))!.recipients.map((r) => r.payee.uid).sort()).toEqual([A, D].sort());
+		// o próprio D sem chave (quem paga por si) continua sem poder lançar
+		await db.collection("users").updateOne({ _id: D } as never, { $unset: { pixKey: "" } });
+		expect(await repo.createExpense(db, store, { groupId: g, uid: D, input: { description: "x", amountCents: 100, date: "2026-11-10", participantUids: [D, B] }, files: [] })).toEqual({ status: "no_pix" });
+	});
 });

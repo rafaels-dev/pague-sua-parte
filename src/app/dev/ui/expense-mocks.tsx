@@ -231,17 +231,31 @@ const GROUP_SUMMARY_SETTLED: MeSummary = {
 
 const GROUP_SUMMARY_TEXT: GroupSummaryData = {
 	groupName: "Despesas da vó",
-	totalOpenCents: 35333,
-	overdueCents: 10000,
+	totalOpenCents: 71000,
+	overdueCents: 31000,
 	debts: [
-		{ fromName: "Maria das Dores Silva", toName: "Rafael Schettino", cents: 10000, overdue: true, refund: false },
-		{ fromName: "Maria das Dores Silva", toName: "José Pereira", cents: 3333, overdue: false, refund: false },
+		{ fromName: "Rafael Schettino", toName: "Maria das Dores Silva", cents: 15500, overdue: true, refund: false },
+		{ fromName: "José Pereira", toName: "Maria das Dores Silva", cents: 15500, overdue: true, refund: false },
+		{ fromName: "José Pereira", toName: "Rafael Schettino", cents: 15000, overdue: false, refund: false },
+		{ fromName: "Rafael Schettino", toName: "Ana Paula", cents: 10000, overdue: false, refund: false },
+		{ fromName: "Maria das Dores Silva", toName: "Ana Paula", cents: 10000, overdue: false, refund: false },
 		{ fromName: "Rafael Schettino", toName: "Ana Paula", cents: 5000, overdue: false, refund: true },
-		{ fromName: "José Pereira", toName: "Rafael Schettino", cents: 17000, overdue: false, refund: false },
 	],
 	moreDebts: 0,
-	upToDate: ["Ana Paula", "Benjamim"],
+	upToDate: ["Benjamim"],
 	moreUpToDate: 0,
+	expenses: [
+		{ id: "e1", description: "Mercado do mês", totalCents: 62000, paidByName: "Maria das Dores Silva", dueDate: daysAgo(7), overdue: true, owes: [{ name: "Rafael Schettino", cents: 15500 }, { name: "José Pereira", cents: 15500 }], moreOwes: 0, refunds: [], moreRefunds: 0 },
+		{ id: "e2", description: "Consulta", totalCents: 45000, paidByName: "Rafael Schettino", dueDate: daysAgo(-5), overdue: false, owes: [{ name: "José Pereira", cents: 15000 }], moreOwes: 0, refunds: [{ name: "Ana Paula", cents: 5000 }], moreRefunds: 0 },
+		{ id: "e3", description: "Notebook (parcela 2 de 6)", totalCents: 30000, paidByName: "Ana Paula", dueDate: daysAgo(-12), overdue: false, owes: [{ name: "Rafael Schettino", cents: 10000 }, { name: "Maria das Dores Silva", cents: 10000 }], moreOwes: 0, refunds: [], moreRefunds: 0 },
+	],
+	moreExpenses: 0,
+	upcoming: [
+		{ id: "e2", dueDate: daysAgo(-5), description: "Consulta", paidByName: "Rafael Schettino", owes: [{ name: "José Pereira", cents: 15000 }], moreOwes: 0 },
+		{ id: "e3", dueDate: daysAgo(-12), description: "Notebook (parcela 2 de 6)", paidByName: "Ana Paula", owes: [{ name: "Rafael Schettino", cents: 10000 }, { name: "Maria das Dores Silva", cents: 10000 }], moreOwes: 0 },
+	],
+	moreUpcoming: 0,
+	upcomingTotalCents: 35000,
 };
 
 export function MockGroup({
@@ -459,7 +473,10 @@ export function MockNewExpense({
 	payer,
 	pay,
 	editing = false,
+	admin = false,
 }: Readonly<{
+	/** Administrador lançando em nome de qualquer pessoa do grupo. */
+	admin?: boolean;
 	/** Tela "Editar despesa" (administrador editando a despesa de outra pessoa). */
 	editing?: boolean;
 	/** Começa em "Só eu". */
@@ -504,6 +521,7 @@ export function MockNewExpense({
 		<Shell pathname="/app/grupos/1/despesas/nova" framed={framed} user={care ? CARE_USER : USER}>
 			<NewExpenseFormView
 				editing={editing}
+				isAdmin={admin}
 				groupId="1"
 				members={list}
 				payerUid={payerUid}
@@ -571,8 +589,8 @@ const ATTACHMENTS: AttachmentView[] = [
 	{ id: "x3", name: "nota-da-consulta.pdf", contentType: "application/pdf", size: 1_200_000, url: null, state: "ready" },
 ];
 
-type RawDetail = Omit<ExpenseDetailData, "canHelp" | "helpAsUids" | "helpShareCents" | "ownerAlone" | "canEdit" | "adminOnly">;
-export type MockMode = "help-alone" | "help-split" | "helped" | "help-care" | "installment" | "overdue" | "owner-installment" | "monthly" | "batch" | "debtor" | "payer" | "partial" | "refund" | "owner-return" | "recalc" | "two-parts" | "care-paid" | "self-owner" | "self-debtor" | "admin-view" | "refund-pay" | "refund-nopix" | "refund-done";
+type RawDetail = Omit<ExpenseDetailData, "canHelp" | "helpAsUids" | "helpShareCents" | "ownerAlone" | "canEdit" | "adminOnly" | "launchedBy">;
+export type MockMode = "help-alone" | "help-split" | "helped" | "help-care" | "installment" | "overdue" | "owner-installment" | "monthly" | "batch" | "debtor" | "payer" | "partial" | "refund" | "owner-return" | "recalc" | "two-parts" | "care-paid" | "self-owner" | "self-debtor" | "admin-view" | "admin-launched" | "refund-pay" | "refund-nopix" | "refund-done";
 const isCare = (mode: MockMode) => mode === "two-parts" || mode === "care-paid" || mode === "help-care";
 
 type MS = Partial<ExpenseShare> & Pick<ExpenseShare, "uid" | "name" | "amountCents" | "status">;
@@ -775,6 +793,7 @@ function helpDetail(mode: "help-alone" | "help-split" | "helped" | "help-care"):
 		adminOnly: false,
 		paidBy: owner,
 		pix: { type: "cpf" as const, key: "52998224725", payeeName: owner.name },
+		launchedBy: null,
 		attachments: [],
 		...NO_DUE,
 	};
@@ -817,7 +836,8 @@ function helpDetail(mode: "help-alone" | "help-split" | "helped" | "help-care"):
 function detail(mode: MockMode): ExpenseDetailData {
 	if (mode === "help-alone" || mode === "help-split" || mode === "helped" || mode === "help-care") return helpDetail(mode);
 	const raw = rawDetail(mode);
-	return { ...NO_HELP, canEdit: raw.canMarkPaid, adminOnly: false, ...raw, ...(mode === "admin-view" ? { canEdit: true, adminOnly: true, canMarkPaid: true, canEditParticipants: true, canDelete: true } : {}) };
+	const launched = mode === "admin-launched" ? { pix: null, launchedBy: { name: "Rafael Schettino", admin: true } } : {};
+	return { ...NO_HELP, canEdit: raw.canMarkPaid, adminOnly: false, launchedBy: null, ...raw, ...launched, ...(mode === "admin-view" || mode === "admin-launched" ? { canEdit: true, adminOnly: true, canMarkPaid: true, canEditParticipants: true, canDelete: true } : {}) };
 }
 
 function rawDetail(mode: MockMode): RawDetail {
@@ -851,6 +871,7 @@ function rawDetail(mode: MockMode): RawDetail {
 	const MARIA_PIX = { type: "cpf" as const, key: "11144477735", payeeName: B.name };
 	switch (mode) {
 		case "admin-view":
+		case "admin-launched":
 			// Rafael administra o grupo; a Maria pagou a conta. O José foi marcado como pago pelo Rafael (admin).
 			return out("Consulta com a cardiologista", 45000, 1, [
 				share({ ...B, amountCents: 15000, status: "payer" }),
@@ -1038,7 +1059,7 @@ export function MockExpense({
 				{receiptOpen && (
 					<ReceiptSheetContent
 						mode={receiptOpen}
-						payeeName={receiptOpen === "refund" ? "Maria das Dores Silva" : expense.pix.payeeName}
+						payeeName={receiptOpen === "refund" ? "Maria das Dores Silva" : (expense.pix?.payeeName ?? "")}
 						items={receiptItems}
 						problems={[]}
 						processing={false}

@@ -20,6 +20,14 @@ export function Telas({ tela }: Readonly<{ tela: string }>) {
 			return <MockExpense mode="admin-view" framed={false} />;
 		case "admin-despesa-resumo":
 			return <MockExpense mode="admin-view" summarySheet framed={false} />;
+		case "admin-lanca":
+			return <MockNewExpense framed={false} admin initial={{ amountCents: 62000, description: "Mercado do mês" }} />;
+		case "admin-lanca-por-outro":
+			return <MockNewExpense framed={false} admin payer="b" initial={{ amountCents: 62000, description: "Mercado do mês" }} />;
+		case "admin-lanca-sem-pix":
+			return <MockNewExpense framed={false} admin payer="d" initial={{ amountCents: 62000, description: "Mercado do mês" }} />;
+		case "admin-lancada-por":
+			return <MockExpense mode="admin-launched" framed={false} />;
 		case "devolver-pix":
 			return <MockExpense mode="refund-pay" framed={false} />;
 		case "devolver-sem-pix":

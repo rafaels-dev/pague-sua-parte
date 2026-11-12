@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeExpense, normalizeReceipt, normalizeSummary } from "./types";
+import { keyToCopy, normalizeExpense, normalizeReceipt, normalizeSummary } from "./types";
 
 describe("normalizeExpense", () => {
 	it("completa o formato antigo sem quebrar", () => {
@@ -16,6 +16,15 @@ describe("normalizeExpense", () => {
 		expect(e.attachments).toEqual([]);
 		expect(e.shares[1]).toMatchObject({ paidCents: 0, dueCents: 1000, refundCents: 0, participates: true });
 		expect(e.shares[2]).toMatchObject({ paidCents: 1000, dueCents: 0 });
+	});
+	it("sem chave Pix de quem pagou: pix é null (nunca um objeto falso); com chave, mantém", () => {
+		expect(normalizeExpense({ id: "e", shares: [], pix: null }).pix).toBeNull();
+		expect(normalizeExpense({ id: "e", shares: [] }).pix).toBeNull();
+		expect(normalizeExpense({ id: "e", shares: [], pix: { type: "email", key: "", payeeName: "X" } }).pix).toBeNull();
+		for (const bad of [{ key: "a@x.com", payeeName: "X" }, { type: "email", key: "a@x.com" }, { type: "zzz", key: "a", payeeName: "X" }, "texto"]) {
+			expect(normalizeExpense({ id: "e", shares: [], pix: bad as never }).pix).toBeNull();
+		}
+		expect(normalizeExpense({ id: "e", shares: [], pix: { type: "email", key: "a@x.com", payeeName: "X" } }).pix).toEqual({ type: "email", key: "a@x.com", payeeName: "X" });
 	});
 	it("mantém os valores do servidor", () => {
 		const e = normalizeExpense({
@@ -127,5 +136,21 @@ describe("comprovantes", () => {
 		expect(normalizeReceipt("x")).toBeNull();
 		expect(normalizeReceipt({ contentType: "image/png" })).toBeNull();
 		expect(normalizeReceipt({ name: "a.pdf" })).toEqual({ name: "a.pdf", contentType: "", size: 0 });
+	});
+});
+
+describe("keyToCopy", () => {
+	const pix = { type: "email" as const, key: "pagador@x.com", payeeName: "P" };
+	const share = (uid: string, refundPix?: { type: "email"; key: string; payeeName: string } | null) => ({ uid, ...(refundPix !== undefined ? { refundPix } : {}) }) as never;
+	it("devolução usa só a chave de quem recebe de volta; sem ela, nada (nunca a de quem pagou a despesa)", () => {
+		const e = { pix, shares: [share("b", { type: "email", key: "b@x.com", payeeName: "B" }), share("c", null), share("d")] };
+		expect(keyToCopy(e, "r:b")).toBe("b@x.com");
+		expect(keyToCopy(e, "r:c")).toBeNull();
+		expect(keyToCopy(e, "r:d")).toBeNull();
+		expect(keyToCopy(e, "r:zzz")).toBeNull();
+	});
+	it("fora de devolução usa a chave da despesa; sem chave, nada", () => {
+		expect(keyToCopy({ pix, shares: [] })).toBe("pagador@x.com");
+		expect(keyToCopy({ pix: null, shares: [] })).toBeNull();
 	});
 });

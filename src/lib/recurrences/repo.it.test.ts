@@ -135,18 +135,21 @@ describe.skipIf(!ENABLED)("integração: despesas fixas no MongoDB real", () => 
 		expect(await periodsOf(g, rid2)).toEqual(["2026-09"]);
 	});
 
-	it("quem paga sem Pix é pulado sem avançar; gera quando cadastra a chave; quem saiu do grupo desativa", async () => {
+	it("quem paga sem Pix: o mês nasce sem cópia da chave e a chave é pega quando cadastrada; quem saiu do grupo desativa", async () => {
 		const g = await newGroup("pix", [OWNER, NOPIX]);
 		const rid = new ObjectId();
 		await recs.insertOne({ _id: rid, groupId: g, createdBy: NOPIX, paidBy: NOPIX, description: "Luz", amountCents: 2000, dayOfMonth: 10, participantMode: "alone", participantUids: [], startPeriod: "2026-11", nextPeriod: "2026-11", active: true, createdAt: new Date(), updatedAt: new Date() });
-		expect(await mat.materializeRecurrences(db, [g], at("2026-11-11"))).toBe(0);
-		expect(await recs.findOne({ _id: rid })).toMatchObject({ active: true, nextPeriod: "2026-11" });
-
-		await db.collection<{ _id: string }>("users").updateOne({ _id: NOPIX }, { $set: { pixKey: { type: "email", key: "novo@example.invalid" } } } as never);
-		expect(await mat.materializeRecurrences(db, [g], at("2026-11-12"))).toBe(1);
+		expect(await mat.materializeRecurrences(db, [g], at("2026-11-11"))).toBe(1);
+		expect(await recs.findOne({ _id: rid })).toMatchObject({ active: true, nextPeriod: "2026-12" });
 		const [e] = await expensesOf(g, rid.toHexString());
-		expect(e).toMatchObject({ dueDate: "2026-11-10", pix: { key: "novo@example.invalid" } });
+		expect(e).toMatchObject({ dueDate: "2026-11-10" });
+		expect(e).not.toHaveProperty("pix");
 		expect(e.shares).toEqual([{ uid: NOPIX, amountCents: 2000, paidCents: 0 }]);
+
+		// quando a chave é cadastrada, a leitura a usa (ninguém precisa recriar o mês)
+		await db.collection<{ _id: string }>("users").updateOne({ _id: NOPIX }, { $set: { pixKey: { type: "email", key: "novo@example.invalid" } } } as never);
+		const detail = await expensesRepo.getExpenseDetail(db, g.toHexString(), e._id.toHexString(), OWNER);
+		expect(detail).toMatchObject({ status: "ok", expense: { pix: { key: "novo@example.invalid" } } });
 
 		// quem paga sai do grupo: desativa, sem gerar
 		await groupsRepo.groupsCollection(db).updateOne({ _id: g }, { $pull: { members: { uid: NOPIX } } } as never);

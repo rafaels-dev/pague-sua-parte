@@ -4,6 +4,7 @@ import type { ExpenseDoc } from "@/lib/expenses/repo";
 import { releaseReceipts } from "@/lib/expenses/repo";
 import type { AttachmentStore } from "@/lib/storage/attachments";
 import { itemId, payBatch, validateBatch } from "./repo";
+import { recipientId } from "./payables";
 
 const G1 = new ObjectId("507f1f77bcf86cd799439011");
 const G2 = new ObjectId("507f1f77bcf86cd799439012");
@@ -40,7 +41,7 @@ const mk = (_id: ObjectId, groupId: ObjectId, over: Record<string, unknown> = {}
 const copy = (d: ExpenseDoc): ExpenseDoc => ({ ...d, shares: d.shares.map((x) => ({ ...x, ...(x.receipt ? { receipt: { ...x.receipt } } : {}), ...(x.batch ? { batch: { ...x.batch } } : {}) })) });
 
 /** Banco em memória mínimo: groups.find, expenses.findOne/find/updateOne com checagem de versão. */
-function fakeDb(docs: ExpenseDoc[], opts: { failOn?: ObjectId; throwOn?: ObjectId } = {}) {
+function fakeDb(docs: ExpenseDoc[], opts: { failOn?: ObjectId; throwOn?: ObjectId; users?: unknown[] } = {}) {
 	const state = new Map(docs.map((d) => [d._id.toHexString(), copy(d)]));
 	const expenses = {
 		findOne: vi.fn(async (f: { _id: ObjectId; groupId?: ObjectId }) => {
@@ -66,7 +67,7 @@ function fakeDb(docs: ExpenseDoc[], opts: { failOn?: ObjectId; throwOn?: ObjectI
 			toArray: async () => GROUPS.filter((g) => f._id.$in.some((id) => id.equals(g._id)) && g.members.some((x) => x.uid === f["members.uid"])),
 		})),
 	};
-	const users = { find: vi.fn(() => ({ toArray: async () => [] })) };
+	const users = { find: vi.fn(() => ({ toArray: async () => opts.users ?? [] })) };
 	const db = { collection: (n: string) => (n === "expenses" ? expenses : n === "users" ? users : groups) } as unknown as Db;
 	return { db, state, expenses, get: (id: ObjectId) => state.get(id.toHexString())! };
 }
@@ -87,6 +88,26 @@ describe("validateBatch", () => {
 		const { db, expenses } = fakeDb(base());
 		expect(await validateBatch(db, "me", [it1(G1, E1), it1(G1, E3)])).toEqual({ status: "invalid", error: "Essas contas são de destinatários ou chaves Pix diferentes. Pague cada cartão separado.", field: "items" });
 		expect(expenses.updateOne).not.toHaveBeenCalled();
+	});
+	it("despesa sem cópia da chave: usa a chave ATUAL de quem pagou, numa só busca para todas as contas do pedido", async () => {
+		const noKey = (id: ObjectId) => mk(id, G1, { pix: undefined });
+		const withKey = { _id: "ana", name: "Ana", pixKey: { type: "email", key: "nova@x.com" } };
+		const f = fakeDb([noKey(E1), noKey(E3)], { users: [withKey] });
+		expect(await validateBatch(f.db, "me", [it1(G1, E1), it1(G1, E3)])).toEqual({ status: "ok", totalCents: 2000 });
+		expect((f.db.collection("users") as unknown as { find: ReturnType<typeof vi.fn> }).find).toHaveBeenCalledTimes(1);
+		// sem chave cadastrada ainda: recusa, nada é pago
+		const none = fakeDb([noKey(E1)]);
+		expect((await validateBatch(none.db, "me", [it1(G1, E1)])).status).toBe("invalid");
+	});
+	it("a chave mudou entre a lista e o pagamento: o id do destinatário que a tela recebeu não bate e o lote é recusado", async () => {
+		const shown = recipientId({ paidBy: "ana", pix: { type: "email", key: "ana@x.com" } })!;
+		const { db, expenses } = fakeDb([mk(E1, G1)]);
+		expect(await validateBatch(db, "me", [it1(G1, E1)], shown)).toEqual({ status: "ok", totalCents: 1000 });
+		const changed = fakeDb([mk(E1, G1, { pix: { type: "email", key: "trocada@x.com", payeeName: "Ana" } })]);
+		expect(await validateBatch(changed.db, "me", [it1(G1, E1)], shown)).toMatchObject({ status: "invalid", field: "items" });
+		expect(expenses.updateOne).not.toHaveBeenCalled();
+		// sem o id (clientes antigos) continua valendo como antes
+		expect((await validateBatch(changed.db, "me", [it1(G1, E1)])).status).toBe("ok");
 	});
 	it("recusa pagador diferente com mesma chave", async () => {
 		const other = mk(E3, G1, { paidBy: "me", shares: [{ uid: "me", amountCents: 0, paidCents: 0 }, { uid: "ana", amountCents: 100, paidCents: 0 }] });

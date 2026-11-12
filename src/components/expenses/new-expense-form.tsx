@@ -15,6 +15,7 @@ import { isValidDueDate } from "@/lib/ui/due-dates";
 import { clampDay, createdFlash, DEFAULT_DAY, endPeriodProblem, firstDueDate } from "@/lib/ui/recurrences";
 import { installmentSplitLine, monthlySplitLine, splitPreview } from "@/lib/ui/split-preview";
 import { cx } from "@/lib/ui/cx";
+import { payerPixNotice } from "@/lib/ui/payer-pix-notice";
 import { AttachmentPicker } from "./attachment-picker";
 import { PaymentChoice, type PaymentKind } from "./payment-choice";
 import { normalizeExpense, setFlash, type ExpenseDetailData } from "./types";
@@ -67,6 +68,8 @@ export type NewExpenseFormViewProps = {
 	members: FormMember[];
 	/** Quem pagou: você ou uma pessoa sem celular que você cuida. */
 	payerUid: string;
+	/** Você administra o grupo: pode lançar a despesa em nome de qualquer pessoa do grupo. */
+	isAdmin?: boolean;
 	/** Você mesmo ainda não cadastrou a chave Pix. */
 	selfNoPixKey?: boolean;
 	onPayer: (uid: string) => void;
@@ -110,9 +113,11 @@ export type NewExpenseFormViewProps = {
 export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 	const me = p.members.find((m) => m.isYou);
 	const today = todayISO();
-	const payerOptions = p.members.filter((m) => m.isYou || (m.kind === "managed" && m.youManage));
+	const payerOptions = p.members.filter((m) => m.isYou || (m.kind === "managed" && m.youManage) || (p.isAdmin && !p.editing));
 	const payer = payerOptions.find((m) => m.uid === p.payerUid) ?? me;
 	const payerIsManaged = !!payer && !payer.isYou;
+	// Administrador lançando por alguém que ele não cuida: a falta da chave Pix só avisa, não impede.
+	const notice = payer ? payerPixNotice(payer, !!p.selfNoPixKey) : "ok";
 	const onlyPayer = p.selected.length === 1 && p.selected[0] === payer?.uid;
 	const payerUid = payer?.uid ?? "";
 	const payerName = payerIsManaged ? payer?.name : undefined;
@@ -136,11 +141,16 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 					<CarerPicker label={payerQuestion} carers={payerOptions} value={payer?.uid ?? ""} onChange={p.onPayer} />
 				)}
 				{payerIsManaged && payer.hasPixKey !== false && <p className="text-body-large text-on-surface-variant">Você lança no nome de {payer.name}. O dinheiro vai para a chave Pix de {payer.name}.</p>}
+				{notice === "warn" && payer && (
+					<Banner title={`${payer.name} ainda não cadastrou a chave Pix`} icon="warning" role="status">
+						As pessoas não vão conseguir pagar pelo app até ele cadastrar.
+					</Banner>
+				)}
 			</fieldset>
 		) : null;
-	const blocker = editing ? null : p.selfNoPixKey && !payerIsManaged ? (
+	const blocker = editing ? null : notice === "block" && !payerIsManaged ? (
 		<NoPixKeyBlock returnTo={`/app/grupos/${encodeURIComponent(p.groupId)}/despesas/nova`} />
-	) : payerIsManaged && payer.hasPixKey === false ? (
+	) : notice === "block" && payer ? (
 		<ManagedNoPixKeyBlock groupId={p.groupId} uid={payer.uid} name={payer.name} />
 	) : null;
 	if (blocker) {
@@ -248,7 +258,7 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 						{preview.othersCents > 0 && (
 							<p className="text-body-large text-on-surface-variant">
 								{payerIsManaged
-									? `${payer.name} recebe ${formatBRL(preview.othersCents)} dos outros ${total}.`
+									? `Os outros devem ${formatBRL(preview.othersCents)} para ${payer.name} ${total}.`
 									: `Os outros te devem ${formatBRL(preview.othersCents)} ${total}.`}
 							</p>
 						)}
@@ -471,10 +481,11 @@ export function NewExpenseForm({ groupId, editExpenseId }: Readonly<{ groupId: s
 	const formMembers = editing ? splitMembersFor(editing, group.members) : group.members;
 	const myUid = group.members.find((m) => m.isYou)?.uid ?? "";
 	const hasManaged = group.members.some((m) => m.kind === "managed" && m.youManage);
+	const isAdmin = group.role === "admin";
 	const payer = editing ? editing.paidBy.uid : (payerUid ?? myUid);
 	const payerIsManaged = payer !== myUid && group.members.some((m) => m.uid === payer);
 	// Sem pessoas sem celular para cuidar, a falta da chave Pix troca a tela inteira; com elas, o aviso aparece no formulário.
-	if (noPixKey && !hasManaged && !editing) {
+	if (noPixKey && !hasManaged && !isAdmin && !editing) {
 		return (
 			<div className="mx-auto max-w-xl">
 				<NoPixKeyBlock returnTo={`/app/grupos/${encodeURIComponent(groupId)}/despesas/nova`} />
@@ -636,6 +647,7 @@ export function NewExpenseForm({ groupId, editExpenseId }: Readonly<{ groupId: s
 				groupId={groupId}
 				members={formMembers}
 				editing={!!editing}
+				isAdmin={isAdmin}
 				payerUid={payer}
 				selfNoPixKey={noPixKey}
 				onPayer={(uid) => {

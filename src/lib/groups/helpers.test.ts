@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { actsFor, expenseRole, generateInviteToken, isGroupAdmin, generateManagedUid, isManagedMember, isManagedUid, isObjectIdHex, isPlausibleToken, newInviteExpiry, sortMembers, type MemberView } from "./helpers";
+import { actsFor, canLaunchPaidBy, expenseRole, generateInviteToken, isGroupAdmin, generateManagedUid, isManagedMember, isManagedUid, isObjectIdHex, isPlausibleToken, newInviteExpiry, sortMembers, type MemberView } from "./helpers";
 
 const m = (name: string, role: "admin" | "member"): MemberView => ({
 	uid: name,
@@ -102,5 +102,28 @@ describe("isGroupAdmin / expenseRole", () => {
 		expect(expenseRole(members, "adm", "adm")).toBe("owner");
 		expect(expenseRole(members, "outro", "dono")).toBeNull();
 		expect(expenseRole(members, "ninguem", "dono")).toBeNull();
+	});
+});
+
+describe("canLaunchPaidBy", () => {
+	const members = [
+		{ uid: "adm", role: "admin" as const },
+		{ uid: "ana", role: "member" as const },
+		{ uid: "bia", role: "member" as const },
+		{ uid: "m_vo", role: "member" as const, kind: "managed" as const, managedBy: "ana" },
+		{ uid: "m_adm", role: "admin" as const, kind: "managed" as const, managedBy: "ana" },
+	];
+	it("o próprio e quem cuida", () => {
+		expect(canLaunchPaidBy(members, "ana", "ana")).toBe(true);
+		expect(canLaunchPaidBy(members, "ana", "m_vo")).toBe(true);
+	});
+	it("administrador: qualquer membro do grupo", () => {
+		for (const p of ["ana", "bia", "m_vo", "adm"]) expect(canLaunchPaidBy(members, "adm", p)).toBe(true);
+	});
+	it("membro comum não lança por outro; pagador fora do grupo nunca; pessoa sem login 'admin' não vale", () => {
+		expect(canLaunchPaidBy(members, "ana", "bia")).toBe(false);
+		expect(canLaunchPaidBy(members, "bia", "m_vo")).toBe(false);
+		expect(canLaunchPaidBy(members, "adm", "fora")).toBe(false);
+		expect(canLaunchPaidBy(members, "m_adm", "bia")).toBe(false);
 	});
 });

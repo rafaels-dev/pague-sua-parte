@@ -19,6 +19,8 @@ const bodySchema = z.object({
 		.array(z.object({ groupId: hex24, expenseId: hex24, shareUid: z.string().min(1).max(200), kind: z.enum(["share", "refund"]).optional() }))
 		.min(1)
 		.max(50),
+	/** Id do destinatário como a tela o recebeu em "contas a pagar"; recusa o lote se a chave Pix mudou depois. */
+	recipientId: z.string().regex(/^r_[0-9a-f]{24}$/).optional(),
 });
 
 /** "Pagar tudo de uma vez": quita várias cotas do mesmo destinatário com um comprovante opcional (`file`). */
@@ -56,7 +58,7 @@ export async function POST(request: Request) {
 		if (!parsed.success) return jsonError(BAD_ITEMS, 422, "items");
 		const items = parsed.data.items;
 
-		const res = await payBatch(await getDb(), getAttachmentStore(), { uid: user.uid, items, file });
+		const res = await payBatch(await getDb(), getAttachmentStore(), { uid: user.uid, items, file, recipientId: parsed.data.recipientId });
 		switch (res.status) {
 			case "no_group":
 				return jsonError("Grupo não encontrado.", 404);

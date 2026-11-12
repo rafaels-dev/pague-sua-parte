@@ -124,7 +124,10 @@ export type ExpenseDetailData = {
 	adminOnly: boolean;
 	participantUids: string[];
 	paidBy: { uid: string; name: string; picture: string | null; isYou: boolean; kind: "user" | "managed"; youManage: boolean };
-	pix: { type: PixKeyType; key: string; payeeName: string };
+	/** `null` = quem pagou ainda não cadastrou a chave Pix: ninguém consegue pagar pelo app até ela existir. */
+	pix: { type: PixKeyType; key: string; payeeName: string } | null;
+	/** Quem lançou, quando não é quem pagou (o administrador lançando por outra pessoa). */
+	launchedBy: { name: string; admin: boolean } | null;
 	shares: ExpenseShare[];
 	attachments: ExpenseAttachment[];
 	dueDate: string | null;
@@ -240,6 +243,8 @@ export function normalizeExpense(raw: Loose<Omit<ExpenseDetailData, "shares">> &
 			youManage: paidBy.kind === "managed" && !!paidBy.youManage,
 		},
 		shares,
+		pix: validPix(raw.pix),
+		launchedBy: raw.launchedBy && typeof raw.launchedBy.name === "string" ? { name: raw.launchedBy.name, admin: !!raw.launchedBy.admin } : null,
 		attachments: raw.attachments ?? [],
 		dueDate: dueOrNull(raw.dueDate),
 		installment: normalizeInstallment(raw.installment),
@@ -257,6 +262,24 @@ export function normalizeExpense(raw: Loose<Omit<ExpenseDetailData, "shares">> &
 		adminOnly: !!raw.adminOnly,
 		participantUids: raw.participantUids ?? shares.filter((s) => s.participates).map((s) => s.uid),
 	};
+}
+
+const PIX_TYPES = ["cpf", "cnpj", "email", "phone", "random"];
+/** Chave Pix completa (tipo conhecido, chave e nome de quem recebe) ou null: um objeto incompleto nunca chega às telas de pagar. */
+export function validPix(v: unknown): ExpenseDetailData["pix"] {
+	if (!v || typeof v !== "object") return null;
+	const p = v as Record<string, unknown>;
+	if (typeof p.type !== "string" || !PIX_TYPES.includes(p.type) || typeof p.key !== "string" || p.key.trim() === "" || typeof p.payeeName !== "string") return null;
+	return { type: p.type as PixKeyType, key: p.key, payeeName: p.payeeName };
+}
+
+/**
+ * Chave Pix a copiar. Numa devolução (`refundKey` "r:<uid>") é só a de quem recebe de volta: sem ela, nada (nunca a chave
+ * de quem pagou a despesa, que seria a de quem está devolvendo). Fora disso, a da despesa.
+ */
+export function keyToCopy(expense: Pick<ExpenseDetailData, "pix" | "shares">, refundKey?: string | null): string | null {
+	if (refundKey?.startsWith("r:")) return expense.shares.find((s) => s.uid === refundKey.slice(2))?.refundPix?.key || null;
+	return expense.pix?.key || null;
 }
 
 /** Completa os campos novos de um item da lista de despesas quando o servidor ainda manda o formato antigo. */

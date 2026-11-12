@@ -29,7 +29,7 @@ import { openBlobInNewTab } from "./open-blob";
 import { ReceiptSheetBody } from "./receipt-sheet";
 import { AccountHeader, PixCodeBlock, PixPayCard } from "./pix-pay-card";
 import { ResplitContent } from "./resplit-sheet";
-import { clearFlash, normalizeExpense, peekFlash, setFlash, type ExpenseDetailData, type ExpenseShare } from "./types";
+import { clearFlash, keyToCopy, normalizeExpense, peekFlash, setFlash, type ExpenseDetailData, type ExpenseShare } from "./types";
 import { modeFor, type SplitMember, type SplitMode } from "./who-splits";
 
 export const LAUNCHED_FLASH = "Despesa lançada!";
@@ -46,6 +46,7 @@ export function refundPayload(expense: ExpenseDetailData, share: ExpenseShare): 
 
 /** Código "Copia e Cola" da parte de quem deve, ou null se os dados não permitem gerar. */
 export function payloadFor(expense: ExpenseDetailData, shareCents: number): string | null {
+	if (!expense.pix) return null;
 	try {
 		return buildPixPayload({ key: expense.pix.key, payeeName: expense.pix.payeeName, amountCents: shareCents, txid: `R${expense.id}` });
 	} catch {
@@ -329,6 +330,7 @@ export function ExpenseDetailView({
 	const accounts = expense.shares
 		.filter((s) => (s.isYou || s.youManage) && s.status !== "payer")
 		.sort((a, b) => Number(b.isYou) - Number(a.isYou));
+	const pix = expense.pix;
 	const today = todayISO();
 	const due = dueLong(expense.dueDate, expense.overdue, today);
 	const labeled = expense.shares.some((s) => s.youManage) || expense.paidBy.youManage;
@@ -370,6 +372,12 @@ export function ExpenseDetailView({
 				<p className="text-body-large text-on-surface-variant">
 					{paidByLabel(expense.paidBy)} · {formatDateLong(expense.date)}
 				</p>
+				{expense.launchedBy && (
+					<p className="text-body-medium text-on-surface-variant">
+						Lançada por {expense.launchedBy.name}
+						{expense.launchedBy.admin ? " (administrador)" : ""}
+					</p>
+				)}
 				{due && (
 					<p className={`flex items-center gap-2 text-title-medium ${due.overdue ? "text-error" : "text-on-surface"}`}>
 						<Icon name={due.overdue ? "warning" : "calendar_today"} size={22} />
@@ -409,6 +417,11 @@ export function ExpenseDetailView({
 
 			{canHelpOn(expense) && <HelpCard expense={expense} onHelp={onHelp} />}
 
+			{!pix && accounts.some((s) => s.status === "pending") && (
+				<Banner title={`${payerName} ainda não cadastrou a chave Pix`} icon="warning" role="status">
+					Por enquanto não há Pix pelo app. Se pagar de outro jeito, use &ldquo;Já paguei&rdquo;. Quando a chave for cadastrada, o Pix aparece nesta tela.
+				</Banner>
+			)}
 			{accounts.map((s) => {
 				const headingId = `conta-${s.uid}`;
 				if (s.status === "pending") {
@@ -421,8 +434,8 @@ export function ExpenseDetailView({
 							managed={s.youManage}
 							shareCents={s.dueCents}
 							paidSoFarCents={s.paidCents}
-							payeeName={expense.pix.payeeName}
-							pix={expense.pix}
+							payeeName={pix?.payeeName ?? payerName}
+							pix={pix}
 							payload={payloadFor(expense, s.dueCents)}
 							qrOpen={qrOpen === s.uid}
 							codeFallback={codeFallback === s.uid}
@@ -1123,8 +1136,9 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 					});
 				}}
 				onCopyKey={(refundKey) => {
-					const refundTarget = refundKey?.startsWith("r:") ? expense.shares.find((s) => s.uid === refundKey.slice(2)) : undefined;
-					void copyText(refundTarget?.refundPix?.key ?? expense.pix.key).then((ok) => setSnack(ok ? "Chave Pix copiada!" : "Não deu para copiar. Selecione a chave e copie."));
+					const key = keyToCopy(expense, refundKey);
+					if (!key) return;
+					void copyText(key).then((ok) => setSnack(ok ? "Chave Pix copiada!" : "Não deu para copiar. Selecione a chave e copie."));
 				}}
 				onEdit={() => router.push(`/app/grupos/${encodeURIComponent(groupId)}/despesas/${encodeURIComponent(expenseId)}/editar`)}
 				onShareSummary={() => setShareOpen("summary")}
@@ -1163,13 +1177,13 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 				onClose={() => {
 					if (!receiptBusy) setReceiptSheet(null);
 				}}
-				title={receiptSheet ? receiptSheetCopy(receiptSheet.mode, receiptSheet.mode === "refund" ? (expense.shares.find((s) => s.uid === receiptSheet.uid)?.name ?? "") : expense.pix.payeeName).title : ""}
+				title={receiptSheet ? receiptSheetCopy(receiptSheet.mode, receiptSheet.mode === "refund" ? (expense.shares.find((s) => s.uid === receiptSheet.uid)?.name ?? "") : (expense.pix?.payeeName ?? expense.paidBy.name)).title : ""}
 			>
 				{receiptSheet && (
 					<ReceiptSheetBody
 						key={`${receiptSheet.uid}-${receiptSheet.mode}`}
 						mode={receiptSheet.mode}
-						payeeName={receiptSheet.mode === "refund" ? (expense.shares.find((s) => s.uid === receiptSheet.uid)?.name ?? "") : expense.pix.payeeName}
+						payeeName={receiptSheet.mode === "refund" ? (expense.shares.find((s) => s.uid === receiptSheet.uid)?.name ?? "") : (expense.pix?.payeeName ?? expense.paidBy.name)}
 						busy={receiptBusy}
 						error={receiptError}
 						fileError={receiptFileError}

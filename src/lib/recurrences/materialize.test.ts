@@ -123,11 +123,13 @@ describe("materializeRecurrences", () => {
 		expect(inserted).toHaveLength(0);
 		expect(recs[0].active).toBe(false);
 	});
-	it("sem Pix agora: pula sem avançar (tenta de novo depois)", async () => {
+	it("sem Pix agora: o mês é criado sem cópia da chave (vale a atual na leitura) e a recorrência avança", async () => {
 		const { db, recs, inserted } = fakeDb({ recs: [rec({ nextPeriod: "2026-11" })], pix: false });
-		expect(await materializeRecurrences(db, [GID], NOW)).toBe(0);
-		expect(inserted).toHaveLength(0);
-		expect(recs[0]).toMatchObject({ active: true, nextPeriod: "2026-11" });
+		expect(await materializeRecurrences(db, [GID], NOW)).toBe(1);
+		expect(inserted).toHaveLength(1);
+		expect(inserted[0]).not.toHaveProperty("pix");
+		expect(inserted[0]).toMatchObject({ paidBy: "u1", recurrence: { period: "2026-11" } });
+		expect(recs[0]).toMatchObject({ active: true, nextPeriod: "2026-12" });
 	});
 	it("reserva perdida (outra leitura já avançou): não insere nada", async () => {
 		const f = fakeDb({ recs: [rec({ nextPeriod: "2026-11" })] });
