@@ -60,7 +60,8 @@ describe("createR2Store", () => {
 	it("delete: um DELETE por chave; 204 e 404 são sucesso (idempotente)", async () => {
 		fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 })).mockResolvedValueOnce(new Response(null, { status: 404 }));
 		await expect(createR2Store(CONFIG).delete(["k1", "k2"])).resolves.toBeUndefined();
-		expect(fetchMock.mock.calls.map(([r]) => [r.method, r.url])).toEqual([
+		// Os DELETEs saem em paralelo (Promise.all) e a assinatura é assíncrona: a ordem das chamadas não é garantida.
+		expect(fetchMock.mock.calls.map(([r]) => [r.method, r.url]).sort((a, b) => a[1].localeCompare(b[1]))).toEqual([
 			["DELETE", `${BASE}/k1`],
 			["DELETE", `${BASE}/k2`],
 		]);
