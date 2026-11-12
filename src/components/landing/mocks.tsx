@@ -77,7 +77,7 @@ export function ShareMock() {
 	);
 }
 
-/** Plano "pré-grupo": quem vai, até quanto cada um pode pagar e quando a conta fecha. */
+/** Plano "pré-grupo": quem vai, até quanto cada um pode pagar e a meta por pessoa. */
 export function PlanMock() {
 	return (
 		<Still className="space-y-4 rounded-shape-lg bg-surface p-5 text-on-surface">
@@ -99,11 +99,11 @@ export function PlanMock() {
 						<StatusChip tone={tone as "ok" | "neutral"}>{answer}</StatusChip>
 					</div>
 				))}
-				<p className="text-body-large text-on-surface-variant">+ 6 pessoas vão</p>
 			</div>
-			<Card tone="high" className="p-4">
-				<p className="text-title-medium">Fecha com 8 pessoas</p>
-				<p className="money text-headline-small font-bold">R$ 312,50 cada</p>
+			<Card tone="high" className="space-y-1 p-4">
+				<p className="text-label-large text-on-surface-variant">Meta: 10 pessoas</p>
+				<p className="money text-headline-small font-bold">R$ 250,00 cada</p>
+				<p className="text-body-large text-on-surface-variant">Se só 8 forem: R$ 312,50 cada</p>
 			</Card>
 		</Still>
 	);

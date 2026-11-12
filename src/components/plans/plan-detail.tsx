@@ -86,7 +86,7 @@ export function AnswerCard({
 	const savedNote = person.answer === "going" && person.aboveLimit ? limitNote(person, person.limitCents, totalCents) : null;
 	/** Ao vivo, enquanto digita: só quando o limite digitado fica abaixo da parte de hoje. */
 	const liveNote = liveLimitNote(person, limit, totalCents, goingCount);
-	/** Abre o campo de limite e leva o bloco todo (campo, apoio, confirmar) para a parte visível, acima da barra de baixo. */
+	/** Abre o campo de limite e leva o topo do bloco (valor planejado e campo de limite) para logo abaixo da barra de cima. */
 	const openAsking = () => {
 		scrollOnOpen.current = true;
 		setAsking(true);
@@ -95,7 +95,8 @@ export function AnswerCard({
 		if (!asking || !scrollOnOpen.current) return;
 		scrollOnOpen.current = false;
 		const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-		askRef.current?.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" });
+		// Topo do bloco no topo da tela: o "Valor planejado por pessoa" e o campo de limite ficam visíveis juntos.
+		askRef.current?.scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" });
 	}, [asking]);
 	const title = person.isYou ? "Você" : person.name;
 	const answered = person.answer !== "pending";
@@ -131,7 +132,7 @@ export function AnswerCard({
 			)}
 
 			{asking && (
-				<div ref={askRef} className="scroll-mb-32 space-y-3">
+				<div ref={askRef} className="scroll-mt-20 space-y-3">
 					{person.preview?.basis === "expected" && (
 						<MoneyField id={`planejado-${person.id}`} label={PLANNED_LABEL} cents={person.preview.cents} onChange={() => {}} readOnly supportingText={plannedSupport(person.preview)} />
 					)}
