@@ -186,7 +186,6 @@ function PersonRow({ person, onRemove }: Readonly<{ person: PlanPersonView; onRe
 		person.kind === "guest" ? `Sem celular · de ${person.addedByName ?? "alguém"}` : null,
 		person.isCreator ? "Criou o plano" : null,
 		person.answer === "going" && person.limitCents ? `Limite: ${formatBRL(person.limitCents)}` : null,
-		person.aboveLimit ? "Fora da conta por enquanto" : null,
 	].filter(Boolean);
 	return (
 		<ListItem
