@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { buildAdvanceNotices, buildMemberJoinedNotices, buildNewExpenseNotices, buildPaymentNotices } from "./messages";
 import { buildPlanCancelledNotices, buildPlanChangeNotices, buildPlanClosedNotices, buildPlanConfirmedNotices } from "./plan-messages";
 import { buildWelcomeNotice } from "./welcome";
+import { buildReminderNotice } from "./reminder-messages";
+import { formatBRL } from "@/lib/money";
+import type { ReminderItem } from "@/lib/reminders/plan";
 import type { NewExpenseFact, Notice, NoticeContext, PaymentFact, PlanNoticeBase, PlanSnapshot } from "./types";
 
 // Contrato do e-mail: todo aviso tem `scope` (de onde vem) e, se leva valor, uma legenda que diga o que o valor é.
@@ -18,7 +21,10 @@ const exp = (o: Partial<NewExpenseFact> = {}): NewExpenseFact => ({ groupId: G, 
 const base: PlanNoticeBase = { planId: "p", name: "Hotel", totalCents: 250000, actorUid: "ana", creatorUid: "cri", participants: ["cri", "ana", "bia"], guests: [{ id: "pg", name: "Ben", addedBy: "bia" }] };
 const snap = (o: Partial<PlanSnapshot> = {}): PlanSnapshot => ({ fits: false, shareCents: null, includedUids: [], ...o });
 
+const rem = (o: Partial<ReminderItem> = {}): ReminderItem => ({ recurrenceId: "r", groupId: G, groupName: "Família", period: "2026-11", lead: 7, uid: "ana", description: "Internet", dueDate: "2026-11-20", amountCents: 4990, exists: false, own: true, others: false, ...o });
 const scenarios: [string, Notice[]][] = [
+	...([15, 7, 3, 0] as const).map((lead): [string, Notice[]] => [`lembrete ${lead === 0 ? "hoje" : `${lead} dias`}`, [buildReminderNotice(rem({ lead })), buildReminderNotice(rem({ lead, exists: true, expenseId: "e", amountCents: 2000 }))]]),
+	["lembrete (pessoa cuidada)", [buildReminderNotice(rem({ own: false, others: true })), buildReminderNotice(rem({ own: true, others: true, exists: true, expenseId: "e" }))]],
 	["entrou", buildMemberJoinedNotices({ groupId: G, groupName: "Família", members, joinerUid: "bia", joinerName: "Bia" })],
 	["pagou", buildPaymentNotices([pay()], ctx)],
 	["parcial", buildPaymentNotices([pay({ amountCents: 2000, partial: { shareCents: 5000, remainingCents: 3000 } })], ctx)],
@@ -48,11 +54,50 @@ describe("contrato dos avisos para o e-mail", () => {
 			expect(notices.length).toBeGreaterThan(0);
 			for (const n of notices) {
 				expect(n.scope?.name, "scope").toBeTruthy();
+				expect(n.subject?.trim(), "subject").toBeTruthy();
+				expect(n.subject!.length, "subject curto").toBeLessThanOrEqual(80);
+				expect(n.subject, "uma linha só").not.toMatch(/[\r\n]/);
+				expect(JSON.stringify(n.subject), "nada de Pix nem token no assunto").not.toMatch(/pix|token/i);
 				if (n.amountCents !== undefined) expect(n.amountLabel, "amountLabel").toBeTruthy();
 				if (n.amountLabel) expect(n.amountCents).toBeGreaterThan(0);
 			}
 		});
 	}
+
+	it("avisos diferentes do mesmo tipo têm assuntos diferentes (o Gmail não os junta numa conversa)", () => {
+		const subjects = (list: Notice[]) => list.map((n) => n.subject);
+		const a = subjects(buildPaymentNotices([pay({ description: "Aluguel" })], ctx));
+		const b = subjects(buildPaymentNotices([pay({ description: "Mercado" })], ctx));
+		expect(a).not.toEqual(b);
+		const c = subjects(buildPaymentNotices([pay({ amountCents: 1000 })], ctx));
+		expect(c).not.toEqual(subjects(buildPaymentNotices([pay({ amountCents: 2000 })], ctx)));
+		expect(subjects(buildNewExpenseNotices(exp({ description: "Luz" }), "created", ctx))).not.toEqual(subjects(buildNewExpenseNotices(exp({ description: "Água" }), "created", ctx)));
+		expect(subjects(buildPlanCancelledNotices({ ...base, actorUid: "cri", goingIds: ["ana"] }))).not.toEqual(subjects(buildPlanCancelledNotices({ ...base, name: "Outro", actorUid: "cri", goingIds: ["ana"] })));
+	});
+
+	it("nome comprido é cortado com reticências e o valor fica inteiro", () => {
+		const n = buildPaymentNotices([pay({ description: "x".repeat(200), amountCents: 123456 })], ctx)[0];
+		expect(n.subject!.length).toBeLessThanOrEqual(80);
+		expect(n.subject).toContain("R$ 1.234,56");
+		expect(n.subject).toContain("…");
+	});
+
+	it("o texto de pré-visualização (corpo) não repete o assunto", () => {
+		for (const [, list] of scenarios) for (const n of list) if (n.subject !== n.title) expect(n.body).not.toBe(n.subject);
+	});
+
+	it("assunto x corpo: todo valor do assunto aparece no corpo ou é o valor em destaque; o nome da despesa/plano/grupo bate", () => {
+		for (const [name, notices] of scenarios) {
+			for (const n of notices) {
+				if (n.subject === n.title) continue; // boas-vindas
+				for (const m of n.subject!.match(/R\$ [\d.]+,\d{2}/g) ?? []) {
+					const ok = n.body.includes(m) || (n.amountCents !== undefined && m === formatBRL(n.amountCents));
+					expect(ok, `${name}: ${m} em "${n.subject}" vs "${n.body}"`).toBe(true);
+				}
+				for (const q of n.subject!.match(/"[^"]+"/g) ?? []) expect(n.body, name).toContain(q);
+			}
+		}
+	});
 
 	it("a legenda diz a verdade sobre o valor", () => {
 		const by = (k: string) => scenarios.find(([n]) => n === k)![1];

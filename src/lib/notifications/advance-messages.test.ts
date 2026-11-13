@@ -27,6 +27,7 @@ describe("aviso de adiantamento", () => {
 		expect(n[0]).toEqual({
 			uid: "bia",
 			title: "Adiantamento recebido",
+			subject: 'Ana adiantou R$ 347,00 em "Sofá"',
 			body: 'Ana adiantou R$ 347,00 em "Sofá" (Família): parcelas 1 a 3 pagas e R$ 47,00 da parcela 4.',
 			url: `/app/grupos/${G}/despesas/${E}`,
 			scope: { kind: "group", name: "Família" },

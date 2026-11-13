@@ -76,6 +76,7 @@ describe("plano confirmado (grupo criado)", () => {
 		expect(n[0]).toEqual({
 			uid: "ana",
 			title: "Plano confirmado",
+			subject: 'Plano confirmado: "Hotel"',
 			body: 'O plano "Hotel" está confirmado e o grupo "Hotel de verão" foi criado. Você já está no grupo.',
 			url: "/app/grupos/g1",
 			scope: { kind: "group", name: "Hotel de verão" },

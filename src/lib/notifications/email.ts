@@ -1,4 +1,4 @@
-import { oneLine } from "./email-content";
+import { oneLine, type ReceiptLine } from "./email-content";
 import type { Notice } from "./types";
 
 /** Endereço público do app (links dos e-mails). `APP_URL` no ambiente; sem ela, produção e desenvolvimento têm um padrão. */
@@ -19,13 +19,16 @@ export class EmailError extends Error {
 	}
 }
 
+/** Um arquivo em anexo (já lido uma vez; as novas tentativas reaproveitam os mesmos bytes). `filename` já saneado. */
+export type MailAttachment = { filename: string; contentType: string; bytes: Uint8Array };
+
 export type RenderedEmail = { subject: string; html: string; text: string };
 
 /** Renderiza uma vez (quem tenta de novo depois de um 429 passa o resultado a `sendEmail`). */
-export async function renderEmail(notice: Notice, env: NodeJS.ProcessEnv = process.env): Promise<RenderedEmail> {
+export async function renderEmail(notice: Notice, env: NodeJS.ProcessEnv = process.env, receipt?: ReceiptLine): Promise<RenderedEmail> {
 	// Sob demanda: React Email e react-dom/server só carregam quando um e-mail vai mesmo ser renderizado.
 	const { renderNoticeEmail } = await import("./email-template");
-	return renderNoticeEmail(notice, appBaseUrl(env));
+	return renderNoticeEmail(notice, appBaseUrl(env), receipt);
 }
 
 /** Nome de domínio válido (letras, números e hífens em rótulos separados por ponto): vai para o caminho da URL. */
@@ -65,7 +68,7 @@ export const isSingleAddress = (a: string): boolean => /^[^\s,;<>"]+@[^\s,;<>"]+
  * Corpo em formulário (`URLSearchParams` cuida de acentos, emoji, `&`, `=`); chave só no cabeçalho `Authorization`.
  * Rastreio de abertura e de clique desligado no próprio envio.
  */
-export async function sendEmail(to: string, notice: Notice, env: NodeJS.ProcessEnv = process.env, rendered?: RenderedEmail): Promise<boolean> {
+export async function sendEmail(to: string, notice: Notice, env: NodeJS.ProcessEnv = process.env, rendered?: RenderedEmail, attachment?: MailAttachment, timeoutMs?: number): Promise<boolean> {
 	if (!emailConfigured(env)) return false;
 	const key = env.MAILGUN_SENDING_KEY as string;
 	const domain = env.MAILGUN_DOMAIN as string;
@@ -75,7 +78,7 @@ export async function sendEmail(to: string, notice: Notice, env: NodeJS.ProcessE
 		return false;
 	}
 	const { subject, html, text } = rendered ?? (await renderEmail(notice, env));
-	const form = new URLSearchParams({
+	const fields: Record<string, string> = {
 		from: oneLine(env.EMAIL_FROM as string),
 		to: address,
 		subject: oneLine(subject),
@@ -84,12 +87,24 @@ export async function sendEmail(to: string, notice: Notice, env: NodeJS.ProcessE
 		"o:tracking": "no",
 		"o:tracking-opens": "no",
 		"o:tracking-clicks": "no",
-	});
+	};
+	const headers: Record<string, string> = { Authorization: `Basic ${Buffer.from(`api:${key}`).toString("base64")}` };
+	let body: string | FormData;
+	if (attachment) {
+		// Com anexo o Mailgun exige multipart/form-data (o cabeçalho com o limite sai do próprio FormData). Um só arquivo, no campo `attachment`.
+		const form = new FormData();
+		for (const [k, v] of Object.entries(fields)) form.append(k, v);
+		form.append("attachment", new Blob([attachment.bytes as BlobPart], { type: attachment.contentType }), attachment.filename);
+		body = form;
+	} else {
+		headers["Content-Type"] = "application/x-www-form-urlencoded; charset=utf-8";
+		body = new URLSearchParams(fields).toString();
+	}
 	const res = await fetch(`${mailgunBase(env)}/v3/${domain}/messages`, {
 		method: "POST",
-		headers: { Authorization: `Basic ${Buffer.from(`api:${key}`).toString("base64")}`, "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" },
-		body: form.toString(),
-		signal: AbortSignal.timeout(8000),
+		headers,
+		body,
+		signal: AbortSignal.timeout(Math.max(500, Math.min(timeoutMs ?? Infinity, attachment ? 12000 : 8000))),
 	});
 	if (!res.ok) throw new EmailError(`Mailgun respondeu ${res.status}`, res.status, res.status === 429 ? rateLimitWait(res) : undefined);
 	return true;

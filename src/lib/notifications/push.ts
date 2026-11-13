@@ -11,7 +11,7 @@ export function pushConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
 export const pushPayload = (n: Pick<Notice, "title" | "body" | "url">) => JSON.stringify({ title: n.title, body: n.body, url: n.url });
 
 /** Envia a um aparelho. Devolve `"gone"` quando o serviço diz que a inscrição não existe mais (404/410). */
-export async function sendPush(sub: Pick<PushSubscriptionDoc, "endpoint" | "keys">, notice: Notice, env: NodeJS.ProcessEnv = process.env): Promise<"sent" | "gone" | "skipped"> {
+export async function sendPush(sub: Pick<PushSubscriptionDoc, "endpoint" | "keys">, notice: Notice, env: NodeJS.ProcessEnv = process.env, timeoutMs = 8000): Promise<"sent" | "gone" | "skipped"> {
 	if (!pushConfigured(env)) return "skipped";
 	// Inscrição antiga ou adulterada fora da lista de serviços conhecidos: nunca é chamada (quem chama apaga).
 	if (!isAllowedPushEndpoint(sub.endpoint)) return "gone";
@@ -19,7 +19,7 @@ export async function sendPush(sub: Pick<PushSubscriptionDoc, "endpoint" | "keys
 		await sendNotification({ endpoint: sub.endpoint, keys: sub.keys }, pushPayload(notice), {
 			vapidDetails: { subject: env.VAPID_SUBJECT!, publicKey: env.NEXT_PUBLIC_VAPID_PUBLIC_KEY!, privateKey: env.VAPID_PRIVATE_KEY! },
 			TTL: 24 * 60 * 60,
-			timeout: 8000,
+			timeout: Math.max(500, Math.min(8000, timeoutMs)),
 		});
 		return "sent";
 	} catch (err) {

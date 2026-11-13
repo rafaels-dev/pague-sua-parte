@@ -48,6 +48,12 @@ try {
 	console.log("expenses:", await expenses.createIndex({ "shares.parts.receipt.key": 1 }, { name: "share_parts_receipt_key", sparse: true }));
 	const recurrences = client.db(dbName).collection("recurrences");
 	console.log("recurrences:", await recurrences.createIndex({ groupId: 1, active: 1, nextPeriod: 1 }, { name: "group_active_next" }));
+	// Despesas fixas: o lembrete de vencimento procura as ativas (e as encerradas há pouco, pelo calendário).
+	console.log("recurrences:", await recurrences.createIndex({ active: 1, endedAt: 1 }, { name: "active_ended" }));
+	// Lembretes de vencimento já enviados: um por despesa fixa, mês, antecedência e pessoa (nunca repete); apagados sozinhos em 120 dias.
+	const reminderLog = client.db(dbName).collection("reminder_log");
+	console.log("reminder_log:", await reminderLog.createIndex({ recurrenceId: 1, period: 1, lead: 1, uid: 1 }, { name: "reminder_unique", unique: true }));
+	console.log("reminder_log:", await reminderLog.createIndex({ createdAt: 1 }, { name: "reminder_ttl", expireAfterSeconds: 120 * 24 * 60 * 60 }));
 	// Avisos (push): um aparelho tem um só endereço; busca por usuário ao avisar.
 	const pushSubs = client.db(dbName).collection("push_subscriptions");
 	console.log("push_subscriptions:", await pushSubs.createIndex({ endpoint: 1 }, { name: "endpoint_unique", unique: true }));

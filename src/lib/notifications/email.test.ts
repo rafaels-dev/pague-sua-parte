@@ -17,9 +17,9 @@ const hostile: Notice = {
 };
 
 describe("render dos templates", () => {
-	for (const { id, notice } of SAMPLE_NOTICES) {
+	for (const { id, notice, receipt } of SAMPLE_NOTICES) {
 		it(`${id}: título, corpo, link absoluto, texto puro e rodapé`, async () => {
-			const { html, text, subject } = await renderNoticeEmail(notice, BASE);
+			const { html, text, subject } = await renderNoticeEmail(notice, BASE, receipt);
 			const body = notice.body.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 			expect(html).toContain(`lang="pt-BR"`);
 			expect(html).toContain(notice.title);
@@ -36,7 +36,10 @@ describe("render dos templates", () => {
 			expect(text).toContain(`${BASE}${notice.url}`);
 			expect(text).toContain("Mudar meus avisos");
 			expect(text).not.toMatch(/<[a-z]/i);
-			expect(subject).toBe(notice.title);
+			expect(subject).toBe(notice.subject ?? notice.title);
+			expect(subject.length).toBeLessThanOrEqual(80);
+			if (receipt) expect(`${html}${text}`).toContain(receipt === "attached" ? "O comprovante está em anexo." : "Veja o comprovante no app.");
+			else expect(`${html}${text}`).not.toMatch(/comprovante (está|no app)|Veja o comprovante/);
 			expect(`${html}${text}`.toLowerCase()).not.toMatch(id === "boas-vindas" ? /pix key|00020126/ : /chave pix|pix key|00020126/); // só a boas-vindas manda cadastrar a chave (nunca traz uma)
 		});
 	}
@@ -181,6 +184,28 @@ describe("canal de e-mail (Mailgun)", () => {
 		expect(rateLimitWait(h({}), now)).toBeUndefined();
 	});
 
+	it("com anexo: multipart/form-data com os mesmos campos mais um `attachment`; sem Content-Type manual e sem rastreio", async () => {
+		const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
+		const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 1]);
+		await sendEmail("p@q.com", notice, env, undefined, { filename: "comprovante.pdf", contentType: "application/pdf", bytes });
+		const init = f.mock.calls[0][1] as RequestInit;
+		expect(init.body).toBeInstanceOf(FormData);
+		const b = init.body as FormData;
+		expect([...b.keys()].sort()).toEqual(["attachment", "from", "html", "o:tracking", "o:tracking-clicks", "o:tracking-opens", "subject", "text", "to"]);
+		expect(b.get("o:tracking")).toBe("no");
+		expect(b.get("to")).toBe("p@q.com");
+		const file = b.get("attachment") as File;
+		expect([file.name, file.type, file.size]).toEqual(["comprovante.pdf", "application/pdf", 6]);
+		expect(Object.keys(init.headers as object)).toEqual(["Authorization"]);
+	});
+
+	it("com anexo, destinatário inválido continua sem sair", async () => {
+		const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		expect(await sendEmail("a@b.com,c@d.com", notice, env, undefined, { filename: "a.pdf", contentType: "application/pdf", bytes: new Uint8Array(1) })).toBe(false);
+		expect(f).not.toHaveBeenCalled();
+	});
+
 	it("usa o resultado já renderizado, sem renderizar de novo", async () => {
 		const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
 		await sendEmail("p@q.com", notice, env, { subject: "s", html: "<p>h</p>", text: "t" });
@@ -216,4 +241,17 @@ describe("canal de e-mail (Mailgun)", () => {
 	});
 
 	it("appBaseUrl tira a barra final", () => expect(appBaseUrl({ APP_URL: "https://x.test/" } as unknown as NodeJS.ProcessEnv)).toBe("https://x.test"));
+});
+
+describe("oneLine: caracteres invisíveis", () => {
+	it("tira U+061C, U+200B, U+200C, U+2060 e U+200D solto, sem inserir espaço dentro da palavra", () => {
+		expect(oneLine("a\u061cb\u200bc\u200cd\u2060e\u200df")).toBe("abcdef");
+		expect(oneLine("x\u200d")).toBe("x");
+		expect(oneLine("\u200dx")).toBe("x");
+		expect(oneLine("می\u200cخواهم")).toBe("میخواهم"); // persa: a palavra não é partida em duas
+		expect(oneLine("a\u202eb\u2066c")).toBe("a b c"); // bidi e controle continuam virando espaço
+	});
+	it("emoji composto com U+200D continua inteiro", () => {
+		for (const e of ["👩‍👩‍👧‍👦", "🏳️‍🌈", "👨🏽‍💻", "❤️‍🔥"]) expect(oneLine(`oi ${e} fim`)).toBe(`oi ${e} fim`);
+	});
 });

@@ -29,7 +29,7 @@ describe("loginOf", () => {
 describe("entrou no grupo", () => {
 	it("avisa só o administrador, nunca quem entrou", () => {
 		const n = buildMemberJoinedNotices({ groupId: G, groupName: "Família", members, joinerUid: "bia", joinerName: "Bia" });
-		expect(n).toEqual([{ uid: "adm", title: "Alguém entrou no grupo", body: "Bia entrou no grupo Família.", url: `/app/grupos/${G}`, scope: { kind: "group", name: "Família" } }]);
+		expect(n).toEqual([{ uid: "adm", title: "Alguém entrou no grupo", subject: "Bia entrou no grupo Família", body: "Bia entrou no grupo Família.", url: `/app/grupos/${G}`, scope: { kind: "group", name: "Família" } }]);
 		expect(buildMemberJoinedNotices({ groupId: G, groupName: "F", members, joinerUid: "adm", joinerName: "Admin" })).toEqual([]);
 	});
 });
@@ -60,7 +60,7 @@ describe("pagamentos", () => {
 	it("Já paguei: avisa quem recebeu, com link da despesa", () => {
 		const [n, ...rest] = buildPaymentNotices([pay()], ctx);
 		expect(rest).toEqual([]);
-		expect(n).toMatchObject({ uid: "bia", title: "Pagamento recebido", body: 'Ana pagou R$ 50,00 em "Mercado" (Família).', url: `/app/grupos/${G}/despesas/${E}` });
+		expect(n).toMatchObject({ uid: "bia", title: "Pagamento recebido", subject: 'Ana pagou R$ 50,00 em "Mercado"', body: 'Ana pagou R$ 50,00 em "Mercado" (Família).', url: `/app/grupos/${G}/despesas/${E}` });
 	});
 	it("quem recebe é pessoa cuidada: avisa quem cuida e diz para quem", () => {
 		const [n] = buildPaymentNotices([pay({ paidBy: "m_vo", actorUid: "bia", debtorUid: "bia" })], ctx);
@@ -88,7 +88,7 @@ describe("pagamentos", () => {
 	});
 	it("o próprio devedor marcando a sua parte (admin) vale como \"pagou\"", () => {
 		const r = buildPaymentNotices([pay({ manual: true, actorUid: "ana", debtorUid: "ana", paidBy: "bia" })], ctx);
-		expect(r).toEqual([{ uid: "bia", title: "Pagamento recebido", body: 'Ana pagou R$ 50,00 em "Mercado" (Família).', url: `/app/grupos/${G}/despesas/${E}`, scope: { kind: "group", name: "Família" }, amountCents: 5000, amountLabel: "Valor recebido" }]);
+		expect(r).toEqual([{ uid: "bia", title: "Pagamento recebido", subject: 'Ana pagou R$ 50,00 em "Mercado"', body: 'Ana pagou R$ 50,00 em "Mercado" (Família).', url: `/app/grupos/${G}/despesas/${E}`, scope: { kind: "group", name: "Família" }, amountCents: 5000, amountLabel: "Valor recebido" }]);
 	});
 	it("lote ao devedor: \"suas\" só quando são dele; quem só cuida lê \"de quem você cuida\"", () => {
 		const f = (debtorUid: string, id: string) => pay({ manual: true, actorUid: "adm", debtorUid, expenseId: id });
@@ -104,7 +104,7 @@ describe("pagamentos", () => {
 			[pay({ amountCents: 5000 }), pay({ expenseId: "e2", amountCents: 4000 }), pay({ expenseId: "e3", amountCents: 3000, debtorUid: "m_vo" })],
 			ctx,
 		);
-		expect(r).toEqual([{ uid: "bia", title: "Pagamento recebido", body: "Ana pagou R$ 120,00 de 3 contas.", url: "/app/receber", scope: { kind: "group", name: "Família" }, amountCents: 12000, amountLabel: "Total recebido" }]);
+		expect(r).toEqual([{ uid: "bia", title: "Pagamento recebido", subject: "Ana pagou R$ 120,00 de 3 contas", body: "Ana pagou R$ 120,00 de 3 contas.", url: "/app/receber", scope: { kind: "group", name: "Família" }, amountCents: 12000, amountLabel: "Total recebido" }]);
 	});
 	it("devolução: avisa quem recebe (ou quem cuida)", () => {
 		expect(buildPaymentNotices([pay({ kind: "refund", paidBy: "ana", debtorUid: "bia", actorUid: "ana" })], ctx)[0]).toMatchObject({
@@ -179,6 +179,16 @@ describe("despesa nova", () => {
 	});
 	it("edição: quem entrou recebe o aviso de inclusão", () => {
 		const r = buildNewExpenseNotices(exp({ actorUid: "bia", shares: [{ uid: "adm", amountCents: 5000 }] }), "added", ctx);
-		expect(r).toEqual([{ uid: "adm", title: "Você entrou numa despesa", body: 'Bia incluiu você em "Luz" no grupo Família. Sua parte: R$ 50,00', url: `/app/grupos/${G}/despesas/${E}`, scope: { kind: "group", name: "Família" }, amountCents: 5000, amountLabel: "Sua parte" }]);
+		expect(r).toEqual([{ uid: "adm", title: "Uma despesa foi dividida com você", subject: 'A despesa "Luz" foi dividida com você · R$ 50,00', body: 'Bia dividiu "Luz" com você no grupo Família. Sua parte: R$ 50,00', url: `/app/grupos/${G}/despesas/${E}`, scope: { kind: "group", name: "Família" }, amountCents: 5000, amountLabel: "Sua parte" }]);
+	});
+	it("edição: título, corpo, legenda e assunto verdadeiros nos três casos (só você / só quem você cuida / os dois)", () => {
+		const own = buildNewExpenseNotices(exp({ actorUid: "bia", shares: [{ uid: "ana", amountCents: 1000 }] }), "added", ctx)[0];
+		expect([own.title, own.amountLabel, own.subject]).toEqual(["Uma despesa foi dividida com você", "Sua parte", 'A despesa "Luz" foi dividida com você · R$ 10,00']);
+		const only = buildNewExpenseNotices(exp({ actorUid: "bia", shares: [{ uid: "m_vo", amountCents: 1000 }] }), "added", ctx)[0];
+		expect([only.title, only.amountLabel, only.subject]).toEqual(["Uma despesa foi dividida com quem você cuida", "Parte de quem você cuida", 'A despesa "Luz" foi dividida com quem você cuida · R$ 10,00']);
+		expect(only.body).toBe('Bia dividiu "Luz" com quem você cuida no grupo Família. Parte de quem você cuida: R$ 10,00');
+		const both = buildNewExpenseNotices(exp({ actorUid: "bia", shares: [{ uid: "ana", amountCents: 1000 }, { uid: "m_vo", amountCents: 1000 }] }), "added", ctx)[0];
+		expect([both.title, both.amountLabel, both.subject]).toEqual(["Uma despesa foi dividida com você e com quem você cuida", "Sua parte e de quem você cuida", 'A despesa "Luz" foi dividida com você e quem você cuida · R$ 20,00']);
+		expect(both.body).toBe('Bia dividiu "Luz" com você e com quem você cuida no grupo Família. Sua parte e de quem você cuida: R$ 20,00');
 	});
 });

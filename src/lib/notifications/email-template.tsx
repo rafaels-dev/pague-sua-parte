@@ -5,7 +5,7 @@ import { Html } from "@react-email/html";
 import { Img } from "@react-email/img";
 import { Preview } from "@react-email/preview";
 import { render } from "@react-email/render";
-import { appLink, buildEmailText, ctaLabel, emailSubject, highlight, oneLine, preheader, reasonLine, SETTINGS_PATH } from "./email-content";
+import { appLink, buildEmailText, ctaLabel, highlight, noticeSubject, oneLine, preheader, reasonLine, receiptLineText, SETTINGS_PATH, type ReceiptLine } from "./email-content";
 import type { Notice } from "./types";
 
 /**
@@ -55,7 +55,8 @@ const DARK_CSS = `
 
 const text = (extra: CSSProperties = {}): CSSProperties => ({ margin: 0, fontFamily: FONT, color: C.ink, ...extra });
 
-export function NoticeEmail({ notice, baseUrl }: Readonly<{ notice: Notice; baseUrl: string }>) {
+export function NoticeEmail({ notice, baseUrl, receipt }: Readonly<{ notice: Notice; baseUrl: string; receipt?: ReceiptLine }>) {
+	const receiptText = receiptLineText(receipt);
 	const link = appLink(baseUrl, notice.url);
 	const settings = appLink(baseUrl, SETTINGS_PATH);
 	const hi = highlight(notice);
@@ -66,7 +67,7 @@ export function NoticeEmail({ notice, baseUrl }: Readonly<{ notice: Notice; base
 			<Head>
 				<meta name="color-scheme" content="light dark" />
 				<meta name="supported-color-schemes" content="light dark" />
-				<title>{emailSubject(notice.title)}</title>
+				<title>{noticeSubject(notice)}</title>
 				<style>{DARK_CSS}</style>
 			</Head>
 			<body className="dm-page" style={{ margin: 0, padding: 0, backgroundColor: C.page, width: "100%", WebkitTextSizeAdjust: "100%" }}>
@@ -107,6 +108,13 @@ export function NoticeEmail({ notice, baseUrl }: Readonly<{ notice: Notice; base
 																	{oneLine(notice.body)}
 																</td>
 															</tr>
+															{receiptText ? (
+																<tr>
+																	<td className="dm-ink" style={text({ fontSize: 18, lineHeight: "28px", fontWeight: 700, paddingTop: 12 })}>
+																		{receiptText}
+																	</td>
+																</tr>
+															) : null}
 															{notice.list?.length ? (
 																<tr>
 																	<td style={{ paddingTop: 16 }}>
@@ -206,7 +214,7 @@ export function NoticeEmail({ notice, baseUrl }: Readonly<{ notice: Notice; base
 }
 
 /** HTML + texto puro + assunto de um aviso. */
-export async function renderNoticeEmail(notice: Notice, baseUrl: string): Promise<{ subject: string; html: string; text: string }> {
-	const html = await render(<NoticeEmail notice={notice} baseUrl={baseUrl} />);
-	return { subject: emailSubject(notice.title), html, text: buildEmailText(notice, baseUrl) };
+export async function renderNoticeEmail(notice: Notice, baseUrl: string, receipt?: ReceiptLine): Promise<{ subject: string; html: string; text: string }> {
+	const html = await render(<NoticeEmail notice={notice} baseUrl={baseUrl} receipt={receipt} />);
+	return { subject: noticeSubject(notice), html, text: buildEmailText(notice, baseUrl, receipt) };
 }

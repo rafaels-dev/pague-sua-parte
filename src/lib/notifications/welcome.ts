@@ -16,9 +16,11 @@ export function firstName(user: { name?: string; displayName?: string }): string
 /** Boas-vindas: só e-mail, uma vez por conta. Sem chave Pix, sem dados de grupo. */
 export function buildWelcomeNotice(user: { uid: string; name?: string; displayName?: string }): Notice {
 	const name = firstName(user);
+	const title = name ? `Que bom ter você aqui, ${name}` : "Que bom ter você aqui";
 	return {
 		uid: user.uid,
-		title: name ? `Que bom ter você aqui, ${name}` : "Que bom ter você aqui",
+		title,
+		subject: title,
 		body: "No PagueSuaParte, dividir as contas do grupo fica simples. Veja o que dá para fazer:",
 		list: ["Dividir despesas com a família e os amigos, sem planilha.", "Pagar a sua parte por Pix copia e cola.", "Guardar os comprovantes num só lugar."],
 		next: "Para começar, cadastre sua chave Pix no perfil. Assim os outros conseguem pagar você.",

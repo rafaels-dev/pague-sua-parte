@@ -1,7 +1,8 @@
 import { actsFor, isManagedUid, type MemberLike } from "@/lib/groups/helpers";
 import { formatBRL } from "@/lib/money";
 import { advanceDoneClause } from "@/lib/payments/advance";
-import type { AdvanceFact, NewExpenseFact, NewExpenseMode, Notice, NoticeContext, PaymentFact } from "./types";
+import { clipText as clip, fitSubject, shortName } from "./subjects";
+import type { AdvanceFact, NewExpenseFact, NewExpenseMode, Notice, NoticeContext, PaymentFact, ReceiptTarget } from "./types";
 
 /** Aviso em lote ao devedor: "suas" só quando todas são dele; quem só cuida lê "de quem você cuida". */
 function debtorBatch(fs: PaymentFact[], recipient: string, n: number, actor: string): string {
@@ -19,7 +20,6 @@ function payLabel(type: PayType, batch: boolean, partial: boolean): string {
 	return batch ? "Total pago" : "Valor pago";
 }
 
-const clip = (s: string, max = 60) => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
 
 /** A pessoa com login que recebe os avisos de `uid`: ele mesmo, ou quem cuida dele. Fora do grupo: ninguém. */
 export function loginOf(members: MemberLike[], uid: string): string | null {
@@ -59,6 +59,7 @@ export function buildMemberJoinedNotices(args: {
 		admins.map((a) => ({
 			uid: a.uid,
 			title: "Alguém entrou no grupo",
+			subject: fitSubject((g, p) => `${shortName(args.joinerName, p)} entrou no grupo ${g}`, args.groupName),
 			body: `${args.joinerName} entrou no grupo ${clip(args.groupName)}.`,
 			url: `/app/grupos/${args.groupId}`,
 			scope: { kind: "group" as const, name: args.groupName },
@@ -114,6 +115,7 @@ export function buildPaymentNotices(facts: PaymentFact[], ctx: NoticeContext): N
 		const total = formatBRL(fs.reduce((t, f) => t + f.amountCents, 0));
 		let body: string;
 		let url: string;
+		let subject: string;
 		if (fs.length === 1) {
 			const f = fs[0];
 			const where = `"${clip(f.description)}" (${clip(ctx.group(f.groupId)?.name ?? "", 40)})`;
@@ -146,8 +148,37 @@ export function buildPaymentNotices(facts: PaymentFact[], ctx: NoticeContext): N
 					break;
 			}
 			url = expenseUrl(f.groupId, f.expenseId);
+			const ofTot = part ? ` de ${formatBRL(part.shareCents)}` : "";
+			const owner = b.uid === f.debtorUid;
+			subject = fitSubject((d, p) => {
+				const who = shortName(actor, p);
+				const other = shortName(debtor, p);
+				switch (b.type) {
+					case "paid":
+						return `${who} pagou ${m}${ofTot}${f.debtorUid === b.actor ? "" : ` da parte de ${other}`} em "${d}"`;
+					case "marked":
+						return part ? `${who} registrou ${m}${ofTot} da parte de ${other} em "${d}"` : `${who} marcou como paga a parte de ${other} (${m}) em "${d}"`;
+					case "debtor":
+						return part
+							? `${who} registrou ${m}${ofTot} ${owner ? "da sua parte" : `da parte de ${other}`} em "${d}"`
+							: owner
+								? `${who} marcou sua parte de "${d}" como paga (${m})`
+								: `${who} marcou a parte de ${other} em "${d}" como paga (${m})`;
+					case "refund":
+						return owner ? `${who} devolveu ${m} de "${d}"` : `${who} devolveu ${m} para ${other} em "${d}"`;
+				}
+			}, clip(f.description));
 		} else {
 			const n = fs.length;
+			subject = fitSubject((_n, p) => {
+				const who = shortName(actor, p);
+				return {
+					paid: `${who} pagou ${total} de ${n} contas`,
+					marked: `${who} marcou ${n} partes como pagas · ${total}`,
+					debtor: `${who} marcou ${n} partes como pagas · ${total}`,
+					refund: `${who} devolveu ${total} em ${n} contas`,
+				}[b.type];
+			}, "");
 			body = {
 				paid: `${actor} pagou ${total} de ${n} contas.`,
 				marked: `${actor} marcou ${n} partes como pagas (${total}).`,
@@ -160,7 +191,8 @@ export function buildPaymentNotices(facts: PaymentFact[], ctx: NoticeContext): N
 		// Lote de grupos diferentes: sem nome de grupo no rodapé do e-mail.
 		const sameGroup = fs.every((f) => f.groupId === fs[0].groupId);
 		const scope = sameGroup ? { kind: "group" as const, name: ctx.group(fs[0].groupId)?.name ?? "" } : undefined;
-		out.push({ uid: b.uid, title: partial ? "Pagamento parcial" : PAY_TITLES[b.type], body, url, ...(scope?.name ? { scope } : {}), amountCents: fs.reduce((t, f) => t + f.amountCents, 0), amountLabel: payLabel(b.type, fs.length > 1, Boolean(partial)) });
+		const receipts: ReceiptTarget[] = fs.flatMap((f) => (f.receipt ? [{ ...f.receipt, groupId: f.groupId, expenseId: f.expenseId, targetUid: f.debtorUid }] : []));
+		out.push({ uid: b.uid, title: partial ? "Pagamento parcial" : PAY_TITLES[b.type], subject, body, url, ...(scope?.name ? { scope } : {}), ...(receipts.length ? { receipts, receiptsOf: fs.length } : {}), amountCents: fs.reduce((t, f) => t + f.amountCents, 0), amountLabel: payLabel(b.type, fs.length > 1, Boolean(partial)) });
 	}
 	return dedupe(out);
 }
@@ -180,7 +212,13 @@ export function buildAdvanceNotices(f: AdvanceFact, ctx: NoticeContext): Notice[
 	const url = expenseUrl(f.groupId, f.expenseId);
 	const out: Notice[] = [];
 	// Para o e-mail: de onde vem o aviso e o valor adiantado (soma das parcelas que o adiantamento quitou ou reduziu).
-	const mail = { scope: { kind: "group" as const, name: g.name ?? "" }, amountCents: f.totalCents, amountLabel: "Valor adiantado" };
+	const mail = {
+		scope: { kind: "group" as const, name: g.name ?? "" },
+		amountCents: f.totalCents,
+		amountLabel: "Valor adiantado",
+		...(f.receipt ? { receipts: [{ ...f.receipt, groupId: f.groupId, expenseId: f.expenseId, targetUid: f.debtorUid }] } : {}),
+	};
+	const sub = (verb: string) => fitSubject((d, p) => `${shortName(actor, p)} ${verb} ${money} em "${d}"`, f.description);
 	const payee = loginOf(g.members, f.paidBy);
 	if (payee && payee !== f.actorUid) {
 		const forPayer = payee !== f.paidBy ? ` Para ${ctx.name(f.groupId, f.paidBy)}.` : "";
@@ -188,12 +226,13 @@ export function buildAdvanceNotices(f: AdvanceFact, ctx: NoticeContext): Notice[
 			f.manual && f.debtorUid !== f.actorUid
 				? `${actor} registrou ${money} adiantados da parte de ${debtor} em ${where}: ${done}.${forPayer}`
 				: `${actor} adiantou ${money}${f.debtorUid === f.actorUid ? "" : ` da parte de ${debtor}`} em ${where}: ${done}.${forPayer}`;
-		out.push({ uid: payee, title: f.manual && f.debtorUid !== f.actorUid ? "Adiantamento registrado" : "Adiantamento recebido", body, url, ...mail });
+		const registered = f.manual && f.debtorUid !== f.actorUid;
+		out.push({ uid: payee, title: registered ? "Adiantamento registrado" : "Adiantamento recebido", subject: sub(registered ? "registrou adiantados" : "adiantou"), body, url, ...mail });
 	}
 	if (f.manual && !actsFor(g.members, f.actorUid, f.debtorUid)) {
 		const d = loginOf(g.members, f.debtorUid);
 		if (d && d !== f.actorUid && d !== payee) {
-			out.push({ uid: d, title: "Adiantamento registrado", body: `${actor} registrou ${money} adiantados ${d === f.debtorUid ? "da sua parte" : `da parte de ${debtor}`} em ${where}: ${done}.`, url, ...mail });
+			out.push({ uid: d, title: "Adiantamento registrado", subject: sub("registrou adiantados"), body: `${actor} registrou ${money} adiantados ${d === f.debtorUid ? "da sua parte" : `da parte de ${debtor}`} em ${where}: ${done}.`, url, ...mail });
 		}
 	}
 	return dedupe(out);
@@ -204,8 +243,11 @@ export function buildAdvanceNotices(f: AdvanceFact, ctx: NoticeContext): Notice[
 const TITLES: Record<NewExpenseMode, string> = {
 	created: "Nova despesa",
 	recurring: "Despesa fixa do mês",
-	added: "Você entrou numa despesa",
+	added: "Uma despesa foi dividida com você",
 };
+
+/** Título do aviso "dividida com...", verdadeiro nos três casos: só você, só quem você cuida, os dois. */
+const addedTitle = (who: "own" | "others" | "both") => `Uma despesa foi dividida com ${who === "own" ? "você" : who === "others" ? "quem você cuida" : "você e com quem você cuida"}`;
 
 /**
  * Quem deve saber de uma despesa nova: cada pessoa com parte (ou quem cuida dela, com o total sob sua responsabilidade).
@@ -222,14 +264,15 @@ export function buildNewExpenseNotices(f: NewExpenseFact, mode: NewExpenseMode, 
 		if (f.actorUid) exclude.add(f.actorUid); // quem acabou de criar o modelo
 	} else if (f.actorUid) exclude.add(f.actorUid);
 
-	const parts = new Map<string, { cents: number; others: boolean }>();
+	const parts = new Map<string, { cents: number; others: boolean; own: boolean }>();
 	for (const s of f.shares) {
 		if (s.amountCents <= 0 || s.uid === f.paidBy) continue;
 		const r = loginOf(g.members, s.uid);
 		if (!r || exclude.has(r)) continue;
-		const p = parts.get(r) ?? { cents: 0, others: false };
+		const p = parts.get(r) ?? { cents: 0, others: false, own: false };
 		p.cents += s.amountCents;
 		if (r !== s.uid) p.others = true;
+		else p.own = true;
 		parts.set(r, p);
 	}
 	let onBehalf: string | null = null;
@@ -245,21 +288,30 @@ export function buildNewExpenseNotices(f: NewExpenseFact, mode: NewExpenseMode, 
 	const out: Notice[] = [];
 	for (const r of new Set([...parts.keys(), ...(onBehalf ? [onBehalf] : [])])) {
 		const p = parts.get(r);
-		const label = `${p?.others ? "Sua parte e de quem você cuida" : "Sua parte"}${f.installments ? (f.installmentsDiffer ? " na primeira parcela" : " em cada parcela") : ""}`;
+		const who: "own" | "others" | "both" = p?.others ? (p.own ? "both" : "others") : "own";
+		const label = `${who === "both" ? "Sua parte e de quem você cuida" : who === "others" ? "Parte de quem você cuida" : "Sua parte"}${f.installments ? (f.installmentsDiffer ? " na primeira parcela" : " em cada parcela") : ""}`;
 		const part = p ? ` ${label}: ${formatBRL(p.cents)}` : "";
+		const lead = who === "both" ? "sua parte e de quem você cuida" : who === "others" ? "parte de quem você cuida" : "sua parte";
+		const tail = f.installments ? (f.installmentsDiffer ? " na 1ª parcela" : " em cada parcela") : "";
+		const partSub = p ? ` · ${lead} ${formatBRL(p.cents)}${tail}` : "";
 		if (r === onBehalf) {
 			// Quem cuida do pagador (pessoa sem login) precisa ler de quem é a despesa.
 			const whose = r === f.paidBy ? "em seu nome" : `em nome de ${ctx.name(f.groupId, f.paidBy)}`;
-			out.push({ uid: r, title: r === f.paidBy ? "Despesa lançada em seu nome" : "Despesa lançada em nome de quem você cuida", body: `${actor} lançou uma despesa ${whose}: ${desc}${f.installmentsDiffer ? "" : `, ${formatBRL(f.amountCents)}`}.${part}`, url, scope: { kind: "group", name: g.name }, ...(p ? { amountCents: p.cents, amountLabel: label } : {}) });
+			const sub = r === f.paidBy ? fitSubject((d) => `Despesa lançada em seu nome: "${d}"${f.installmentsDiffer ? "" : ` · ${formatBRL(f.amountCents)}`}`, f.description) : fitSubject((d, p) => `Despesa lançada em nome de ${shortName(ctx.name(f.groupId, f.paidBy), p)}: "${d}"`, f.description);
+			out.push({ uid: r, title: r === f.paidBy ? "Despesa lançada em seu nome" : "Despesa lançada em nome de quem você cuida", subject: sub, body: `${actor} lançou uma despesa ${whose}: ${desc}${f.installmentsDiffer ? "" : `, ${formatBRL(f.amountCents)}`}.${part}`, url, scope: { kind: "group", name: g.name }, ...(p ? { amountCents: p.cents, amountLabel: label } : {}) });
 			continue;
 		}
 		const base =
 			mode === "recurring"
 				? `Nova despesa fixa: ${desc} no grupo ${group}.`
 				: mode === "added"
-					? `${actor} incluiu ${p?.others ? "quem você cuida" : "você"} em ${desc} no grupo ${group}.`
+					? `${actor} dividiu ${desc} com ${who === "both" ? "você e com quem você cuida" : who === "others" ? "quem você cuida" : "você"} no grupo ${group}.`
 					: `${actor} lançou ${desc}${f.installments ? ` em ${f.installments} parcelas` : ""} no grupo ${group}.`;
-		out.push({ uid: r, title: TITLES[mode], body: `${base}${part}`, url, scope: { kind: "group", name: g.name }, ...(p ? { amountCents: p.cents, amountLabel: label } : {}) });
+		const subject =
+			mode === "added"
+				? fitSubject((d) => `A despesa "${d}" foi dividida com ${who === "both" ? "você e quem você cuida" : who === "others" ? "quem você cuida" : "você"}${p ? ` · ${formatBRL(p.cents)}` : ""}`, f.description)
+				: fitSubject((d) => `${mode === "recurring" ? "Despesa fixa" : "Nova despesa"}: "${d}"${partSub}`, f.description);
+		out.push({ uid: r, title: mode === "added" ? addedTitle(who) : TITLES[mode], subject, body: `${base}${part}`, url, scope: { kind: "group", name: g.name }, ...(p ? { amountCents: p.cents, amountLabel: label } : {}) });
 	}
 	return dedupe(out);
 }

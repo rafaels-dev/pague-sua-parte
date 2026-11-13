@@ -9,8 +9,8 @@ export default async function DevEmailsPage() {
 	if (process.env.NODE_ENV === "production") notFound();
 	const base = "http://localhost:3000";
 	const items = await Promise.all(
-		SAMPLE_NOTICES.map(async ({ id, notice }) => {
-			const r = await renderNoticeEmail(notice, base);
+		SAMPLE_NOTICES.map(async ({ id, notice, receipt }) => {
+			const r = await renderNoticeEmail(notice, base, receipt);
 			// O iframe segue o tema do navegador; para mostrar o escuro sempre, o bloco do modo escuro passa a valer sempre.
 			const darkHtml = r.html.replace("@media (prefers-color-scheme: dark)", "@media all");
 			return { id, ...r, darkHtml };
@@ -23,7 +23,8 @@ export default async function DevEmailsPage() {
 			{items.map((it) => (
 				<section key={it.id} id={it.id} style={{ margin: "32px 0", borderTop: "1px solid #ccc", paddingTop: 16 }}>
 					<h2 style={{ fontSize: 16 }}>
-						{it.id} <small style={{ fontWeight: 400 }}>assunto: {it.subject}</small>
+						{it.id}
+						<small style={{ fontWeight: 400, display: "block" }}>Assunto: {it.subject} ({it.subject.length} caracteres)</small>
 					</h2>
 					<div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
 						<iframe sandbox="" title={`${it.id} claro`} srcDoc={it.html} style={{ width: 640, height: 640, border: "1px solid #ccc", background: "#fff" }} />

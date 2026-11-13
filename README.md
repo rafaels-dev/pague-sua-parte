@@ -38,6 +38,7 @@ O app avisa por e-mail e por push (Web Push) quando alguém entra no grupo, paga
   6. (Recomendado) Publique um DMARC em `_dmarc.paguesuaparte.com.br` (TXT `v=DMARC1; p=none; rua=mailto:...`) e só endureça depois de ver os relatórios. Com remetente no mesmo subdomínio que o Mailgun assina e autentica (SPF e DKIM), o alinhamento do DMARC passa; um remetente em outro domínio exigiria mais configuração.
 
   Por que subdomínio: a documentação do Mailgun não recomenda um nem outro (https://documentation.mailgun.com/docs/mailgun/user-manual/domains/domains-verify); a escolha aqui é prática: o domínio raiz só pode ter um SPF e provavelmente já tem registros de e-mail, e a reputação dos avisos fica separada do resto. O envio já desliga rastreio de abertura e de clique, então o CNAME de rastreio é opcional.
+- **Lembretes de vencimento** (despesa fixa: 15, 7, 3 dias antes e no dia): o `vercel.json` agenda `/api/cron/reminders` uma vez por dia (`0 10 * * *` UTC, de manhã em São Paulo; no plano Hobby a Vercel roda em qualquer minuto da hora marcada). Crie `CRON_SECRET` nas variáveis da Vercel (a Vercel o envia sozinha no cabeçalho) e rode `scripts/db-indexes.mjs` antes do push.
 - **Push (VAPID)**: rode `npx web-push generate-vapid-keys` e configure `NEXT_PUBLIC_VAPID_PUBLIC_KEY` (vai no build), `VAPID_PRIVATE_KEY` e `VAPID_SUBJECT` (`mailto:...`). Cada pessoa ativa em Perfil > Avisos; no iPhone é preciso antes adicionar o app à Tela de Início.
 - `APP_URL` (opcional) define o endereço dos links dos e-mails.
 - Rode `npm run db:indexes` para criar os índices de `push_subscriptions` antes de publicar.
@@ -76,6 +77,7 @@ Antes de existir grupo e despesa, alguém pode "planejar" um gasto grande (ex.: 
 | `MAILGUN_DOMAIN` | servidor | Domínio de envio cadastrado no Mailgun, ex.: `paguesuaparte.com.br` |
 | `MAILGUN_REGION` | servidor | (opcional) `us` (padrão) ou `eu` |
 | `EMAIL_FROM` | servidor | Remetente do domínio de envio, ex.: `PagueSuaParte <avisos@paguesuaparte.com.br>` |
+| `CRON_SECRET` | servidor (segredo) | Segredo do Vercel Cron (16+ caracteres aleatórios); a rota `/api/cron/reminders` (lembretes de vencimento das despesas fixas) só aceita `Authorization: Bearer <CRON_SECRET>` |
 | `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | build/cliente | Chave pública VAPID (push) |
 | `VAPID_PRIVATE_KEY` | servidor (segredo) | Chave privada VAPID |
 | `VAPID_SUBJECT` | servidor | `mailto:` de contato para os serviços de push |

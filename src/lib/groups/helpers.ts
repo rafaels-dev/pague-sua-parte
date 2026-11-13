@@ -74,6 +74,16 @@ export function expenseRole(members: MemberLike[], caller: string, paidBy: strin
 }
 
 /**
+ * Quem pode ver (baixar) o comprovante da cota de `targetUid` numa despesa paga por `paidBy`: um membro do grupo que age pela pessoa da
+ * cota, que pagou a despesa (ou cuida de quem pagou) ou que administra o grupo. Única fonte desta regra: as rotas de download e o anexo
+ * dos e-mails usam esta mesma função (via `getReceiptRef`).
+ */
+export function canViewReceipt(members: MemberLike[], viewer: string, targetUid: string, paidBy: string): boolean {
+	if (!members.some((m) => m.uid === viewer)) return false;
+	return actsFor(members, viewer, targetUid) || expenseRole(members, viewer, paidBy) !== null;
+}
+
+/**
  * Quem o `caller` pode apontar como pagador ao lançar uma despesa: ele mesmo, quem ele cuida, ou, sendo administrador
  * do grupo, qualquer membro atual (com login ou sem). Única fonte desta regra; `payer` precisa estar no grupo.
  */

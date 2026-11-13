@@ -1,7 +1,7 @@
 import { formatBRL } from "@/lib/money";
+import { clipText as clip, fitSubject, shortName } from "./subjects";
 import type { Notice, NoticeContext, PlanCancelFact, PlanChangeFact, PlanClosedFact, PlanConfirmedFact, PlanNoticeBase } from "./types";
 
-const clip = (s: string, max = 60) => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
 const planUrl = (f: PlanNoticeBase) => `/app/planos/${f.planId}`;
 const planScope = (f: PlanNoticeBase) => ({ kind: "plan" as const, name: f.name });
 
@@ -43,7 +43,7 @@ export function buildPlanChangeNotices(f: PlanChangeFact): Notice[] {
 		}
 		for (const uid of to) {
 			if (uid === f.actorUid) continue;
-			out.push({ uid, title: "O plano fecha", body: `O plano "${title}" agora fecha: ${formatBRL(f.after.shareCents)} para cada um.`, url, scope: planScope(f), amountCents: f.after.shareCents, amountLabel: "Cada um paga" });
+			out.push({ uid, title: "O plano fecha", subject: fitSubject((n) => `O plano "${n}" fecha com ${formatBRL(f.after.shareCents as number)} para cada um`, f.name), body: `O plano "${title}" agora fecha: ${formatBRL(f.after.shareCents)} para cada um.`, url, scope: planScope(f), amountCents: f.after.shareCents, amountLabel: "Cada um paga" });
 		}
 	}
 	return dedupe(out);
@@ -55,7 +55,7 @@ export function buildPlanCancelledNotices(f: PlanCancelFact): Notice[] {
 	for (const id of f.goingIds) {
 		const uid = planLoginOf(f, id);
 		if (!uid || uid === f.actorUid) continue;
-		out.push({ uid, title: "Plano cancelado", body: `O plano "${clip(f.name)}" foi cancelado.`, url: planUrl(f), scope: planScope(f) });
+		out.push({ uid, title: "Plano cancelado", subject: fitSubject((n) => `Plano cancelado: "${n}"`, f.name), body: `O plano "${clip(f.name)}" foi cancelado.`, url: planUrl(f), scope: planScope(f) });
 	}
 	return dedupe(out);
 }
@@ -67,7 +67,7 @@ export function buildPlanClosedNotices(f: PlanClosedFact): Notice[] {
 		const uid = planLoginOf(f, id);
 		if (!uid || uid === f.actorUid) continue;
 		const who = uid === id ? "você" : nameOf(f, id);
-		out.push({ uid, title: "Plano fechado", body: `O plano "${clip(f.name)}" foi fechado sem ${who}.`, url: planUrl(f), scope: planScope(f) });
+		out.push({ uid, title: "Plano fechado", subject: fitSubject((n, p) => `Plano fechado sem ${who === "você" ? who : shortName(who, p)}: "${n}"`, f.name), body: `O plano "${clip(f.name)}" foi fechado sem ${who}.`, url: planUrl(f), scope: planScope(f) });
 	}
 	return dedupe(out);
 }
@@ -83,6 +83,6 @@ export function buildPlanConfirmedNotices(f: PlanConfirmedFact, ctx: NoticeConte
 	return dedupe(
 		g.members
 			.filter((m) => m.kind !== "managed" && m.uid !== f.actorUid)
-			.map((m) => ({ uid: m.uid, title: "Plano confirmado", body, url: `/app/grupos/${f.groupId}`, scope: { kind: "group" as const, name: clip(f.groupName, 40) } })),
+			.map((m) => ({ uid: m.uid, title: "Plano confirmado", subject: fitSubject((n) => `Plano confirmado: "${n}"`, f.planName), body, url: `/app/grupos/${f.groupId}`, scope: { kind: "group" as const, name: clip(f.groupName, 40) } })),
 	);
 }

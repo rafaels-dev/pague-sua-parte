@@ -1,6 +1,6 @@
 import { ObjectId, type Db } from "mongodb";
 import { groupsCollection, type GroupDoc } from "@/lib/groups/repo";
-import { actsFor, canLaunchPaidBy, expenseRole, isGroupAdmin, isManagedMember, isManagedUid, isObjectIdHex } from "@/lib/groups/helpers";
+import { actsFor, canLaunchPaidBy, canViewReceipt, expenseRole, isGroupAdmin, isManagedMember, isManagedUid, isObjectIdHex } from "@/lib/groups/helpers";
 import type { PixKey } from "@/lib/pix/key";
 import {
 	deleteAttachments,
@@ -797,7 +797,7 @@ export async function getReceiptRef(
 					: undefined;
 	if (!e || !r) return { status: "not_found" };
 	// Vê o comprovante: a própria pessoa (ou quem age por ela), quem pagou a despesa e o administrador do grupo.
-	if (!actsFor(group.members, uid, targetUid) && expenseRole(group.members, uid, e.paidBy) === null) return { status: "not_found" };
+	if (!canViewReceipt(group.members, uid, targetUid, e.paidBy)) return { status: "not_found" };
 	return { status: "ok", key: r.key, name: r.name, contentType: r.contentType };
 }
 

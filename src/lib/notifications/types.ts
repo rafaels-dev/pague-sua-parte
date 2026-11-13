@@ -12,6 +12,15 @@ export type Notice = {
 	amountCents?: number;
 	/** Legenda do valor ("Sua parte em cada parcela"...). Sem ela, o e-mail não mostra a caixa de valor. */
 	amountLabel?: string;
+	/** Assunto do e-mail (quem, o quê e quanto, até ~80 caracteres). Só e-mail: o push usa `title`. Sem ele, o assunto é o título. */
+	subject?: string;
+	/**
+	 * INTERNO. Referências ao comprovante deste pagamento (grupo, despesa, parte, tipo), nunca chave do bucket nem URL. Só o envio de
+	 * e-mail as resolve (e confere a permissão de `uid`). Nunca vai para o push, o log nem o HTML.
+	 */
+	receipts?: ReceiptTarget[];
+	/** INTERNO. Quantos pagamentos o aviso cobre (um aviso em lote cobre vários); só se anexa quando UM arquivo cobre todos. */
+	receiptsOf?: number;
 	/** Só e-mail: o push ignora este aviso (boas-vindas). */
 	emailOnly?: boolean;
 	/** Lista curta de itens (boas-vindas), só no e-mail. */
@@ -19,6 +28,15 @@ export type Notice = {
 	/** Frase de "próximo passo" depois da lista, só no e-mail. */
 	next?: string;
 };
+
+/** Qual comprovante de uma parte: o de um pagamento (`partId` quando é de um pagamento parcial; sem ele, o que quitou) ou o da devolução. */
+export type ReceiptSpec = {
+	kind: "payment" | "refund";
+	partId?: string;
+	/** SHA-256 (hex) da chave do arquivo no momento do pagamento: só se anexa o arquivo que ainda tiver o mesmo resumo. Interno: nunca vai ao push, ao log nem ao e-mail. */
+	digest?: string;
+};
+export type ReceiptTarget = ReceiptSpec & { groupId: string; expenseId: string; targetUid: string };
 
 export type GroupInfo = { name: string; members: (MemberLike & { name?: string })[] };
 
@@ -44,6 +62,8 @@ export type PaymentFact = {
 	manual: boolean;
 	/** Pagamento parcial: a parte continua em aberto. `amountCents` é o que foi pago agora; aqui, a parte inteira e o que falta. */
 	partial?: { shareCents: number; remainingCents: number };
+	/** O pagamento (ou a devolução) tem comprovante: só uma referência interna, resolvida no envio do e-mail. */
+	receipt?: ReceiptSpec;
 };
 
 /**
@@ -61,6 +81,8 @@ export type AdvanceFact = {
 	manual: boolean;
 	totalCents: number;
 	items: { number: number; cents: number; settled: boolean; remainingCents: number }[];
+	/** Comprovante do adiantamento (na parcela de `expenseId`), quando houve. */
+	receipt?: ReceiptSpec;
 };
 
 /** Uma despesa nova (ou pessoas que entraram numa despesa existente). */

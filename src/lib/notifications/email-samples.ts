@@ -1,3 +1,5 @@
+import type { ReceiptLine } from "./email-content";
+import { buildReminderNotice } from "./reminder-messages";
 import { buildAdvanceNotices, buildMemberJoinedNotices, buildNewExpenseNotices, buildPaymentNotices } from "./messages";
 import { buildPlanCancelledNotices, buildPlanChangeNotices, buildPlanClosedNotices, buildPlanConfirmedNotices } from "./plan-messages";
 import type { NewExpenseFact, Notice, NoticeContext, PaymentFact, PlanNoticeBase } from "./types";
@@ -30,9 +32,11 @@ function mine(notices: Notice[]): Notice {
 	return n;
 }
 
-export const SAMPLE_NOTICES: { id: string; notice: Notice }[] = [
+export const SAMPLE_NOTICES: { id: string; notice: Notice; /** Linha sobre o comprovante, como no envio real. */ receipt?: ReceiptLine }[] = [
 	{ id: "entrou-no-grupo", notice: mine(buildMemberJoinedNotices({ groupId: G, groupName: GROUPS[G], members, joinerUid: "bia", joinerName: "Bia" })) },
 	{ id: "pagamento-recebido", notice: mine(buildPaymentNotices([pay()], ctx)) },
+	{ id: "pagamento-com-comprovante-em-anexo", notice: mine(buildPaymentNotices([pay({ receipt: { kind: "payment" } })], ctx)), receipt: "attached" },
+	{ id: "pagamento-com-comprovante-no-app", notice: mine(buildPaymentNotices([pay({ receipt: { kind: "payment" } })], ctx)), receipt: "app" },
 	{ id: "pagamento-parcial", notice: mine(buildPaymentNotices([pay({ amountCents: 4000, partial: { shareCents: 8450, remainingCents: 4450 } })], ctx)) },
 	{ id: "parte-marcada-como-paga", notice: mine(buildPaymentNotices([pay({ paidBy: "bia", debtorUid: "eu", actorUid: "ana", manual: true, description: "Mercado", amountCents: 5230 })], ctx)) },
 	{ id: "pagamento-em-lote", notice: mine(buildPaymentNotices([pay({ amountCents: 10500 }), pay({ expenseId: "e2", amountCents: 10500 })], ctx)) },
@@ -45,6 +49,8 @@ export const SAMPLE_NOTICES: { id: string; notice: Notice }[] = [
 	{ id: "despesa-em-seu-nome", notice: mine(buildNewExpenseNotices(exp({ description: "Gasolina", amountCents: 20000, paidBy: "eu", actorUid: "ana", shares: [{ uid: "ana", amountCents: 5000 }, { uid: "eu", amountCents: 5000 }] }), "created", ctx)) },
 	{ id: "despesa-fixa", notice: mine(buildNewExpenseNotices(exp({ description: "Internet", amountCents: 9980, actorUid: null, shares: [{ uid: "eu", amountCents: 4990 }] }), "recurring", ctx)) },
 	{ id: "incluido-na-despesa", notice: mine(buildNewExpenseNotices(exp({ description: "Presente da avó", shares: [{ uid: "eu", amountCents: 2500 }] }), "added", ctx)) },
+	{ id: "lembrete-vence-em-7-dias", notice: buildReminderNotice({ recurrenceId: "r1", groupId: G, groupName: "Casa", period: "2026-11", lead: 7, uid: "eu", description: "Internet", dueDate: "2026-11-20", amountCents: 4990, exists: false, own: true, others: false }) },
+	{ id: "lembrete-vence-hoje", notice: buildReminderNotice({ recurrenceId: "r1", groupId: G, groupName: "Casa", period: "2026-11", lead: 0, uid: "eu", description: "Internet", dueDate: "2026-11-20", amountCents: 2500, exists: true, expenseId: E, own: true, others: true }) },
 	{ id: "plano-fecha", notice: mine(buildPlanChangeNotices({ ...plan, before: { fits: false, shareCents: null, includedUids: [] }, after: { fits: true, shareCents: 4500, includedUids: ["eu", "ana", "bia"] } })) },
 	{ id: "plano-confirmado", notice: mine(buildPlanConfirmedNotices({ planName: "Churrasco de sábado", groupName: GROUPS.g2, groupId: "g2", actorUid: "ana" }, ctx)) },
 	{ id: "boas-vindas", notice: buildWelcomeNotice({ uid: "eu", name: "Maria Souza" }) },

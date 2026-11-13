@@ -16,6 +16,7 @@ import {
 import { dueCents, normalizeShares } from "@/lib/expenses/shares";
 import type { SniffedFile } from "@/lib/expenses/validation";
 import { actsFor, expenseRole } from "@/lib/groups/helpers";
+import { batchReceiptSpec } from "@/lib/notifications/facts";
 import type { AdvanceFact } from "@/lib/notifications/types";
 import { putBatchReceipt, randomId, type AttachmentMeta, type AttachmentStore } from "@/lib/storage/attachments";
 import { applyAdvanceSlice, distributeAdvance, totalDue, undoAdvanceSlice, type AdvanceItem, type AdvanceSummaryItem } from "./advance";
@@ -323,6 +324,10 @@ export async function advanceInstallments(db: Db, store: AttachmentStore, args: 
 		totalCents: summary.reduce((t, i) => t + i.cents, 0),
 		items: summary,
 	};
+	// Só uma referência ao comprovante para o aviso; parte ausente (não deveria) não impede nada: o aviso sai sem a referência.
+	const writtenShare = firstWritten.shares.find((x) => x.uid === shareUid);
+	const receiptSpec = receipt && writtenShare ? batchReceiptSpec(writtenShare, batchId) : undefined;
+	if (receiptSpec) fact.receipt = receiptSpec;
 	const advance: AdvanceDone = { totalCents: fact.totalCents, items: summary, hasReceipt: Boolean(receipt), batchId };
 	// Gravou = sucesso: se a leitura do detalhe falhar (despesa apagada, pessoa saiu), a tela recarrega.
 	let expense: ExpenseDetail | null = null;
