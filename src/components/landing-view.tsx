@@ -162,7 +162,7 @@ export function LandingView({ children, footer }: Readonly<{ children: React.Rea
 								<div className="space-y-2">
 									<h3 className={H3}>Avisos no celular</h3>
 									<p className="max-w-[40ch] text-[1.125rem] leading-[1.55]">
-										Saiba quando alguém entrar no grupo, pagar ou lançar uma despesa. Você liga em Perfil.
+										Saiba quando alguém entrar no grupo, pagar ou lançar uma despesa. Ficam guardados no sininho do app; no celular, você liga em Perfil.
 									</p>
 								</div>
 								<NoticeMock />

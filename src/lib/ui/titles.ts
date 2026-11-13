@@ -10,6 +10,7 @@ export function screenInfo(pathname: string, search = ""): ScreenInfo {
 	if (pathname === "/app/perfil" || pathname.startsWith("/app/perfil/")) {
 		return { title: "Meu perfil", back: null, nav: "/app/perfil" };
 	}
+	if (pathname === "/app/avisos") return { title: "Avisos", back: "/app", nav: "/app" };
 	if (pathname === "/app/pagar") return { title: "Pagar tudo", back: backHome, nav: "/app" };
 	if (pathname === "/app/receber") return { title: "Quem me deve", back: backHome, nav: "/app" };
 	if (pathname === "/app/grupos/novo") return { title: "Criar grupo", back: "/app", nav: "/app" };

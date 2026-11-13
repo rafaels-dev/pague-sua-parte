@@ -16,6 +16,7 @@ import { todayISO } from "@/lib/ui/dates";
 import { nextDayOfMonth } from "@/lib/ui/due-dates";
 import { MockHomePlans, MockPlan, MockPlanClose, MockPlanForm, MockPlanInvite, MockPlanInviteClosed, MockPlanList, MockPlanShare } from "../plan-mocks";
 import { buildAdvanceShareText } from "@/lib/payments/advance";
+import { MockInbox } from "../inbox-mocks";
 import { MockPayAll } from "../pay-all-mocks";
 import { MockReceivables } from "../receivables-mocks";
 import { DUE_GROUPS, MOCK_GROUP, Shell as MockShell, MockExpense, MockGroup, MockHome, MockManagedSheet, MockNewExpense, MockNoPixKey, MockRecurrenceSheet, MockReport } from "../expense-mocks";
@@ -75,6 +76,22 @@ function AdvanceShareMock() {
 
 export function Telas({ tela }: Readonly<{ tela: string }>) {
 	switch (tela) {
+		case "sininho-0":
+			return <MockInbox scene="topo" unseen={0} />;
+		case "sininho-3":
+			return <MockInbox scene="topo" unseen={3} />;
+		case "sininho-9":
+			return <MockInbox scene="topo" unseen={10} />;
+		case "avisos":
+			return <MockInbox scene="nao-lidos" />;
+		case "avisos-lidos":
+			return <MockInbox scene="lidos" />;
+		case "avisos-vazio":
+			return <MockInbox scene="vazio" />;
+		case "avisos-carregando":
+			return <MockInbox scene="carregando" />;
+		case "avisos-erro":
+			return <MockInbox scene="erro" />;
 		case "landing":
 			return (
 				<LandingView footer="Usamos sua conta Google apenas para identificar você.">

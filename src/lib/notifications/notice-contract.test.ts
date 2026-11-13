@@ -3,6 +3,7 @@ import { buildAdvanceNotices, buildMemberJoinedNotices, buildNewExpenseNotices, 
 import { buildPlanCancelledNotices, buildPlanChangeNotices, buildPlanClosedNotices, buildPlanConfirmedNotices } from "./plan-messages";
 import { buildWelcomeNotice } from "./welcome";
 import { buildReminderNotice } from "./reminder-messages";
+import { toInboxDocs } from "./inbox";
 import { formatBRL } from "@/lib/money";
 import type { ReminderItem } from "@/lib/reminders/plan";
 import type { NewExpenseFact, Notice, NoticeContext, PaymentFact, PlanNoticeBase, PlanSnapshot } from "./types";
@@ -113,4 +114,23 @@ describe("contrato dos avisos para o e-mail", () => {
 		expect(by("plano fecha")[0].amountLabel).toBe("Cada um paga");
 		for (const n of by("plano confirmado")) expect(n).not.toHaveProperty("amountCents"); // plano confirmado não leva valor
 	});
+});
+
+describe("caixa de avisos (sininho): um documento por aviso que vai ao push", () => {
+	const NOW = new Date("2026-11-13T12:00:00Z");
+	for (const [name, notices] of scenarios) {
+		it(`${name}: grava só o texto do push, sem Pix, comprovante, e-mail nem assunto`, () => {
+			const docs = toInboxDocs(notices, NOW);
+			const expected = notices.filter((n) => !n.emailOnly);
+			expect(docs).toHaveLength(expected.length);
+			if (name === "boas-vindas") expect(docs).toHaveLength(0);
+			docs.forEach((d, i) => {
+				expect(Object.keys(d).sort()).toEqual(expect.arrayContaining(["uid", "title", "body", "url", "createdAt"]));
+				expect(Object.keys(d).every((k) => ["uid", "title", "body", "url", "scope", "createdAt"].includes(k))).toBe(true);
+				expect(d).toMatchObject({ uid: expected[i].uid, title: expected[i].title, body: expected[i].body, createdAt: NOW });
+				expect(d.url).toMatch(/^\/(app|convite\/)/);
+				expect(JSON.stringify(d)).not.toMatch(/receipts|digest|subject|"email"|html/i);
+			});
+		});
+	}
 });

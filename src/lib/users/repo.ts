@@ -13,6 +13,8 @@ export type UserDoc = {
 	emailVerified?: boolean;
 	/** Preferências de aviso; o que falta vale "ligado". */
 	notify?: { email?: boolean; push?: boolean };
+	/** Última vez que a pessoa abriu a caixa de avisos: o contador do sininho conta o que chegou depois. */
+	inboxSeenAt?: Date;
 	createdAt: Date;
 	updatedAt: Date;
 };

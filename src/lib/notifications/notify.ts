@@ -2,6 +2,7 @@ import type { Db } from "mongodb";
 import { describeError } from "@/lib/api/http";
 import { EmailError, emailConfigured, renderEmail, sendEmail } from "./email";
 import { resolveReceiptAttachment, type FileCache } from "./receipt-attachment";
+import { startInbox, waitInbox } from "./inbox";
 import { normalizeNotifyPrefs } from "./prefs";
 import { pushConfigured, sendPush } from "./push";
 import { removeEndpoints, subscriptionsCollection } from "./subscriptions";
@@ -72,6 +73,9 @@ export type NotifyReport = { delivered: number; failed: number };
  */
 export async function notify(db: Db, notices: Notice[], opts: { deadline?: number } = {}): Promise<NotifyReport> {
 	const report: NotifyReport = { delivered: 0, failed: 0 };
+	// A caixa de avisos (sininho) recebe tudo o que iria ao push, mesmo sem canal configurado e com o envio falhando. Começa já, SEM esperar:
+	// push e e-mail saem no ato; só no fim se espera a gravação, e só até o prazo (a promessa nunca rejeita; falha só vai ao log).
+	const inbox = notices.length > 0 ? startInbox(db, notices) : undefined;
 	try {
 		const wantEmail = emailConfigured();
 		const wantPush = pushConfigured();
@@ -162,6 +166,8 @@ export async function notify(db: Db, notices: Notice[], opts: { deadline?: numbe
 		});
 	} catch (err) {
 		console.error("notify error:", describeError(err));
+	} finally {
+		await waitInbox(inbox, opts.deadline, notices.length);
 	}
 	return report;
 }

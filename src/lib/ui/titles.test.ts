@@ -34,3 +34,9 @@ describe("screenInfo", () => {
 		expect(screenInfo("/app/perfil", "?grupo=0123456789abcdef01234567").back).toBeNull();
 	});
 });
+
+describe("avisos", () => {
+	it("página de avisos volta ao início", () => {
+		expect(screenInfo("/app/avisos")).toEqual({ title: "Avisos", back: "/app", nav: "/app" });
+	});
+});

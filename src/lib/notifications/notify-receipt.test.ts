@@ -13,7 +13,7 @@ vi.mock("@/lib/storage/attachments", () => ({
 const { notify } = await import("./notify");
 
 const fakeDb = (users: object[]) =>
-	({ collection: () => ({ find: () => ({ toArray: async () => users }) }) }) as unknown as Db;
+	({ collection: () => ({ find: () => ({ toArray: async () => users }), insertMany: async () => ({}) }) }) as unknown as Db;
 const user = (id: string) => ({ _id: id, email: `${id}@x.test`, emailVerified: true });
 const base = { title: "Pagamento recebido", subject: "Bia pagou R$ 10,00", body: "Bia pagou.", url: "/app/x", scope: { kind: "group" as const, name: "G" }, receipts: [{ groupId: "g", expenseId: "e", targetUid: "bia", kind: "payment" as const }] };
 const SAVED = { ...process.env };

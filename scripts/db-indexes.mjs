@@ -58,6 +58,10 @@ try {
 	const pushSubs = client.db(dbName).collection("push_subscriptions");
 	console.log("push_subscriptions:", await pushSubs.createIndex({ endpoint: 1 }, { name: "endpoint_unique", unique: true }));
 	console.log("push_subscriptions:", await pushSubs.createIndex({ uid: 1, createdAt: -1 }, { name: "uid_created" }));
+	// Caixa de avisos (sininho): lista e contagem por pessoa, do mais novo ao mais antigo; apagados sozinhos em 90 dias.
+	const inbox = client.db(dbName).collection("inbox");
+	console.log("inbox:", await inbox.createIndex({ uid: 1, createdAt: -1 }, { name: "inbox_uid_created" }));
+	console.log("inbox:", await inbox.createIndex({ createdAt: 1 }, { name: "inbox_ttl", expireAfterSeconds: 90 * 24 * 60 * 60 }));
 	// Planos (pré-grupo): por participante e estado, por criador, e o token do convite é único.
 	const plans = client.db(dbName).collection("plans");
 	console.log("plans:", await plans.createIndex({ "participants.uid": 1, status: 1, createdAt: -1 }, { name: "participant_status_created" }));

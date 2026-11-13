@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { BrandMark } from "@/components/brand";
+import { InboxBell } from "@/components/inbox/inbox-bell";
 import { Avatar, Icon, IconButton, NavigationBar, NavigationRail, SegmentedButton, TopAppBar, type NavItem } from "@/components/ui";
 import { screenInfo } from "@/lib/ui/titles";
 import { cx } from "@/lib/ui/cx";
@@ -123,10 +124,11 @@ export function AppShellView({
 	pathname,
 	search = "",
 	user,
+	unseen = 0,
 	onSignOut,
 	children,
 	className,
-}: Readonly<{ pathname: string; search?: string; user: ShellUser; onSignOut: () => void; children: React.ReactNode; className?: string }>) {
+}: Readonly<{ pathname: string; search?: string; user: ShellUser; unseen?: number; onSignOut: () => void; children: React.ReactNode; className?: string }>) {
 	const info = screenInfo(pathname, search);
 	const inner = "mx-auto w-full max-w-5xl md:px-7";
 	return (
@@ -144,7 +146,12 @@ export function AppShellView({
 				title={info.title}
 				innerClassName="mx-auto w-full max-w-5xl md:px-4"
 				leading={info.back ? <IconButton icon="arrow_back" label="Voltar" href={info.back} /> : undefined}
-				trailing={<AccountMenu user={user} onSignOut={onSignOut} />}
+				trailing={
+					<>
+						<InboxBell unseen={unseen} />
+						<AccountMenu user={user} onSignOut={onSignOut} />
+					</>
+				}
 			/>
 			<main className={cx(inner, "px-4 pb-44 pt-2 md:pb-12")}>{children}</main>
 			<NavigationBar items={NAV_ITEMS} activeHref={info.nav} />

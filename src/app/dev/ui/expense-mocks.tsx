@@ -141,9 +141,9 @@ const EXPENSES: ExpenseSummary[] = [
 	sum({ id: "e5", description: "Cuidadora de sábado", amountCents: 20000, date: "2025-06-14", paidBy: { uid: "d", name: "Ana Paula", isYou: false }, yourShareCents: 0, yourStatus: "none", pendingCount: 2, attachmentCount: 0 }),
 ];
 
-export function Shell({ pathname, search, children, framed, user = USER }: Readonly<{ pathname: string; search?: string; children: React.ReactNode; framed: boolean; user?: typeof USER }>) {
+export function Shell({ pathname, search, children, framed, user = USER, unseen = 0 }: Readonly<{ pathname: string; search?: string; children: React.ReactNode; framed: boolean; user?: typeof USER; unseen?: number }>) {
 	return (
-		<AppShellView pathname={pathname} search={search} user={user} onSignOut={noop} className={framed ? "min-h-0!" : undefined}>
+		<AppShellView pathname={pathname} search={search} user={user} unseen={unseen} onSignOut={noop} className={framed ? "min-h-0!" : undefined}>
 			{children}
 		</AppShellView>
 	);
@@ -1434,7 +1434,10 @@ export function MockHome({
 	managed = [],
 	summary,
 	children,
+	unseen = 0,
 }: Readonly<{
+	/** Avisos não vistos no sininho. */
+	unseen?: number;
 	/** Seções extras no fim do início (ex.: Planos). */
 	children?: React.ReactNode;
 	framed?: boolean;
@@ -1446,7 +1449,7 @@ export function MockHome({
 }>) {
 	const [open, setOpen] = useState(chooser);
 	return (
-		<Shell pathname="/app" framed={framed} user={managed.length > 0 ? CARE_USER : USER}>
+		<Shell pathname="/app" framed={framed} user={managed.length > 0 ? CARE_USER : USER} unseen={unseen}>
 			<div className="space-y-6">
 				<h1 className="text-headline-medium md:text-headline-large">Olá, {managed.length > 0 ? "Renata" : "Rafael"}!</h1>
 				<div className="space-y-3">
