@@ -197,3 +197,43 @@ describe("parseExpenseEdit", () => {
 		expect(parseExpenseEdit(null, now)).toMatchObject({ ok: false });
 	});
 });
+
+describe("cashback", () => {
+	const cb = (extra: Record<string, unknown>) => parseExpenseInput({ ...ok, ...extra }, now);
+	const field = (r: ReturnType<typeof parseExpenseInput>) => (r.ok ? null : [r.status, r.field]);
+	it("aceita à vista (sem modo) e parcelado (modo padrão: dividir)", () => {
+		expect(cb({ cashback: { cents: 500 } })).toMatchObject({ ok: true, value: { cashback: { cents: 500 } } });
+		const inst = cb({ cashback: { cents: 500 }, installments: { count: 3 }, dueDate: "2026-12-10" });
+		expect(inst).toMatchObject({ ok: true, value: { cashback: { cents: 500, mode: "spread" } } });
+		expect(cb({ cashback: { cents: 500, mode: "first" }, installments: { count: 3 }, dueDate: "2026-12-10" })).toMatchObject({ value: { cashback: { mode: "first" } } });
+	});
+	it("à vista ignora o modo", () => {
+		const r = cb({ cashback: { cents: 500, mode: "first" } });
+		expect(r.ok && r.value.cashback).toEqual({ cents: 500 });
+	});
+	it("recusa valores inválidos, por campo", () => {
+		for (const cents of [0, -5, 1.5, "10", null, Number.NaN]) expect(field(cb({ cashback: { cents } }))).toEqual([422, "cashback"]);
+		expect(field(cb({ cashback: 500 }))).toEqual([422, "cashback"]);
+		expect(field(cb({ cashback: [] }))).toEqual([422, "cashback"]);
+		expect(field(cb({ cashback: { cents: 5, mode: "tudo" }, installments: { count: 2 }, dueDate: "2026-12-10" }))).toEqual([422, "cashback"]);
+	});
+	it("teto próprio, com mensagem própria", () => {
+		const r = cb({ cashback: { cents: 100_000_000 * 48 + 1 } });
+		expect(field(r)).toEqual([422, "cashback"]);
+		expect(!r.ok && r.error).toBe("O cashback pode ser no máximo R$ 48.000.000,00.");
+		expect(cb({ cashback: { cents: 100_000_000 * 48 } }).ok).toBe(true);
+	});
+	it("modo inválido é recusado também sem parcelas, e antes do valor", () => {
+		expect(field(cb({ cashback: { cents: 500, mode: "tudo" } }))).toEqual([422, "cashback"]);
+		const r = cb({ cashback: { cents: 0, mode: "tudo" } });
+		expect(!r.ok && r.error).toBe("Escolha como dividir o cashback entre as parcelas.");
+	});
+	it("sem cashback ou nulo: não grava nada", () => {
+		expect(cb({ cashback: null })).toEqual(parseExpenseInput(ok, now));
+		expect(cb({})).toEqual(parseExpenseInput(ok, now));
+	});
+	it("na edição o cashback é ignorado", () => {
+		const r = parseExpenseEdit({ ...ok, date: "2026-11-10", cashback: { cents: 100 } }, now);
+		expect(r).toEqual({ ok: true, value: { description: "Mercado", amountCents: 1000, date: "2026-11-10", participantUids: ["a"] } });
+	});
+});

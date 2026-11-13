@@ -174,9 +174,10 @@ export function isValidDueDate(due: string, purchaseDate: string, today: string)
 }
 
 /** Texto do aviso do grupo de uma compra parcelada. */
-export function buildInstallmentShareText(e: { amountCents: number; description: string; installmentCount: number }, link: string): string {
+export function buildInstallmentShareText(e: { amountCents: number; description: string; installmentCount: number; /** Parcelas com valores diferentes: não diz o valor de cada uma. */ withoutValue?: boolean }, link: string): string {
 	const description = e.description.trim().replace(/[\s.]+$/, "");
-	return `Paguei uma nova despesa de ${e.installmentCount} parcelas de ${formatBRL(e.amountCents)}, referente a ${description}. Abra o link e pague sua parte. ${link}`;
+	const what = e.withoutValue ? `${e.installmentCount} parcelas` : `${e.installmentCount} parcelas de ${formatBRL(e.amountCents)}`;
+	return `Paguei uma nova despesa de ${what}, referente a ${description}. Abra o link e pague sua parte. ${link}`;
 }
 
 /** "R$ 300,00 até o fim de novembro" quando o valor "de agora" difere do total; senão null. */

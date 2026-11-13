@@ -135,6 +135,16 @@ describe("despesa nova", () => {
 		const r = buildNewExpenseNotices(exp({ installments: 3 }), "created", ctx);
 		expect(r.find((n) => n.uid === "adm")?.body).toBe('Bia lançou "Luz" em 3 parcelas no grupo Família. Sua parte em cada parcela: R$ 75,00');
 	});
+	it("parcelada com parcelas diferentes (cashback): a parte é a da primeira parcela", () => {
+		const r = buildNewExpenseNotices(exp({ installments: 3, installmentsDiffer: true }), "created", ctx);
+		expect(r.find((n) => n.uid === "adm")?.body).toBe('Bia lançou "Luz" em 3 parcelas no grupo Família. Sua parte na primeira parcela: R$ 75,00');
+	});
+	it("parcelas diferentes, lançada em nome de outro: não afirma o valor da primeira para todas", () => {
+		const r = buildNewExpenseNotices(exp({ installments: 3, installmentsDiffer: true, actorUid: "adm", paidBy: "bia" }), "created", ctx);
+		const body = r.find((n) => n.uid === "bia")?.body ?? "";
+		expect(body).toContain('"Luz".');
+		expect(body).not.toMatch(/R\$ \d/);
+	});
 	it("despesa fixa: não há autor, só quem pagou fica de fora", () => {
 		const r = buildNewExpenseNotices(exp({ actorUid: null }), "recurring", ctx);
 		expect(r.map((n) => n.uid).sort()).toEqual(["adm", "ana"]);

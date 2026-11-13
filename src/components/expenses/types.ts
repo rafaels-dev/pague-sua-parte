@@ -46,7 +46,8 @@ export type ExpenseSummary = {
 
 export type InstallmentRef = { seriesId: string; number: number; count: number };
 
-export type SeriesItem = { id: string; number: number; dueDate: string | null; settled: boolean };
+export type SeriesItem = { id: string; number: number; dueDate: string | null; settled: boolean; amountCents?: number };
+
 export type ExpenseSeries = { count: number; items: SeriesItem[] };
 
 export type ShareReceipt = { name: string; contentType: string; size: number };
@@ -112,7 +113,10 @@ export type ExpenseDetailData = {
 	id: string;
 	groupId: string;
 	description: string;
+	/** Valor que se divide (já sem o cashback). */
 	amountCents: number;
+	/** Cashback desta despesa/parcela; 0 = não teve. A compra custou `amountCents + cashbackCents`. */
+	cashbackCents?: number;
 	date: string;
 	createdAt: string;
 	canDelete: boolean;
@@ -164,7 +168,7 @@ function normalizeSeries(raw: unknown): ExpenseSeries | null {
 	if (!Array.isArray(r.items)) return null;
 	const items: SeriesItem[] = (r.items as Record<string, unknown>[])
 		.filter((i) => i && typeof i.id === "string" && typeof i.number === "number")
-		.map((i) => ({ id: i.id as string, number: i.number as number, dueDate: typeof i.dueDate === "string" ? i.dueDate : null, settled: !!i.settled }))
+		.map((i) => ({ id: i.id as string, number: i.number as number, dueDate: typeof i.dueDate === "string" ? i.dueDate : null, settled: !!i.settled, ...(typeof i.amountCents === "number" ? { amountCents: i.amountCents } : {}) }))
 		.sort((a, b) => a.number - b.number);
 	if (items.length === 0) return null;
 	return { count: typeof r.count === "number" ? r.count : items.length, items };
@@ -251,6 +255,7 @@ export function normalizeExpense(raw: Loose<Omit<ExpenseDetailData, "shares">> &
 		dueDate: dueOrNull(raw.dueDate),
 		installment: normalizeInstallment(raw.installment),
 		recurrence: normalizeRecurrenceRef(raw.recurrence),
+		cashbackCents: typeof raw.cashbackCents === "number" && raw.cashbackCents > 0 ? raw.cashbackCents : 0,
 		planId: typeof raw.planId === "string" ? raw.planId : null,
 		overdue: !!raw.overdue,
 		series: normalizeSeries(raw.series),

@@ -13,6 +13,10 @@ describe("parseRecurrenceInput", () => {
 		});
 		expect(parseRecurrenceInput({ ...base, dayOfMonth: 3 }, NOW)).toMatchObject({ value: { startPeriod: "2026-12" } });
 	});
+	it("recusa cashback em despesa fixa", () => {
+		expect(bad(parseRecurrenceInput({ ...base, cashback: { cents: 100 } }, NOW))).toEqual([422, "cashback"]);
+		expect(parseRecurrenceInput({ ...base, cashback: null }, NOW).ok).toBe(true);
+	});
 	it("campos inválidos", () => {
 		expect(bad(parseRecurrenceInput({ ...base, description: " " }, NOW))).toEqual([422, "description"]);
 		expect(bad(parseRecurrenceInput({ ...base, amountCents: 0 }, NOW))).toEqual([422, "amountCents"]);

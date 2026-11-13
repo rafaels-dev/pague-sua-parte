@@ -11,11 +11,11 @@ export function buildExpenseLink(origin: string, groupId: string, expenseId: str
  * Compra parcelada (`installment`): "Paguei uma nova despesa de 6 parcelas de R$ X, ..."; `amountCents` é o valor de cada parcela.
  */
 export function buildExpenseShareText(
-	e: { amountCents: number; description: string; installment?: { count: number } | null },
+	e: { amountCents: number; description: string; installment?: { count: number } | null; /** As parcelas têm valores diferentes (cashback): o texto não promete um valor igual. */ installmentsDiffer?: boolean },
 	link: string,
 ): string {
 	if (e.installment && e.installment.count > 1) {
-		return buildInstallmentShareText({ amountCents: e.amountCents, description: e.description, installmentCount: e.installment.count }, link);
+		return buildInstallmentShareText({ amountCents: e.amountCents, description: e.description, installmentCount: e.installment.count, withoutValue: e.installmentsDiffer }, link);
 	}
 	const description = e.description.trim().replace(/[\s.]+$/, "");
 	return `Paguei uma nova despesa de ${formatBRL(e.amountCents)}, referente a ${description}. Abra o link e pague sua parte. ${link}`;

@@ -311,6 +311,39 @@ export function Telas({ tela }: Readonly<{ tela: string }>) {
 					pay={{ payment: "installments", dueDate: nextDayOfMonth(todayISO(), 10), installments: 6 }}
 				/>
 			);
+		case "nova-cashback":
+			return <MockNewExpense framed={false} initial={{ amountCents: 100000, description: "Compras do mês" }} cashback={{ cents: 5000 }} />;
+		case "nova-cashback-parcelado":
+			return (
+				<MockNewExpense
+					framed={false}
+					initial={{ amountCents: 30000, description: "Geladeira nova" }}
+					pay={{ payment: "installments", dueDate: nextDayOfMonth(todayISO(), 10), installments: 3 }}
+					cashback={{ cents: 5000, mode: "first" }}
+				/>
+			);
+		case "nova-cashback-parcelado-dividido":
+			return (
+				<MockNewExpense
+					framed={false}
+					initial={{ amountCents: 30000, description: "Geladeira nova" }}
+					pay={{ payment: "installments", dueDate: nextDayOfMonth(todayISO(), 10), installments: 4 }}
+					cashback={{ cents: 5003 }}
+				/>
+			);
+		case "nova-cashback-erro":
+			return (
+				<MockNewExpense
+					framed={false}
+					initial={{ amountCents: 30000, description: "Geladeira nova" }}
+					pay={{ payment: "installments", dueDate: nextDayOfMonth(todayISO(), 10), installments: 3 }}
+					cashback={{ cents: 30000, mode: "first" }}
+				/>
+			);
+		case "despesa-cashback":
+			return <MockExpense mode="cashback" framed={false} />;
+		case "despesa-cashback-parcela":
+			return <MockExpense mode="cashback-installment" framed={false} />;
 		case "nova-parcelado-erros":
 			return (
 				<MockNewExpense

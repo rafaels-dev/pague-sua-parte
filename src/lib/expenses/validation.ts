@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CASHBACK_MODES, type CashbackMode } from "./cashback";
 import { addDays, addMonthsClamped, isRealDate, todayInSaoPaulo } from "./dates";
 
 export const MAX_FILES = 3;
@@ -54,11 +55,18 @@ export type ExpenseInput = {
 	dueDate?: string;
 	/** Compra parcelada: `amountCents` vale para CADA parcela. */
 	installments?: { count: number };
+	/**
+	 * Cashback TOTAL da compra (informado só ao lançar). `amountCents` continua bruto; o valor que se divide é o líquido.
+	 * `mode` só vale com parcelas (padrão `spread`).
+	 */
+	cashback?: { cents: number; mode?: CashbackMode };
 };
 
 export const MIN_INSTALLMENTS = 2;
 export const MAX_INSTALLMENTS = 48;
 export const MAX_DUE_YEARS_AHEAD = 5;
+/** Teto do cashback total: o maior valor por parcela vezes o maior número de parcelas. */
+export const MAX_CASHBACK_CENTS = MAX_AMOUNT_CENTS * MAX_INSTALLMENTS;
 
 export type Invalid = { ok: false; status: number; error: string; field: string };
 
@@ -80,6 +88,7 @@ const schema = z.object({
 		.max(100, "Participantes demais."),
 	dueDate: z.string({ message: "Data de vencimento inválida." }).nullish(),
 	installments: z.unknown().optional(),
+	cashback: z.unknown().optional(),
 	paidByUid: z.string({ message: "Escolha quem pagou." }).min(1, "Escolha quem pagou.").max(128, "Escolha quem pagou.").optional(),
 });
 
@@ -90,7 +99,7 @@ export function parseExpenseInput(raw: unknown, now: Date = new Date()): { ok: t
 	if (!parsed.success) {
 		const issue = parsed.error.issues[0];
 		const field = String(issue.path[0] ?? "description");
-		return fail(["description", "amountCents", "date", "participantUids", "paidByUid", "dueDate"].includes(field) ? field : "description", issue.message);
+		return fail(["description", "amountCents", "date", "participantUids", "paidByUid", "dueDate", "cashback"].includes(field) ? field : "description", issue.message);
 	}
 	const today = todayInSaoPaulo(now);
 	const date = parsed.data.date ?? today;
@@ -108,6 +117,18 @@ export function parseExpenseInput(raw: unknown, now: Date = new Date()): { ok: t
 			return fail("installments", `O número de parcelas deve ser um inteiro de ${MIN_INSTALLMENTS} a ${MAX_INSTALLMENTS}.`);
 		}
 		installments = { count };
+	}
+	let cashback: ExpenseInput["cashback"];
+	const rawCb = parsed.data.cashback;
+	if (rawCb !== undefined && rawCb !== null) {
+		const bad = "Informe um cashback válido.";
+		if (typeof rawCb !== "object" || Array.isArray(rawCb)) return fail("cashback", bad);
+		const { cents, mode } = rawCb as { cents?: unknown; mode?: unknown };
+		// O modo inválido é recusado sempre, com ou sem parcelas.
+		if (mode !== undefined && mode !== null && !CASHBACK_MODES.includes(mode as CashbackMode)) return fail("cashback", "Escolha como dividir o cashback entre as parcelas.");
+		if (typeof cents !== "number" || !Number.isInteger(cents) || cents < 1) return fail("cashback", bad);
+		if (cents > MAX_CASHBACK_CENTS) return fail("cashback", "O cashback pode ser no máximo R$ 48.000.000,00.");
+		cashback = { cents, ...(installments ? { mode: ((mode as CashbackMode | null | undefined) ?? "spread") } : {}) };
 	}
 	const dueDate = parsed.data.dueDate ?? undefined;
 	if (dueDate === undefined) {
@@ -127,6 +148,7 @@ export function parseExpenseInput(raw: unknown, now: Date = new Date()): { ok: t
 			...(parsed.data.paidByUid ? { paidByUid: parsed.data.paidByUid } : {}),
 			...(dueDate ? { dueDate } : {}),
 			...(installments ? { installments } : {}),
+			...(cashback ? { cashback } : {}),
 		},
 	};
 }
@@ -148,7 +170,8 @@ export function parseExpenseEdit(raw: unknown, now: Date = new Date()): { ok: tr
 	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return { ok: false, status: 422, error: "Dados inválidos.", field: "description" };
 	const body = raw as Record<string, unknown>;
 	if (typeof body.date !== "string") return { ok: false, status: 422, error: "Data inválida.", field: "date" };
-	const parsed = parseExpenseInput({ ...body, installments: undefined, paidByUid: undefined }, now);
+	// O cashback só se informa ao lançar: na edição o corpo é lido sem ele (o valor editado é o valor a dividir).
+	const parsed = parseExpenseInput({ ...body, installments: undefined, paidByUid: undefined, cashback: undefined }, now);
 	if (!parsed.ok) return parsed;
 	const { description, amountCents, date, participantUids, dueDate } = parsed.value;
 	// A relação vencimento x data é conferida no repo, só quando uma das duas datas mudou (despesas antigas podem ter vencimento antes da data).

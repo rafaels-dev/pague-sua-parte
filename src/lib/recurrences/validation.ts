@@ -89,6 +89,7 @@ function checkEnd(end: string, now: Date): Invalid | null {
 
 export function parseRecurrenceInput(raw: unknown, now: Date = new Date()): { ok: true; value: RecurrenceInput } | Invalid {
 	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return fail("description", "Dados inválidos.");
+	if ((raw as Record<string, unknown>).cashback != null) return fail("cashback", "Despesa fixa não aceita cashback.");
 	const parsed = createSchema.safeParse(raw);
 	if (!parsed.success) return zodFail(parsed.error);
 	const d = parsed.data;

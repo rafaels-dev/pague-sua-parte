@@ -49,3 +49,20 @@ describe("aviso de quem pagou", () => {
 		expect(text).toContain("Confira aqui: " + link);
 	});
 });
+
+describe("buildExpenseShareText: parcelas com valores diferentes", () => {
+	it("não promete valor igual em todas as parcelas", () => {
+		const t = buildExpenseShareText({ amountCents: 8500, description: "Geladeira", installment: { count: 3 }, installmentsDiffer: true }, "https://x");
+		expect(t).toBe("Paguei uma nova despesa de 3 parcelas, referente a Geladeira. Abra o link e pague sua parte. https://x");
+	});
+});
+
+describe("buildExpenseShareText: mesma frase, com ou sem valor por parcela", () => {
+	const e = { amountCents: 10000, description: "Sofá", installment: { count: 5 } };
+	it("com valor igual: usa a contagem informada", () => {
+		expect(buildExpenseShareText(e, "L").replace(/\u00a0/g, " ")).toBe("Paguei uma nova despesa de 5 parcelas de R$ 100,00, referente a Sofá. Abra o link e pague sua parte. L");
+	});
+	it("sem valor: só a contagem, o resto da frase igual", () => {
+		expect(buildExpenseShareText({ ...e, installmentsDiffer: true }, "L")).toBe("Paguei uma nova despesa de 5 parcelas, referente a Sofá. Abra o link e pague sua parte. L");
+	});
+});

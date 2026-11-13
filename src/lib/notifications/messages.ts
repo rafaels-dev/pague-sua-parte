@@ -185,12 +185,12 @@ export function buildNewExpenseNotices(f: NewExpenseFact, mode: NewExpenseMode, 
 	const out: Notice[] = [];
 	for (const r of new Set([...parts.keys(), ...(onBehalf ? [onBehalf] : [])])) {
 		const p = parts.get(r);
-		const label = `${p?.others ? "Sua parte e de quem você cuida" : "Sua parte"}${f.installments ? " em cada parcela" : ""}`;
+		const label = `${p?.others ? "Sua parte e de quem você cuida" : "Sua parte"}${f.installments ? (f.installmentsDiffer ? " na primeira parcela" : " em cada parcela") : ""}`;
 		const part = p ? ` ${label}: ${formatBRL(p.cents)}` : "";
 		if (r === onBehalf) {
 			// Quem cuida do pagador (pessoa sem login) precisa ler de quem é a despesa.
 			const whose = r === f.paidBy ? "em seu nome" : `em nome de ${ctx.name(f.groupId, f.paidBy)}`;
-			out.push({ uid: r, title: r === f.paidBy ? "Despesa lançada em seu nome" : "Despesa lançada em nome de quem você cuida", body: `${actor} lançou uma despesa ${whose}: ${desc}, ${formatBRL(f.amountCents)}.${part}`, url });
+			out.push({ uid: r, title: r === f.paidBy ? "Despesa lançada em seu nome" : "Despesa lançada em nome de quem você cuida", body: `${actor} lançou uma despesa ${whose}: ${desc}${f.installmentsDiffer ? "" : `, ${formatBRL(f.amountCents)}`}.${part}`, url });
 			continue;
 		}
 		const base =

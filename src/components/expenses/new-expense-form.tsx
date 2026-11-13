@@ -14,17 +14,20 @@ import { profileUrlFor } from "@/lib/ui/return-to";
 import { formatDateShort, isValidISODate, todayISO } from "@/lib/ui/dates";
 import { isValidDueDate } from "@/lib/ui/due-dates";
 import { clampDay, createdFlash, DEFAULT_DAY, endPeriodProblem, firstDueDate } from "@/lib/ui/recurrences";
+import { cashbackDivideLine, cashbackEditNote, cashbackForSubmit, cashbackFormProblems, cashbackPlan, differingInstallmentTexts } from "@/lib/ui/cashback";
+import type { CashbackMode } from "@/lib/expenses/cashback";
 import { installmentSplitLine, monthlySplitLine, splitPreview } from "@/lib/ui/split-preview";
 import { cx } from "@/lib/ui/cx";
 import { payerPixNotice } from "@/lib/ui/payer-pix-notice";
 import { AttachmentPicker } from "./attachment-picker";
+import { CashbackField } from "./cashback-field";
 import { PaymentChoice, type PaymentKind } from "./payment-choice";
 import { normalizeExpense, setFlash, type ExpenseDetailData } from "./types";
 import { splitMembersFor } from "./resplit-sheet";
 import { useAttachments } from "./use-attachments";
 import { modeFor, WhoSplits, type SplitMode } from "./who-splits";
 
-export type FormErrors = Partial<Record<"amount" | "description" | "date" | "dueDate" | "installments" | "dayOfMonth" | "endPeriod" | "participants" | "files" | "form", string>>;
+export type FormErrors = Partial<Record<"amount" | "description" | "date" | "dueDate" | "installments" | "cashback" | "dayOfMonth" | "endPeriod" | "participants" | "files" | "form", string>>;
 
 /** Aviso exibido no lugar do formulário quando a pessoa ainda não cadastrou a chave Pix. */
 export function NoPixKeyBlock({ returnTo }: Readonly<{ returnTo?: string }> = {}) {
@@ -94,6 +97,13 @@ export type NewExpenseFormViewProps = {
 	/** Texto do botão enquanto envia (ex.: "Enviando anexos..."). */
 	busyLabel?: string;
 	attachments: React.ReactNode;
+	/** Cashback da compra (só ao lançar); 0 = não teve. */
+	cashbackCents?: number;
+	onCashback?: (c: number) => void;
+	cashbackMode?: CashbackMode;
+	onCashbackMode?: (m: CashbackMode) => void;
+	/** Editando uma despesa que teve cashback: o valor mostrado já está descontado. */
+	editingCashbackCents?: number;
 	/** Editando uma despesa que já existe: sem escolher quem pagou, sem anexos, sem parcelas/todo mês. */
 	editing?: boolean;
 	onAmount: (cents: number) => void;
@@ -125,8 +135,14 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 	const monthly = p.payment === "monthly";
 	const total = p.payment === "installments" ? "em cada parcela" : monthly ? "em cada mês" : "no total";
 	const payerQuestion = monthly ? "Quem paga?" : "Quem pagou?";
-	const preview = splitPreview(p.amountCents, p.selected, payerUid, payerName);
 	const editing = !!p.editing;
+	const cashbackMode = p.cashbackMode ?? "spread";
+	const cbPlan = !monthly && !editing && (p.cashbackCents ?? 0) > 0 ? cashbackPlan(p.amountCents, p.payment === "installments" ? p.installments : 1, p.cashbackCents ?? 0, cashbackMode) : null;
+	const nets = cbPlan?.ok ? cbPlan.nets : null;
+	// Com cashback, divide-se só o que sobra (na parcelada, a prévia parte da primeira parcela).
+	const preview = splitPreview(nets ? nets[0] : p.amountCents, p.selected, payerUid, payerName);
+	const differ = p.payment === "installments" && nets ? differingInstallmentTexts(nets, cashbackMode, p.selected, payerUid, payerName) : null;
+	const cashbackError = p.errors.cashback ?? (cbPlan && !cbPlan.ok && cbPlan.error ? cbPlan.error : undefined);
 	const payerChoice =
 		!editing && payerOptions.length > 1 ? (
 			<fieldset className="space-y-2">
@@ -195,6 +211,19 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 			/>
 			)}
 
+			{!monthly && !editing && p.onCashback && p.onCashbackMode && (
+				<CashbackField
+					cents={p.cashbackCents ?? 0}
+					onCents={p.onCashback}
+					mode={cashbackMode}
+					onMode={p.onCashbackMode}
+					installments={p.payment === "installments"}
+					error={cashbackError}
+					summary={cbPlan?.ok ? cashbackDivideLine(cbPlan) : null}
+				/>
+			)}
+			{editing && (p.editingCashbackCents ?? 0) > 0 && <p className="text-body-large text-on-surface-variant">{cashbackEditNote(p.editingCashbackCents ?? 0)}</p>}
+
 			<TextField
 				id="campo-descricao"
 				label="O que foi?"
@@ -254,13 +283,17 @@ export function NewExpenseFormView(p: Readonly<NewExpenseFormViewProps>) {
 				/>
 				{preview.kind === "ok" && !onlyPayer && (
 					<Card tone="high" className="space-y-1 p-4" aria-live="polite">
-						<p className="money text-title-large">{p.payment === "installments" ? installmentSplitLine(preview) : monthly ? monthlySplitLine(preview) : preview.line}</p>
+						<p className="money text-title-large">{p.payment === "installments" ? (differ?.line ?? installmentSplitLine(preview)) : monthly ? monthlySplitLine(preview) : preview.line}</p>
 						{preview.note && <p className="text-body-large text-on-surface-variant">{preview.note}</p>}
 						{preview.othersCents > 0 && (
 							<p className="text-body-large text-on-surface-variant">
-								{payerIsManaged
-									? `Os outros devem ${formatBRL(preview.othersCents)} para ${payer.name} ${total}.`
-									: `Os outros te devem ${formatBRL(preview.othersCents)} ${total}.`}
+								{differ
+									? payerIsManaged
+										? `Os outros devem ${differ.othersChunk} para ${payer.name}.`
+										: `Os outros te devem ${differ.othersChunk}.`
+									: payerIsManaged
+										? `Os outros devem ${formatBRL(preview.othersCents)} para ${payer.name} ${total}.`
+										: `Os outros te devem ${formatBRL(preview.othersCents)} ${total}.`}
 							</p>
 						)}
 					</Card>
@@ -350,6 +383,7 @@ const FIELD_ID: Record<string, string> = {
 	date: "campo-data",
 	dueDate: "campo-vencimento",
 	installments: "campo-parcelas",
+	cashback: "campo-cashback",
 	dayOfMonth: "campo-dia",
 	endPeriod: "campo-ate",
 	participants: "campo-participantes",
@@ -360,6 +394,7 @@ const SERVER_FIELD: Record<string, keyof FormErrors> = {
 	date: "date",
 	dueDate: "dueDate",
 	installments: "installments",
+	cashback: "cashback",
 	dayOfMonth: "dayOfMonth",
 	endPeriod: "endPeriod",
 	startPeriod: "endPeriod",
@@ -385,6 +420,8 @@ export function NewExpenseForm({ groupId, editExpenseId }: Readonly<{ groupId: s
 	const [payment, setPayment] = useState<PaymentKind>("cash");
 	const [dueDate, setDueDate] = useState("");
 	const [installments, setInstallments] = useState(6);
+	const [cashbackCents, setCashbackCents] = useState(0);
+	const [cashbackMode, setCashbackMode] = useState<CashbackMode>("spread");
 	const [dayOfMonth, setDayOfMonth] = useState(DEFAULT_DAY);
 	const [endPeriod, setEndPeriod] = useState<string | null>(null);
 	const [selected, setSelected] = useState<string[] | null>(null);
@@ -518,12 +555,13 @@ export function NewExpenseForm({ groupId, editExpenseId }: Readonly<{ groupId: s
 		}
 		if (selected!.length === 0) e.participants = "Escolha pelo menos uma pessoa.";
 		else if (amountCents > 0 && amountCents < selected!.length) e.participants = "O valor é pequeno demais para dividir entre tantas pessoas.";
+		if (!editing) Object.assign(e, cashbackFormProblems({ payment, amountCents, installments, cents: cashbackCents, mode: cashbackMode, people: selected!.length }));
 		return e;
 	}
 
 	function showErrors(e: FormErrors) {
 		setErrors(e);
-		const first = (["amount", "description", "date", "dueDate", "installments", "dayOfMonth", "endPeriod", "participants"] as const).find((k) => e[k]);
+		const first = (["amount", "description", "date", "dueDate", "installments", "cashback", "dayOfMonth", "endPeriod", "participants"] as const).find((k) => e[k]);
 		if (first === "date") setDateOpen(true);
 		focusTarget.current = first ? FIELD_ID[first] : null;
 		// o campo de data pode acabar de ser aberto; dá tempo de ele existir
@@ -609,6 +647,7 @@ export function NewExpenseForm({ groupId, editExpenseId }: Readonly<{ groupId: s
 		if (att.items.length === 0 && !withoutAttachmentOk) return setConfirmNoAttachment(true);
 		setErrors({});
 		setBusy(true);
+		const cashbackToSend = cashbackForSubmit(payment, cashbackCents, cashbackMode);
 		try {
 			const body = new FormData();
 			body.append(
@@ -621,6 +660,7 @@ export function NewExpenseForm({ groupId, editExpenseId }: Readonly<{ groupId: s
 						...(payerIsManaged ? { paidByUid: payer } : {}),
 						...(payment === "card" || payment === "installments" ? { dueDate } : {}),
 						...(payment === "installments" ? { installments: { count: installments } } : {}),
+						...(cashbackToSend ? { cashback: cashbackToSend } : {}),
 					}),
 			);
 			for (const it of att.items) body.append("files", it.file, it.file.name);
@@ -665,6 +705,17 @@ export function NewExpenseForm({ groupId, editExpenseId }: Readonly<{ groupId: s
 				payment={payment}
 				dueDate={dueDate}
 				installments={installments}
+				cashbackCents={cashbackCents}
+				onCashback={(c) => {
+					setCashbackCents(c);
+					if (errors.cashback) setErrors((x) => ({ ...x, cashback: undefined }));
+				}}
+				cashbackMode={cashbackMode}
+				onCashbackMode={(m) => {
+					setCashbackMode(m);
+					if (errors.cashback) setErrors((x) => ({ ...x, cashback: undefined }));
+				}}
+				editingCashbackCents={editing?.cashbackCents ?? 0}
 				dayOfMonth={dayOfMonth}
 				endPeriod={endPeriod}
 				onDayOfMonth={(n) => {
@@ -677,7 +728,7 @@ export function NewExpenseForm({ groupId, editExpenseId }: Readonly<{ groupId: s
 				}}
 				onPayment={(m) => {
 					setPayment(m);
-					setErrors((x) => ({ ...x, dueDate: undefined, installments: undefined, dayOfMonth: undefined, endPeriod: undefined }));
+					setErrors((x) => ({ ...x, dueDate: undefined, installments: undefined, cashback: undefined, dayOfMonth: undefined, endPeriod: undefined }));
 				}}
 				onDueDate={(v) => {
 					setDueDate(v);
@@ -685,7 +736,7 @@ export function NewExpenseForm({ groupId, editExpenseId }: Readonly<{ groupId: s
 				}}
 				onInstallments={(n) => {
 					setInstallments(n);
-					if (errors.installments) setErrors((x) => ({ ...x, installments: undefined }));
+					if (errors.installments || errors.cashback) setErrors((x) => ({ ...x, installments: undefined, cashback: undefined }));
 				}}
 				selected={selected}
 				splitMode={splitMode}
@@ -694,7 +745,7 @@ export function NewExpenseForm({ groupId, editExpenseId }: Readonly<{ groupId: s
 				busyLabel={att.items.length > 0 ? "Enviando anexos..." : "Lançando..."}
 				onAmount={(c) => {
 					setAmountCents(c);
-					if (errors.amount) setErrors((x) => ({ ...x, amount: undefined }));
+					if (errors.amount || errors.cashback) setErrors((x) => ({ ...x, amount: undefined, cashback: undefined }));
 				}}
 				onDescription={(v) => {
 					setDescription(v);

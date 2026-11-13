@@ -473,6 +473,7 @@ export function MockNewExpense({
 	care = false,
 	payer,
 	pay,
+	cashback,
 	editing = false,
 	admin = false,
 }: Readonly<{
@@ -484,6 +485,8 @@ export function MockNewExpense({
 	alone?: boolean;
 	/** Como foi pago ao abrir (à vista por padrão). */
 	pay?: { payment: PaymentKind; dueDate?: string; installments?: number; dayOfMonth?: number; endPeriod?: string | null };
+	/** Já abre com este cashback (e, no parcelado, esta escolha). */
+	cashback?: { cents: number; mode?: "spread" | "first" };
 	/** Cenário da Renata, que cuida de Benjamim e do tio Carlos. */
 	care?: boolean;
 	/** Quem pagou ao abrir (uid); sem isso, "Eu". */
@@ -504,6 +507,8 @@ export function MockNewExpense({
 	const [installments, setInstallments] = useState(pay?.installments ?? 6);
 	const [dayOfMonth, setDayOfMonth] = useState(pay?.dayOfMonth ?? 10);
 	const [endPeriod, setEndPeriod] = useState<string | null>(pay?.endPeriod ?? null);
+	const [cashbackCents, setCashbackCents] = useState(cashback?.cents ?? 0);
+	const [cashbackMode, setCashbackMode] = useState<"spread" | "first">(cashback?.mode ?? "spread");
 	const list = care ? CARE_GROUP.members : members;
 	const [payerUid, setPayerUid] = useState(payer ?? list.find((m) => m.isYou)?.uid ?? "");
 	const who = useWhoSplits(list.map((m) => m.uid), undefined, payerUid);
@@ -534,6 +539,10 @@ export function MockNewExpense({
 				payment={payment}
 				dueDate={dueDate}
 				installments={installments}
+				cashbackCents={cashbackCents}
+				onCashback={setCashbackCents}
+				cashbackMode={cashbackMode}
+				onCashbackMode={setCashbackMode}
 				dayOfMonth={dayOfMonth}
 				endPeriod={endPeriod}
 				onDayOfMonth={setDayOfMonth}
@@ -591,7 +600,7 @@ const ATTACHMENTS: AttachmentView[] = [
 ];
 
 type RawDetail = Omit<ExpenseDetailData, "canHelp" | "helpAsUids" | "helpShareCents" | "ownerAlone" | "canEdit" | "adminOnly" | "launchedBy">;
-export type MockMode = "help-alone" | "help-split" | "helped" | "help-care" | "installment" | "overdue" | "owner-installment" | "monthly" | "batch" | "debtor" | "payer" | "partial" | "refund" | "owner-return" | "recalc" | "two-parts" | "care-paid" | "self-owner" | "self-debtor" | "admin-view" | "admin-launched" | "refund-pay" | "refund-nopix" | "refund-done";
+export type MockMode = "help-alone" | "help-split" | "helped" | "help-care" | "installment" | "overdue" | "owner-installment" | "monthly" | "cashback" | "cashback-installment" | "batch" | "debtor" | "payer" | "partial" | "refund" | "owner-return" | "recalc" | "two-parts" | "care-paid" | "self-owner" | "self-debtor" | "admin-view" | "admin-launched" | "refund-pay" | "refund-nopix" | "refund-done";
 const isCare = (mode: MockMode) => mode === "two-parts" || mode === "care-paid" || mode === "help-care";
 
 type MS = Partial<ExpenseShare> & Pick<ExpenseShare, "uid" | "name" | "amountCents" | "status">;
@@ -720,6 +729,48 @@ function installmentDetail(mode: "installment" | "overdue"): RawDetail {
 	};
 }
 
+/** Compra de R$ 1.000,00 com R$ 50,00 de cashback (à vista) ou parcela 1 de 3 com cashback só na primeira, vista por quem deve. */
+function cashbackDetail(installment: boolean): RawDetail {
+	const net = installment ? 25000 : 95000;
+	const each = installment ? 6250 : 23750;
+	const shares = [
+		share({ ...B, amountCents: each, status: "payer" }),
+		share({ ...A, amountCents: each, status: "pending", isYou: true }),
+		share({ uid: "c", name: "José", amountCents: each, status: "pending" }),
+		share({ uid: "d", name: "Ana Paula", amountCents: each, status: "pending" }),
+	];
+	const series: ExpenseSeries = {
+		count: 3,
+		items: [
+			{ id: "p1", number: 1, dueDate: DUE_NEXT, settled: false, amountCents: 25000 },
+			{ id: "p2", number: 2, dueDate: addMonthsClamped(DUE_NEXT, 1), settled: false, amountCents: 30000 },
+			{ id: "p3", number: 3, dueDate: addMonthsClamped(DUE_NEXT, 2), settled: false, amountCents: 30000 },
+		],
+	};
+	return {
+		id: "cb1",
+		groupId: "1",
+		description: installment ? "Geladeira nova" : "Compras do mês",
+		amountCents: net,
+		cashbackCents: installment ? 5000 : 5000,
+		date: daysAgo(1),
+		createdAt: new Date().toISOString(),
+		canDelete: false,
+		canMarkPaid: false,
+		canEditParticipants: false,
+		paidBy: { ...B, picture: null, isYou: false, kind: "user", youManage: false },
+		pix: { type: "cpf", key: "52998224725", payeeName: B.name },
+		attachments: [],
+		shares,
+		participantUids: shares.map((x) => x.uid),
+		dueDate: installment ? DUE_NEXT : null,
+		installment: installment ? { seriesId: "s1", number: 1, count: 3 } : null,
+		recurrence: null,
+		overdue: false,
+		series: installment ? series : null,
+	};
+}
+
 /** Despesa de um mês criada por uma despesa fixa (aluguel, dia 10), vista por quem deve. */
 function monthlyDetail(): RawDetail {
 	const shares = [
@@ -845,6 +896,7 @@ function rawDetail(mode: MockMode): RawDetail {
 	if (mode === "installment" || mode === "overdue") return installmentDetail(mode);
 	if (mode === "owner-installment") return ownerInstallmentDetail();
 	if (mode === "monthly") return monthlyDetail();
+	if (mode === "cashback" || mode === "cashback-installment") return cashbackDetail(mode === "cashback-installment");
 	if (isCare(mode)) return careDetail(mode as "two-parts" | "care-paid");
 	const youOwner = mode === "payer" || mode === "owner-return" || mode === "recalc" || mode === "self-owner" || mode === "refund-pay" || mode === "refund-nopix" || mode === "refund-done";
 	const owner = youOwner ? { ...A, picture: null, isYou: true, kind: "user" as const, youManage: false } : { ...B, picture: null, isYou: false, kind: "user" as const, youManage: false };

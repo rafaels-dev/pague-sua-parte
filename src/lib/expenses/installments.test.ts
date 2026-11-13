@@ -213,7 +213,7 @@ describe("createExpense: parcelas", () => {
 			expect(r.expense).toMatchObject({ dueDate: "2026-12-10", installment: { number: 1, count: 3 } });
 			expect(r.expense.series).toEqual({
 				count: 3,
-				items: docs.map((d, i) => ({ id: id(d), number: i + 1, dueDate: d.dueDate, settled: false })),
+				items: docs.map((d, i) => ({ id: id(d), number: i + 1, dueDate: d.dueDate, settled: false, amountCents: d.amountCents })),
 			});
 		}
 	});
@@ -528,5 +528,85 @@ describe("participantes: scope following", () => {
 		const docs = seriesDocs(2);
 		expect((await updateParticipants(fakeDb({ docs }).db, GID, id(docs[0]), "estranho", ["u1"], "following")).status).toBe("no_group");
 		expect((await updateParticipants(fakeDb({ docs: [] }).db, GID, new ObjectId().toHexString(), "u1", ["u1"], "following")).status).toBe("no_expense");
+	});
+});
+
+describe("createExpense: cashback", () => {
+	const sumShares = (d: Doc) => d.shares.reduce((t, s) => t + s.amountCents, 0);
+	const cbOf = (d: Doc) => (d as Doc & { cashbackCents?: number }).cashbackCents;
+
+	it("à vista: grava o líquido, o cashback, e as partes somam o líquido", async () => {
+		const { db, docs } = fakeDb();
+		const r = await create(db, fakeStore(), { amountCents: 100_000, cashback: { cents: 5_000 } }, []);
+		expect(docs).toHaveLength(1);
+		expect(docs[0].amountCents).toBe(95_000);
+		expect(cbOf(docs[0])).toBe(5_000);
+		expect(sumShares(docs[0])).toBe(95_000);
+		expect(r.status === "ok" && r.expense).toMatchObject({ amountCents: 95_000, cashbackCents: 5_000 });
+		expect(r.status === "ok" && r.newExpense).toMatchObject({ amountCents: 95_000 });
+	});
+	it("sem cashback: o campo não é gravado e o detalhe devolve 0", async () => {
+		const { db, docs } = fakeDb();
+		const r = await create(db, fakeStore(), {}, []);
+		expect(docs[0]).not.toHaveProperty("cashbackCents");
+		expect(r.status === "ok" && r.expense.cashbackCents).toBe(0);
+	});
+	it("parcelado, dividido: cada parcela divide o seu líquido e a soma do cashback é o total", async () => {
+		const { db, docs } = fakeDb();
+		const r = await create(db, fakeStore(), { amountCents: 10_000, installments: { count: 3 }, dueDate: "2026-12-10", cashback: { cents: 1_000, mode: "spread" } }, []);
+		expect(docs.map((d) => cbOf(d))).toEqual([334, 333, 333]);
+		expect(docs.map((d) => d.amountCents)).toEqual([9_666, 9_667, 9_667]);
+		for (const d of docs) expect(sumShares(d)).toBe(d.amountCents);
+		expect(docs.reduce((t, d) => t + (cbOf(d) ?? 0), 0)).toBe(1_000);
+		expect(r.status === "ok" && r.newExpense).toMatchObject({ amountCents: 9_666, installments: 3, installmentsDiffer: true });
+		if (r.status === "ok") expect(r.expense.series?.items.map((i) => i.amountCents)).toEqual([9_666, 9_667, 9_667]);
+	});
+	it("parcelado, tudo na primeira: só a primeira tem cashback", async () => {
+		const { db, docs } = fakeDb();
+		await create(db, fakeStore(), { amountCents: 10_000, installments: { count: 3 }, dueDate: "2026-12-10", cashback: { cents: 1_500, mode: "first" } }, []);
+		expect(docs.map((d) => d.amountCents)).toEqual([8_500, 10_000, 10_000]);
+		expect(cbOf(docs[0])).toBe(1_500);
+		expect(docs[1]).not.toHaveProperty("cashbackCents");
+		expect(docs[2]).not.toHaveProperty("cashbackCents");
+		for (const d of docs) expect(sumShares(d)).toBe(d.amountCents);
+	});
+	it("parcelas iguais (cashback divisível): o aviso não diz que diferem", async () => {
+		const { db } = fakeDb();
+		const r = await create(db, fakeStore(), { amountCents: 10_000, installments: { count: 2 }, dueDate: "2026-12-10", cashback: { cents: 1_000 } }, []);
+		expect(r.status === "ok" && r.newExpense).not.toHaveProperty("installmentsDiffer");
+	});
+	it("cashback maior que a primeira parcela: erro claro, sem upload nem gravação", async () => {
+		const { db, expenses } = fakeDb();
+		const store = fakeStore();
+		const r = await create(db, store, { amountCents: 10_000, installments: { count: 3 }, dueDate: "2026-12-10", cashback: { cents: 10_000, mode: "first" } });
+		expect(r).toEqual({ status: "invalid", field: "cashback", error: "O cashback é maior que a primeira parcela. Escolha dividir entre as parcelas." });
+		expect(store.put).not.toHaveBeenCalled();
+		expect(expenses.insertMany).not.toHaveBeenCalled();
+		expect(expenses.insertOne).not.toHaveBeenCalled();
+	});
+	it("à vista com cashback igual à compra: recusa", async () => {
+		const { db } = fakeDb();
+		const store = fakeStore();
+		expect(await create(db, store, { amountCents: 5_000, cashback: { cents: 5_000 } })).toMatchObject({ status: "invalid", field: "cashback", error: "O cashback precisa ser menor que o valor da compra." });
+		expect(store.put).not.toHaveBeenCalled();
+	});
+	it("líquido pequeno demais para dividir entre todos: erro no valor, sem estado parcial", async () => {
+		const { db, expenses } = fakeDb();
+		const store = fakeStore();
+		expect(await create(db, store, { amountCents: 10, cashback: { cents: 8 } })).toMatchObject({ status: "invalid", field: "amountCents" });
+		expect(store.put).not.toHaveBeenCalled();
+		expect(expenses.insertOne).not.toHaveBeenCalled();
+	});
+});
+
+describe("parcelas com valores diferentes (cashback)", () => {
+	it("mudar quem divide nas seguintes refaz cada parcela pelo seu valor e mantém o cashback", async () => {
+		const docs = seriesDocs(3, {}, (n) => (n === 1 ? ({ amountCents: 2000, cashbackCents: 1000, shares: [S("u1", 668), S("u2", 666), S("u3", 666)] } as Partial<Doc>) : {}));
+		const { db } = fakeDb({ docs });
+		const r = await updateParticipants(db, GID, id(docs[0]), "u1", ["u1", "u2"], "following", NOW);
+		expect(r.status).toBe("ok");
+		expect(docs.map((d) => d.shares.reduce((t, s) => t + s.amountCents, 0))).toEqual([2000, 3000, 3000]);
+		expect((docs[0] as Doc & { cashbackCents?: number }).cashbackCents).toBe(1000);
+		expect(docs[1]).not.toHaveProperty("cashbackCents");
 	});
 });

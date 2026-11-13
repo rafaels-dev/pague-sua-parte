@@ -44,6 +44,7 @@ import {
 	type ShareMethod,
 	type ShareStatus,
 } from "./shares";
+import { netPerInstallment } from "./cashback";
 import { splitEqually } from "./split";
 import type { ExpenseEdit, ExpenseInput, ParticipantsScope, SniffedFile } from "./validation";
 
@@ -55,7 +56,10 @@ export type ExpenseDoc = {
 	createdBy: string;
 	paidBy: string;
 	description: string;
+	/** Valor que se DIVIDE (já sem o cashback, quando houve). O valor da compra é `amountCents + (cashbackCents ?? 0)`. */
 	amountCents: number;
+	/** Cashback desta despesa/parcela (> 0), informado só no lançamento e nunca alterado depois. Ausente = sem cashback. */
+	cashbackCents?: number;
 	date: string;
 	/** Chave de quem pagou NO LANÇAMENTO. Ausente quando quem pagou não tinha chave no lançamento (o administrador lançando por outra pessoa, ou um mês de despesa fixa gerado sem chave): vale a atual dele (`fillMissingPix`). */
 	pix?: PixKey & { payeeName: string };
@@ -143,7 +147,10 @@ export type ExpenseDetail = {
 	id: string;
 	groupId: string;
 	description: string;
+	/** Valor que se divide (já sem o cashback). */
 	amountCents: number;
+	/** Cashback desta despesa/parcela (0 = não teve). A compra custou `amountCents + cashbackCents`. */
+	cashbackCents: number;
 	date: string;
 	createdAt: string;
 	canDelete: boolean;
@@ -219,7 +226,7 @@ export type ExpenseDetail = {
 	/** Venceu (antes de hoje, em São Paulo) e ainda há cota de outra pessoa com valor em aberto. */
 	overdue: boolean;
 	/** Todas as parcelas da série que ainda existem, em ordem. */
-	series: { count: number; items: { id: string; number: number; dueDate: string | null; settled: boolean }[] } | null;
+	series: { count: number; items: { id: string; number: number; dueDate: string | null; settled: boolean; /** Valor que se divide nesta parcela (com cashback as parcelas podem diferir). */ amountCents: number }[] } | null;
 };
 
 /** Nenhuma cota de outra pessoa com valor em aberto. */
@@ -270,7 +277,7 @@ async function seriesOf(db: Db, e: ExpenseDoc, known?: ExpenseDoc[]) {
 		(await expensesCollection(db)
 			.find(
 				{ groupId: e.groupId, "installment.seriesId": e.installment.seriesId },
-				{ projection: { installment: 1, dueDate: 1, shares: 1, paidBy: 1 } },
+				{ projection: { installment: 1, dueDate: 1, shares: 1, paidBy: 1, amountCents: 1 } },
 			)
 			.sort({ "installment.number": 1 })
 			.toArray());
@@ -281,6 +288,7 @@ async function seriesOf(db: Db, e: ExpenseDoc, known?: ExpenseDoc[]) {
 			number: d.installment!.number,
 			dueDate: d.dueDate ?? null,
 			settled: noDue({ paidBy: d.paidBy, shares: normalizeShares(d.shares) }),
+			amountCents: d.amountCents,
 		}))
 		.sort((a, b) => a.number - b.number);
 	return { count: e.installment.count, items };
@@ -380,6 +388,7 @@ async function toDetail(db: Db, e: ExpenseDoc, group: GroupDoc, uid: string, now
 		groupId: e.groupId.toHexString(),
 		description: e.description,
 		amountCents: e.amountCents,
+		cashbackCents: e.cashbackCents ?? 0,
 		date: e.date,
 		createdAt: e.createdAt.toISOString(),
 		canDelete: canDeleteExpense(e, group, uid),
@@ -499,14 +508,22 @@ export async function createExpense(
 		return { status: "invalid", field: "participantUids", error: "Escolha apenas pessoas que estão no grupo." };
 	}
 
-	let split: { uid: string; amountCents: number }[];
+	const count = input.installments?.count ?? 1;
+	// Cashback: cada parcela tem o seu (ver `splitCashback`) e divide só o líquido. Tudo é conferido antes de qualquer upload ou gravação.
+	let cashbacks: number[] = new Array(count).fill(0);
+	if (input.cashback) {
+		const cb = netPerInstallment(input.amountCents, count, input.cashback.cents, input.cashback.mode ?? "spread");
+		if (!cb.ok) return { status: "invalid", field: "cashback", error: cb.error };
+		cashbacks = cb.cashbacks;
+	}
+	const nets = cashbacks.map((c) => input.amountCents - c);
+	const splits = new Map<number, { uid: string; amountCents: number }[]>();
 	try {
-		split = splitEqually(input.amountCents, input.participantUids, paidBy);
+		for (const net of new Set(nets)) splits.set(net, splitEqually(net, input.participantUids, paidBy));
 	} catch {
 		return { status: "invalid", field: "amountCents", error: "Esse valor é pequeno demais para dividir entre tantas pessoas." };
 	}
 
-	const count = input.installments?.count ?? 1;
 	const ids = Array.from({ length: count }, (_, i) => (i === 0 && expenseId && isObjectIdHex(expenseId) ? new ObjectId(expenseId) : new ObjectId()));
 	const uploaded: AttachmentMeta[] = [];
 	let inserted = false;
@@ -532,10 +549,11 @@ export async function createExpense(
 			createdBy: uid,
 			paidBy,
 			description: input.description,
-			amountCents: input.amountCents,
+			amountCents: nets[i],
+			...(cashbacks[i] > 0 ? { cashbackCents: cashbacks[i] } : {}),
 			date: input.date,
 			...(pix ? { pix: { ...pix } } : {}),
-			shares: split.map((s) => ({ uid: s.uid, amountCents: s.amountCents, paidCents: 0 })),
+			shares: splits.get(nets[i])!.map((s) => ({ uid: s.uid, amountCents: s.amountCents, paidCents: 0 })),
 			version: 0,
 			attachments: uploaded.map((a) => ({ ...a })),
 			...(input.dueDate ? { dueDate: dueDates[i] } : {}),
@@ -551,11 +569,13 @@ export async function createExpense(
 			groupId,
 			expenseId: docs[0]._id.toHexString(),
 			description: input.description,
-			amountCents: input.amountCents,
+			amountCents: docs[0].amountCents,
 			paidBy,
 			actorUid: uid,
 			shares: docs[0].shares.map((x) => ({ uid: x.uid, amountCents: x.amountCents })),
 			...(count > 1 ? { installments: count } : {}),
+			// Com cashback as parcelas podem ter valores diferentes: o aviso fala só da primeira.
+			...(count > 1 && nets.some((n) => n !== nets[0]) ? { installmentsDiffer: true } : {}),
 		};
 		return { status: "ok", expense: await toDetail(db, docs[0], group, uid, now, docs), newExpense };
 	} catch (err) {

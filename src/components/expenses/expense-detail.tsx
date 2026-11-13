@@ -18,6 +18,8 @@ import { formatDateLong, formatDateShort, todayISO } from "@/lib/ui/dates";
 import { deleteFlashMessage, dueLong, installmentLabel } from "@/lib/ui/due-dates";
 import { RECURRING_CHIP } from "@/lib/ui/recurrences";
 import { isImageType } from "@/lib/ui/attachments";
+import { cashbackDetailLine } from "@/lib/ui/cashback";
+import { installmentShareInfo } from "@/lib/ui/installment-share";
 import { buildExpenseShareText, buildPaidShareText, shareIntro } from "@/lib/ui/expense-share";
 import { paidByLabel, shareStatusChip } from "@/lib/ui/expense-status";
 import { buildExpenseStatusText, buildRefundShareText, expenseSummaryIntro } from "@/lib/ui/expense-summary";
@@ -373,6 +375,7 @@ export function ExpenseDetailView({
 				)}
 				<h1 className="break-words text-headline-medium md:text-headline-large">{expense.description}</h1>
 				<p className="money text-display-small font-bold">{formatBRL(expense.amountCents)}</p>
+				{(expense.cashbackCents ?? 0) > 0 && <p className="text-body-large text-on-surface-variant">{cashbackDetailLine(expense.amountCents, expense.cashbackCents ?? 0, !!expense.installment)}</p>}
 				<p className="text-body-large text-on-surface-variant">
 					{paidByLabel(expense.paidBy)} · {formatDateLong(expense.date)}
 				</p>
@@ -1109,6 +1112,9 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 	const viewed = attachments.find((a) => a.id === viewing);
 	const shareTarget = shareAction ? expense.shares.find((s) => s.uid === shareAction.uid) : undefined;
 	// Lançada, cobrança e resumo levam o convite do grupo (destino na despesa); "paguei" e "devolvi" levam o link simples.
+	// Texto de "lançada" e introdução da folha: a contagem real de parcelas e se os valores são iguais.
+	// O resumo usa `expense`: ele diz "parcela N de M" e apagar uma parcela não renumera as outras.
+	const shareable = shareableExpense(expense);
 	const shareLink = expenseShareLink(shareOpen ?? "launched", window.location.origin, shareInvite.token, groupId, expenseId);
 	const shareText =
 		shareOpen === "paid" && paidNotice
@@ -1117,7 +1123,7 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 				? buildRefundShareText({ ...refundNotice, description: expense.description }, shareLink)
 				: shareOpen === "summary"
 					? buildExpenseStatusText(expense, shareLink)
-					: buildExpenseShareText(expense, shareLink);
+					: buildExpenseShareText(shareable, shareLink);
 	const canNativeShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
 	const hasNext = !!expense.installment && expense.installment.number < expense.installment.count;
 	const closeShare = () => {
@@ -1255,7 +1261,7 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 								? `Avise ${refundNotice?.toName ?? "a pessoa"} que o dinheiro foi devolvido. O link abre a despesa${refundNotice?.hasReceipt ? " com o comprovante da devolução" : ""}.`
 								: shareOpen === "summary"
 									? expenseSummaryIntro()
-									: shareIntro(shareOpen === "manual" ? "manual" : "launched", expense.installment?.count)
+									: shareIntro(shareOpen === "manual" ? "manual" : "launched", shareable.installment?.count)
 					}
 					notice={
 						shareInvite.token && shareInvite.solo ? `${SOLO_SHARE_NOTICE} ${SOLO_SHARE_EXPENSE_HINT}` : undefined
@@ -1385,4 +1391,11 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 			<Snackbar open={snack !== null} message={snack ?? ""} onClose={() => setSnack(null)} aboveNav />
 		</>
 	);
+}
+
+/** A despesa como o texto de "avisar o grupo" pode descrevê-la: parcelas que existem e valor igual só quando é verdade. */
+function shareableExpense(e: ExpenseDetailData) {
+	if (!e.installment) return e;
+	const info = installmentShareInfo(e.installment, e.series);
+	return { ...e, installment: { ...e.installment, count: info.count }, installmentsDiffer: !info.sameValue };
 }

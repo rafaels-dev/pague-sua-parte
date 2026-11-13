@@ -39,6 +39,11 @@ export type NewExpenseFact = {
 	shares: { uid: string; amountCents: number }[];
 	/** Número de parcelas, quando a despesa foi lançada parcelada. */
 	installments?: number;
+	/**
+	 * As parcelas não têm o mesmo valor (cashback). Então `amountCents` e `shares` são os da PRIMEIRA parcela
+	 * e nenhum texto pode afirmá-los para as demais.
+	 */
+	installmentsDiffer?: boolean;
 };
 export type NewExpenseMode = "created" | "recurring" | "added";
 
