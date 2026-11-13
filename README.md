@@ -29,7 +29,15 @@ Sem as variáveis `R2_*`, o `npm run dev` guarda os arquivos em disco, em `.data
 
 O app avisa por e-mail e por push (Web Push) quando alguém entra no grupo, paga, devolve ou lança uma despesa (inclusive as fixas). Cada canal só funciona se as variáveis dele existirem; sem elas, fica desligado em silêncio.
 
-- **E-mail (Resend)**: crie a conta, verifique o domínio `paguesuaparte.com.br` (registros DNS na Cloudflare), gere uma API key e configure `RESEND_API_KEY` e `EMAIL_FROM` (ex.: `PagueSuaParte <avisos@paguesuaparte.com.br>`). Só recebe e-mail quem tem o e-mail confirmado pelo Google.
+- **E-mail (Mailgun)**: só recebe quem tem o e-mail confirmado pelo Google. Para ver os modelos, rode `npm run dev` e abra `/dev/ui/emails`. Passo a passo:
+  1. Crie a conta em mailgun.com (plano Free: 100 e-mails por dia, 1 domínio de envio, 1 dia de histórico; confira em https://www.mailgun.com/pricing/).
+  2. Em Sending > Domains > Add domain, cadastre o domínio de envio (`paguesuaparte.com.br`; um subdomínio como `mg.` também serve) e escolha a região **US** (o Mailgun só tem US e EU; a EU serve a quem precisa guardar dados na Europa). A região não muda depois de criado o domínio.
+  3. No DNS da Cloudflare, crie os registros que o painel mostrar, **só DNS, sem proxy (nuvem cinza)**: TXT de SPF (`v=spf1 include:mailgun.org ~all` no subdomínio), TXT/CNAME de DKIM (o valor está no painel) e, se quiser, o CNAME de rastreio. O MX do Mailgun só serve para **receber** e-mail nesse subdomínio: o app não precisa dele (e o MX do domínio raiz, se existir, não deve ser mexido). Clique em "Verify DNS settings" e espere o selo verde (pode levar até 48 h).
+  4. Em Sending > Domains > (seu domínio) > Sending keys, crie uma **chave de envio** (só envia por esse domínio).
+  5. Na Vercel, configure `MAILGUN_SENDING_KEY` (a chave de envio), `MAILGUN_DOMAIN` (`paguesuaparte.com.br`), `MAILGUN_REGION` (`us`, pode omitir) e `EMAIL_FROM` (`PagueSuaParte <avisos@paguesuaparte.com.br>`). Sem qualquer uma das três obrigatórias, o e-mail fica desligado em silêncio.
+  6. (Recomendado) Publique um DMARC em `_dmarc.paguesuaparte.com.br` (TXT `v=DMARC1; p=none; rua=mailto:...`) e só endureça depois de ver os relatórios. Com remetente no mesmo subdomínio que o Mailgun assina e autentica (SPF e DKIM), o alinhamento do DMARC passa; um remetente em outro domínio exigiria mais configuração.
+
+  Por que subdomínio: a documentação do Mailgun não recomenda um nem outro (https://documentation.mailgun.com/docs/mailgun/user-manual/domains/domains-verify); a escolha aqui é prática: o domínio raiz só pode ter um SPF e provavelmente já tem registros de e-mail, e a reputação dos avisos fica separada do resto. O envio já desliga rastreio de abertura e de clique, então o CNAME de rastreio é opcional.
 - **Push (VAPID)**: rode `npx web-push generate-vapid-keys` e configure `NEXT_PUBLIC_VAPID_PUBLIC_KEY` (vai no build), `VAPID_PRIVATE_KEY` e `VAPID_SUBJECT` (`mailto:...`). Cada pessoa ativa em Perfil > Avisos; no iPhone é preciso antes adicionar o app à Tela de Início.
 - `APP_URL` (opcional) define o endereço dos links dos e-mails.
 - Rode `npm run db:indexes` para criar os índices de `push_subscriptions` antes de publicar.
@@ -64,8 +72,10 @@ Antes de existir grupo e despesa, alguém pode "planejar" um gasto grande (ex.: 
 | `R2_SECRET_ACCESS_KEY` | servidor (segredo) | Secret Access Key do token R2 |
 | `R2_BUCKET` | servidor | Nome do bucket dos anexos |
 | `APP_URL` | servidor | (opcional) Endereço do app nos links dos e-mails |
-| `RESEND_API_KEY` | servidor (segredo) | Chave da API do Resend; sem ela não há e-mail |
-| `EMAIL_FROM` | servidor | Remetente verificado, ex.: `PagueSuaParte <avisos@paguesuaparte.com.br>` |
+| `MAILGUN_SENDING_KEY` | servidor (segredo) | Chave de envio do Mailgun; sem ela não há e-mail |
+| `MAILGUN_DOMAIN` | servidor | Domínio de envio cadastrado no Mailgun, ex.: `paguesuaparte.com.br` |
+| `MAILGUN_REGION` | servidor | (opcional) `us` (padrão) ou `eu` |
+| `EMAIL_FROM` | servidor | Remetente do domínio de envio, ex.: `PagueSuaParte <avisos@paguesuaparte.com.br>` |
 | `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | build/cliente | Chave pública VAPID (push) |
 | `VAPID_PRIVATE_KEY` | servidor (segredo) | Chave privada VAPID |
 | `VAPID_SUBJECT` | servidor | `mailto:` de contato para os serviços de push |

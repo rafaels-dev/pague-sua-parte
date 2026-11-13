@@ -1,10 +1,9 @@
 import { formatBRL } from "@/lib/money";
-import { MAX_PLAN_PEOPLE } from "@/lib/plans/collection";
-import { minPeopleForLimit } from "@/lib/plans/compute";
-import type { Notice, PlanCancelFact, PlanChangeFact, PlanClosedFact, PlanNoticeBase } from "./types";
+import type { Notice, NoticeContext, PlanCancelFact, PlanChangeFact, PlanClosedFact, PlanConfirmedFact, PlanNoticeBase } from "./types";
 
 const clip = (s: string, max = 60) => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
 const planUrl = (f: PlanNoticeBase) => `/app/planos/${f.planId}`;
+const planScope = (f: PlanNoticeBase) => ({ kind: "plan" as const, name: f.name });
 
 /** Quem recebe os avisos de uma pessoa do plano: ela mesma, ou quem a acrescentou (pessoa sem celular). Fora do plano: ninguém. */
 export function planLoginOf(f: PlanNoticeBase, id: string): string | null {
@@ -28,7 +27,6 @@ function dedupe(notices: Notice[]): Notice[] {
 /**
  * Depois de uma resposta ou edição: só TRANSIÇÕES entre a conta de antes e a de depois.
  * (a) passou de "não fecha" para "fecha": o criador e quem entrou na conta.
- * (b) passou a ficar acima do limite: a própria pessoa (ou quem a acrescentou), com o limite dela e só dela.
  * Nunca avisa quem fez a ação; sem aviso quando nada mudou para o destinatário.
  */
 export function buildPlanChangeNotices(f: PlanChangeFact): Notice[] {
@@ -45,22 +43,8 @@ export function buildPlanChangeNotices(f: PlanChangeFact): Notice[] {
 		}
 		for (const uid of to) {
 			if (uid === f.actorUid) continue;
-			out.push({ uid, title: "O plano fecha", body: `O plano "${title}" agora fecha: ${formatBRL(f.after.shareCents)} para cada um.`, url });
+			out.push({ uid, title: "O plano fecha", body: `O plano "${title}" agora fecha: ${formatBRL(f.after.shareCents)} para cada um.`, url, scope: planScope(f), amountCents: f.after.shareCents, amountLabel: "Cada um paga" });
 		}
-	}
-	for (const id of f.after.aboveLimitUids) {
-		if (f.before.aboveLimitUids.includes(id)) continue;
-		const uid = planLoginOf(f, id);
-		const limit = f.limits[id];
-		if (!uid || uid === f.actorUid || !limit) continue;
-		const own = uid === id;
-		const who = own ? "o seu limite você entra" : `o limite de ${nameOf(f, id)}, ${nameOf(f, id)} entra`;
-		const k = minPeopleForLimit(f.totalCents, limit, MAX_PLAN_PEOPLE);
-		const body =
-			k === null
-				? `No plano "${title}", ${own ? "o seu limite fica" : `o limite de ${nameOf(f, id)} fica`} abaixo da parte mesmo com o plano cheio. Você pode mudar ${own ? "seu" : "o"} limite.`
-				: `No plano "${title}", com ${who} quando pelo menos ${k} pessoas confirmarem. Você pode esperar ou mudar ${own ? "seu" : "o"} limite.`;
-		out.push({ uid, title: own ? "Acima do seu limite por enquanto" : "Acima do limite por enquanto", body, url });
 	}
 	return dedupe(out);
 }
@@ -71,7 +55,7 @@ export function buildPlanCancelledNotices(f: PlanCancelFact): Notice[] {
 	for (const id of f.goingIds) {
 		const uid = planLoginOf(f, id);
 		if (!uid || uid === f.actorUid) continue;
-		out.push({ uid, title: "Plano cancelado", body: `O plano "${clip(f.name)}" foi cancelado.`, url: planUrl(f) });
+		out.push({ uid, title: "Plano cancelado", body: `O plano "${clip(f.name)}" foi cancelado.`, url: planUrl(f), scope: planScope(f) });
 	}
 	return dedupe(out);
 }
@@ -83,7 +67,22 @@ export function buildPlanClosedNotices(f: PlanClosedFact): Notice[] {
 		const uid = planLoginOf(f, id);
 		if (!uid || uid === f.actorUid) continue;
 		const who = uid === id ? "você" : nameOf(f, id);
-		out.push({ uid, title: "Plano fechado", body: `O plano "${clip(f.name)}" foi fechado sem ${who}.`, url: planUrl(f) });
+		out.push({ uid, title: "Plano fechado", body: `O plano "${clip(f.name)}" foi fechado sem ${who}.`, url: planUrl(f), scope: planScope(f) });
 	}
 	return dedupe(out);
+}
+
+/**
+ * Plano confirmado (grupo criado): o mesmo texto, sem valor, para toda pessoa com login que entrou no grupo (incluídas na divisão,
+ * quem responde por pessoa sem celular e quem pagou). Nunca quem fechou o plano. A despesa nova sai à parte, como sempre.
+ */
+export function buildPlanConfirmedNotices(f: PlanConfirmedFact, ctx: NoticeContext): Notice[] {
+	const g = ctx.group(f.groupId);
+	if (!g) return [];
+	const body = `O plano "${clip(f.planName)}" está confirmado e o grupo "${clip(f.groupName, 40)}" foi criado. Você já está no grupo.`;
+	return dedupe(
+		g.members
+			.filter((m) => m.kind !== "managed" && m.uid !== f.actorUid)
+			.map((m) => ({ uid: m.uid, title: "Plano confirmado", body, url: `/app/grupos/${f.groupId}`, scope: { kind: "group" as const, name: clip(f.groupName, 40) } })),
+	);
 }

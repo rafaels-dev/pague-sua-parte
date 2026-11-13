@@ -29,7 +29,7 @@ describe("loginOf", () => {
 describe("entrou no grupo", () => {
 	it("avisa só o administrador, nunca quem entrou", () => {
 		const n = buildMemberJoinedNotices({ groupId: G, groupName: "Família", members, joinerUid: "bia", joinerName: "Bia" });
-		expect(n).toEqual([{ uid: "adm", title: "Alguém entrou no grupo", body: "Bia entrou no grupo Família.", url: `/app/grupos/${G}` }]);
+		expect(n).toEqual([{ uid: "adm", title: "Alguém entrou no grupo", body: "Bia entrou no grupo Família.", url: `/app/grupos/${G}`, scope: { kind: "group", name: "Família" } }]);
 		expect(buildMemberJoinedNotices({ groupId: G, groupName: "F", members, joinerUid: "adm", joinerName: "Admin" })).toEqual([]);
 	});
 });
@@ -88,7 +88,7 @@ describe("pagamentos", () => {
 	});
 	it("o próprio devedor marcando a sua parte (admin) vale como \"pagou\"", () => {
 		const r = buildPaymentNotices([pay({ manual: true, actorUid: "ana", debtorUid: "ana", paidBy: "bia" })], ctx);
-		expect(r).toEqual([{ uid: "bia", title: "Pagamento recebido", body: 'Ana pagou R$ 50,00 em "Mercado" (Família).', url: `/app/grupos/${G}/despesas/${E}` }]);
+		expect(r).toEqual([{ uid: "bia", title: "Pagamento recebido", body: 'Ana pagou R$ 50,00 em "Mercado" (Família).', url: `/app/grupos/${G}/despesas/${E}`, scope: { kind: "group", name: "Família" }, amountCents: 5000, amountLabel: "Valor recebido" }]);
 	});
 	it("lote ao devedor: \"suas\" só quando são dele; quem só cuida lê \"de quem você cuida\"", () => {
 		const f = (debtorUid: string, id: string) => pay({ manual: true, actorUid: "adm", debtorUid, expenseId: id });
@@ -104,7 +104,7 @@ describe("pagamentos", () => {
 			[pay({ amountCents: 5000 }), pay({ expenseId: "e2", amountCents: 4000 }), pay({ expenseId: "e3", amountCents: 3000, debtorUid: "m_vo" })],
 			ctx,
 		);
-		expect(r).toEqual([{ uid: "bia", title: "Pagamento recebido", body: "Ana pagou R$ 120,00 de 3 contas.", url: "/app/receber" }]);
+		expect(r).toEqual([{ uid: "bia", title: "Pagamento recebido", body: "Ana pagou R$ 120,00 de 3 contas.", url: "/app/receber", scope: { kind: "group", name: "Família" }, amountCents: 12000, amountLabel: "Total recebido" }]);
 	});
 	it("devolução: avisa quem recebe (ou quem cuida)", () => {
 		expect(buildPaymentNotices([pay({ kind: "refund", paidBy: "ana", debtorUid: "bia", actorUid: "ana" })], ctx)[0]).toMatchObject({
@@ -179,6 +179,6 @@ describe("despesa nova", () => {
 	});
 	it("edição: quem entrou recebe o aviso de inclusão", () => {
 		const r = buildNewExpenseNotices(exp({ actorUid: "bia", shares: [{ uid: "adm", amountCents: 5000 }] }), "added", ctx);
-		expect(r).toEqual([{ uid: "adm", title: "Você entrou numa despesa", body: 'Bia incluiu você em "Luz" no grupo Família. Sua parte: R$ 50,00', url: `/app/grupos/${G}/despesas/${E}` }]);
+		expect(r).toEqual([{ uid: "adm", title: "Você entrou numa despesa", body: 'Bia incluiu você em "Luz" no grupo Família. Sua parte: R$ 50,00', url: `/app/grupos/${G}/despesas/${E}`, scope: { kind: "group", name: "Família" }, amountCents: 5000, amountLabel: "Sua parte" }]);
 	});
 });

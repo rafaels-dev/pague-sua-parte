@@ -1,7 +1,24 @@
 import type { MemberLike } from "@/lib/groups/helpers";
 
 /** Uma mensagem para uma pessoa com login. Nunca leva chave Pix. `url` é relativo ao app. */
-export type Notice = { uid: string; title: string; body: string; url: string };
+export type Notice = {
+	uid: string;
+	title: string;
+	body: string;
+	url: string;
+	/** Só para vestir o e-mail (rodapé "porque você participa de..."). Nunca vai no push. */
+	scope?: { kind: "group" | "plan" | "account"; name: string };
+	/** Valor em destaque no e-mail, em centavos. */
+	amountCents?: number;
+	/** Legenda do valor ("Sua parte em cada parcela"...). Sem ela, o e-mail não mostra a caixa de valor. */
+	amountLabel?: string;
+	/** Só e-mail: o push ignora este aviso (boas-vindas). */
+	emailOnly?: boolean;
+	/** Lista curta de itens (boas-vindas), só no e-mail. */
+	list?: string[];
+	/** Frase de "próximo passo" depois da lista, só no e-mail. */
+	next?: string;
+};
 
 export type GroupInfo = { name: string; members: (MemberLike & { name?: string })[] };
 
@@ -65,9 +82,9 @@ export type PlanSnapshot = {
 	fits: boolean;
 	shareCents: number | null;
 	includedUids: string[];
-	aboveLimitUids: string[];
-	shareIfIncluded: Record<string, number>;
 };
-export type PlanChangeFact = PlanNoticeBase & { before: PlanSnapshot; after: PlanSnapshot; limits: Record<string, number> };
+export type PlanChangeFact = PlanNoticeBase & { before: PlanSnapshot; after: PlanSnapshot };
+/** Plano fechado com sucesso: o grupo criado por `closePlan`. Sem valor, sem limite de ninguém, sem Pix. */
+export type PlanConfirmedFact = { planName: string; groupName: string; groupId: string; actorUid: string };
 export type PlanCancelFact = PlanNoticeBase & { goingIds: string[] };
 export type PlanClosedFact = PlanNoticeBase & { leftOutIds: string[] };

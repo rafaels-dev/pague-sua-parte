@@ -1,8 +1,6 @@
+import { oneLine } from "./email-content";
+import { renderNoticeEmail } from "./email-template";
 import type { Notice } from "./types";
-
-export function escapeHtml(s: string): string {
-	return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-}
 
 /** Endereço público do app (links dos e-mails). `APP_URL` no ambiente; sem ela, produção e desenvolvimento têm um padrão. */
 export function appBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
@@ -10,28 +8,11 @@ export function appBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
 	return raw.replace(/\/+$/, "");
 }
 
-const FOOTER = "Para parar de receber, abra Perfil > Avisos.";
-
-export function buildEmail(notice: Pick<Notice, "title" | "body" | "url">, baseUrl: string): { subject: string; html: string; text: string } {
-	const link = `${baseUrl}${notice.url.startsWith("/") ? notice.url : `/${notice.url}`}`;
-	const title = escapeHtml(notice.title);
-	const body = escapeHtml(notice.body);
-	const html = `<!doctype html><html lang="pt-BR"><body style="margin:0;padding:24px;background:#f5fbf8;font-family:Arial,Helvetica,sans-serif;color:#161d1b">
-<div style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:16px;padding:24px">
-<h1 style="margin:0 0 12px;font-size:20px">${title}</h1>
-<p style="margin:0 0 24px;font-size:16px;line-height:1.5">${body}</p>
-<p style="margin:0 0 24px"><a href="${escapeHtml(link)}" style="display:inline-block;background:#006b5b;color:#ffffff;text-decoration:none;font-size:16px;font-weight:bold;padding:14px 24px;border-radius:999px">Abrir o PagueSuaParte</a></p>
-<p style="margin:0;font-size:13px;color:#5a6360">${escapeHtml(FOOTER)}</p>
-</div></body></html>`;
-	const text = `${notice.title}\n\n${notice.body}\n\nAbrir: ${link}\n\n${FOOTER}\n`;
-	return { subject: notice.title, html, text };
-}
-
 export class EmailError extends Error {
 	constructor(
 		message: string,
 		public readonly status: number,
-		/** Segundos pedidos pelo serviço em `Retry-After` (429). */
+		/** Segundos até poder tentar de novo (429), vindos de `X-RateLimit-Reset`/`Retry-After`. */
 		public readonly retryAfter?: number,
 	) {
 		super(message);
@@ -39,23 +20,58 @@ export class EmailError extends Error {
 	}
 }
 
-/** Envia por Resend (fetch direto). Sem `RESEND_API_KEY`/`EMAIL_FROM`, não faz nada. Devolve se enviou. */
-export async function sendEmail(to: string, notice: Notice, env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
-	const key = env.RESEND_API_KEY;
-	const from = env.EMAIL_FROM;
-	if (!key || !from) return false;
-	const { subject, html, text } = buildEmail(notice, appBaseUrl(env));
-	const res = await fetch("https://api.resend.com/emails", {
+export type RenderedEmail = Awaited<ReturnType<typeof renderNoticeEmail>>;
+
+/** Renderiza uma vez (quem tenta de novo depois de um 429 passa o resultado a `sendEmail`). */
+export const renderEmail = (notice: Notice, env: NodeJS.ProcessEnv = process.env): Promise<RenderedEmail> => renderNoticeEmail(notice, appBaseUrl(env));
+
+/** Nome de domínio válido (letras, números e hífens em rótulos separados por ponto): vai para o caminho da URL. */
+const DOMAIN_RE = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i;
+export const isValidMailDomain = (d: string | undefined): d is string => typeof d === "string" && DOMAIN_RE.test(d);
+
+/** Só dois endereços da API do Mailgun; nunca um host vindo de variável. `MAILGUN_REGION=eu` escolhe a Europa, qualquer outro valor, os EUA. */
+export function mailgunBase(env: NodeJS.ProcessEnv = process.env): string {
+	return env.MAILGUN_REGION?.trim().toLowerCase() === "eu" ? "https://api.eu.mailgun.net" : "https://api.mailgun.net";
+}
+
+function rateLimitWait(res: Response): number | undefined {
+	const reset = Number(res.headers.get("x-ratelimit-reset")); // Mailgun: milissegundos Unix
+	if (Number.isFinite(reset) && reset > 1e12) {
+		const s = Math.ceil((reset - Date.now()) / 1000);
+		if (s > 0) return s;
+	}
+	const retry = Number(res.headers.get("retry-after"));
+	return Number.isFinite(retry) && retry > 0 ? retry : undefined;
+}
+
+/**
+ * Envia pela API HTTP do Mailgun (fetch direto, sem SDK). Sem chave, domínio válido e remetente, não faz nada. Devolve se enviou.
+ * Corpo em formulário (`URLSearchParams` cuida de acentos, emoji, `&`, `=`); chave só no cabeçalho `Authorization`.
+ * Rastreio de abertura e de clique desligado no próprio envio.
+ */
+export async function sendEmail(to: string, notice: Notice, env: NodeJS.ProcessEnv = process.env, rendered?: RenderedEmail): Promise<boolean> {
+	if (!emailConfigured(env)) return false;
+	const key = env.MAILGUN_SENDING_KEY as string;
+	const domain = env.MAILGUN_DOMAIN as string;
+	const { subject, html, text } = rendered ?? (await renderEmail(notice, env));
+	const form = new URLSearchParams({
+		from: oneLine(env.EMAIL_FROM as string),
+		to: oneLine(to),
+		subject: oneLine(subject),
+		html,
+		text,
+		"o:tracking": "no",
+		"o:tracking-opens": "no",
+		"o:tracking-clicks": "no",
+	});
+	const res = await fetch(`${mailgunBase(env)}/v3/${domain}/messages`, {
 		method: "POST",
-		headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-		body: JSON.stringify({ from, to: [to], subject, html, text }),
+		headers: { Authorization: `Basic ${Buffer.from(`api:${key}`).toString("base64")}`, "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" },
+		body: form.toString(),
 		signal: AbortSignal.timeout(8000),
 	});
-	if (!res.ok) {
-		const wait = Number(res.headers.get("retry-after"));
-		throw new EmailError(`Resend respondeu ${res.status}`, res.status, Number.isFinite(wait) && wait > 0 ? wait : undefined);
-	}
+	if (!res.ok) throw new EmailError(`Mailgun respondeu ${res.status}`, res.status, res.status === 429 ? rateLimitWait(res) : undefined);
 	return true;
 }
 
-export const emailConfigured = (env: NodeJS.ProcessEnv = process.env) => Boolean(env.RESEND_API_KEY && env.EMAIL_FROM);
+export const emailConfigured = (env: NodeJS.ProcessEnv = process.env) => Boolean(env.MAILGUN_SENDING_KEY && isValidMailDomain(env.MAILGUN_DOMAIN) && env.EMAIL_FROM);

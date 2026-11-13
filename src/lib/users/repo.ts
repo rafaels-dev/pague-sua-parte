@@ -1,5 +1,6 @@
 import type { Db } from "mongodb";
 import type { AuthUser } from "@/lib/auth/server";
+import { afterWelcome } from "@/lib/notifications/welcome";
 import type { PixKey } from "@/lib/pix/key";
 
 export type UserDoc = {
@@ -29,11 +30,15 @@ export async function upsertFromAuth(db: Db, user: AuthUser): Promise<UserDoc> {
 	if (user.picture) $set.picture = user.picture;
 	else update.$unset = { picture: "" };
 
-	const doc = await usersCollection(db).findOneAndUpdate({ _id: user.uid }, update, {
+	// `lastErrorObject.upserted` só existe para quem de fato inseriu: pedidos simultâneos do primeiro login têm um único vencedor.
+	const res = await usersCollection(db).findOneAndUpdate({ _id: user.uid }, update, {
 		upsert: true,
 		returnDocument: "after",
+		includeResultMetadata: true,
 	});
+	const doc = res?.value;
 	if (!doc) throw new Error("Falha ao gravar o usuário.");
+	if (res.lastErrorObject?.upserted !== undefined) afterWelcome({ uid: doc._id, name: doc.name, displayName: doc.displayName }); // conta nova: boas-vindas uma única vez
 	return doc;
 }
 

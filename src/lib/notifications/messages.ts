@@ -10,6 +10,14 @@ function debtorBatch(fs: PaymentFact[], recipient: string, n: number, actor: str
 	return `${actor} marcou ${n} partes como pagas (suas e de quem você cuida).`;
 }
 
+/** Legenda do valor em destaque no e-mail, conforme o que o texto do aviso diz. */
+function payLabel(type: PayType, batch: boolean, partial: boolean): string {
+	if (partial) return "Valor pago agora";
+	if (type === "refund") return batch ? "Total devolvido" : "Valor devolvido";
+	if (type === "paid") return batch ? "Total recebido" : "Valor recebido";
+	return batch ? "Total pago" : "Valor pago";
+}
+
 const clip = (s: string, max = 60) => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
 
 /** A pessoa com login que recebe os avisos de `uid`: ele mesmo, ou quem cuida dele. Fora do grupo: ninguém. */
@@ -52,6 +60,7 @@ export function buildMemberJoinedNotices(args: {
 			title: "Alguém entrou no grupo",
 			body: `${args.joinerName} entrou no grupo ${clip(args.groupName)}.`,
 			url: `/app/grupos/${args.groupId}`,
+			scope: { kind: "group" as const, name: args.groupName },
 		})),
 	);
 }
@@ -147,7 +156,10 @@ export function buildPaymentNotices(facts: PaymentFact[], ctx: NoticeContext): N
 			url = b.type === "debtor" ? "/app/pagar" : "/app/receber";
 		}
 		const partial = fs.length === 1 && fs[0].partial && b.type !== "refund";
-		out.push({ uid: b.uid, title: partial ? "Pagamento parcial" : PAY_TITLES[b.type], body, url });
+		// Lote de grupos diferentes: sem nome de grupo no rodapé do e-mail.
+		const sameGroup = fs.every((f) => f.groupId === fs[0].groupId);
+		const scope = sameGroup ? { kind: "group" as const, name: ctx.group(fs[0].groupId)?.name ?? "" } : undefined;
+		out.push({ uid: b.uid, title: partial ? "Pagamento parcial" : PAY_TITLES[b.type], body, url, ...(scope?.name ? { scope } : {}), amountCents: fs.reduce((t, f) => t + f.amountCents, 0), amountLabel: payLabel(b.type, fs.length > 1, Boolean(partial)) });
 	}
 	return dedupe(out);
 }
@@ -203,7 +215,7 @@ export function buildNewExpenseNotices(f: NewExpenseFact, mode: NewExpenseMode, 
 		if (r === onBehalf) {
 			// Quem cuida do pagador (pessoa sem login) precisa ler de quem é a despesa.
 			const whose = r === f.paidBy ? "em seu nome" : `em nome de ${ctx.name(f.groupId, f.paidBy)}`;
-			out.push({ uid: r, title: r === f.paidBy ? "Despesa lançada em seu nome" : "Despesa lançada em nome de quem você cuida", body: `${actor} lançou uma despesa ${whose}: ${desc}${f.installmentsDiffer ? "" : `, ${formatBRL(f.amountCents)}`}.${part}`, url });
+			out.push({ uid: r, title: r === f.paidBy ? "Despesa lançada em seu nome" : "Despesa lançada em nome de quem você cuida", body: `${actor} lançou uma despesa ${whose}: ${desc}${f.installmentsDiffer ? "" : `, ${formatBRL(f.amountCents)}`}.${part}`, url, scope: { kind: "group", name: g.name }, ...(p ? { amountCents: p.cents, amountLabel: label } : {}) });
 			continue;
 		}
 		const base =
@@ -212,7 +224,7 @@ export function buildNewExpenseNotices(f: NewExpenseFact, mode: NewExpenseMode, 
 				: mode === "added"
 					? `${actor} incluiu ${p?.others ? "quem você cuida" : "você"} em ${desc} no grupo ${group}.`
 					: `${actor} lançou ${desc}${f.installments ? ` em ${f.installments} parcelas` : ""} no grupo ${group}.`;
-		out.push({ uid: r, title: TITLES[mode], body: `${base}${part}`, url });
+		out.push({ uid: r, title: TITLES[mode], body: `${base}${part}`, url, scope: { kind: "group", name: g.name }, ...(p ? { amountCents: p.cents, amountLabel: label } : {}) });
 	}
 	return dedupe(out);
 }

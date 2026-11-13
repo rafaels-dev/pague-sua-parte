@@ -16,14 +16,12 @@ export function noticeBase(doc: PlanDoc, actorUid: string): PlanNoticeBase {
 
 export function snapshotOf(doc: PlanDoc): PlanSnapshot {
 	const c = computeFor(doc);
-	return { fits: c.fits, shareCents: c.shareCents, includedUids: c.includedUids, aboveLimitUids: c.aboveLimitUids, shareIfIncluded: c.shareIfIncluded };
+	return { fits: c.fits, shareCents: c.shareCents, includedUids: c.includedUids };
 }
 
 /** Antes e depois de uma gravação: os avisos olham só as transições entre os dois. */
 export function changeFact(before: PlanDoc, after: PlanDoc, actorUid: string): PlanChangeFact {
-	const limits: Record<string, number> = {};
-	for (const r of after.responses) if (r.going && r.limitCents) limits[r.who] = r.limitCents;
-	return { ...noticeBase(after, actorUid), before: snapshotOf(before), after: snapshotOf(after), limits };
+	return { ...noticeBase(after, actorUid), before: snapshotOf(before), after: snapshotOf(after) };
 }
 
 export const goingIdsOf = (doc: PlanDoc): string[] => computeFor(doc).goingUids;

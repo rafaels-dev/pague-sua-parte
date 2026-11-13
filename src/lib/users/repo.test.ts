@@ -2,8 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import type { Db } from "mongodb";
 import { updateNotifyPrefs, updateProfile, upsertFromAuth } from "./repo";
 
-function mockDb(result: unknown) {
-	const findOneAndUpdate = vi.fn().mockResolvedValue(result);
+const welcome = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/notifications/welcome", () => ({ afterWelcome: welcome }));
+
+/** `meta` imita `lastErrorObject` do driver; `inserted` = o upsert criou o documento. */
+function mockDb(result: unknown, inserted = false) {
+	const findOneAndUpdate = vi.fn().mockImplementation(async (_f, u) => (u.$set ? { value: result, lastErrorObject: inserted ? { updatedExisting: false, upserted: "u1" } : { updatedExisting: true } } : result));
 	const collection = vi.fn().mockReturnValue({ findOneAndUpdate });
 	return { db: { collection } as unknown as Db, findOneAndUpdate, collection };
 }
@@ -32,6 +36,19 @@ describe("upsertFromAuth", () => {
 		const update = findOneAndUpdate.mock.calls[0][1];
 		expect(update.$set).not.toHaveProperty("picture");
 		expect(update.$unset).toEqual({ picture: "" });
+	});
+	it("boas-vindas só quando o upsert INSERIU a conta (nunca para conta que já existe)", async () => {
+		welcome.mockClear();
+		await upsertFromAuth(mockDb({ _id: "u1", name: "Ana" }, false).db, authUser);
+		expect(welcome).not.toHaveBeenCalled();
+		await upsertFromAuth(mockDb({ _id: "u1", name: "Ana" }, true).db, authUser);
+		expect(welcome).toHaveBeenCalledTimes(1);
+		expect(welcome).toHaveBeenCalledWith({ uid: "u1", name: "Ana", displayName: undefined });
+	});
+	it("pede o resultado com metadados (é ele que diz quem inseriu)", async () => {
+		const { db, findOneAndUpdate } = mockDb({ _id: "u1" });
+		await upsertFromAuth(db, authUser);
+		expect(findOneAndUpdate.mock.calls[0][2]).toMatchObject({ includeResultMetadata: true });
 	});
 	it("falha se nada voltar", async () => {
 		const { db } = mockDb(null);

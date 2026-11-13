@@ -1,12 +1,12 @@
 import type { Db } from "mongodb";
 import { describeError } from "@/lib/api/http";
-import { EmailError, emailConfigured, sendEmail } from "./email";
+import { EmailError, emailConfigured, renderEmail, sendEmail } from "./email";
 import { normalizeNotifyPrefs } from "./prefs";
 import { pushConfigured, sendPush } from "./push";
 import { removeEndpoints, subscriptionsCollection } from "./subscriptions";
 import type { Notice } from "./types";
 
-/** O Resend limita a poucas requisições por segundo: no máximo 2 e-mails ao mesmo tempo. */
+/** Poucos envios ao mesmo tempo: no máximo 2 e-mails em paralelo (o Mailgun aceita muito mais; é só cautela). */
 export const EMAIL_CONCURRENCY = 2;
 /** Tempo total que o envio pode gastar (inclui a espera da nova tentativa). */
 export const EMAIL_BUDGET_MS = 20_000;
@@ -63,9 +63,16 @@ export async function notify(db: Db, notices: Notice[]): Promise<void> {
 			const prefs = normalizeNotifyPrefs(u.notify);
 			if (wantEmail && prefs.email && u.email && u.emailVerified === true) {
 				const to = u.email;
-				emailTasks.push(() => sendEmailWithRetry(() => sendEmail(to, n), deadline).catch((e) => console.error("notify email error:", describeError(e))));
+				emailTasks.push(async () => {
+					try {
+						const rendered = await renderEmail(n); // uma vez só, mesmo que o envio precise de nova tentativa
+						await sendEmailWithRetry(() => sendEmail(to, n, process.env, rendered), deadline);
+					} catch (e) {
+						console.error("notify email error:", describeError(e));
+					}
+				});
 			}
-			if (wantPush && prefs.push) {
+			if (wantPush && prefs.push && !n.emailOnly) {
 				for (const s of subs.get(n.uid) ?? []) {
 					pushJobs.push(
 						sendPush(s, n)

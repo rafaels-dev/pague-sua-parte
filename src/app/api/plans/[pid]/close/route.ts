@@ -4,7 +4,7 @@ import { getDb } from "@/lib/db/client";
 import { closePlan } from "@/lib/plans/close";
 import { noticeBase } from "@/lib/plans/facts";
 import { PLAN_NOT_FOUND } from "@/lib/plans/http";
-import { afterNewExpenses, afterPlanClosed } from "@/lib/notifications/events";
+import { afterPlanClosed, afterPlanConfirmed } from "@/lib/notifications/events";
 import { getAttachmentStore } from "@/lib/storage/attachments";
 
 export const dynamic = "force-dynamic";
@@ -39,7 +39,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ pid
 					"pixKey",
 				);
 			case "ok":
-				afterNewExpenses(r.newExpense && [r.newExpense], "created");
+				afterPlanConfirmed({ planName: r.doc.name, groupName: r.doc.groupName ?? r.doc.name, groupId: r.groupId, actorUid: user.uid }, r.newExpense);
 				afterPlanClosed({ ...noticeBase(r.doc, user.uid), leftOutIds: r.notChosenGoing });
 				return Response.json({ groupId: r.groupId, expenseId: r.expenseId }, { status: 201 });
 		}

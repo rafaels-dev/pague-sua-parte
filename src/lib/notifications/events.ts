@@ -4,10 +4,10 @@ import { isManagedUid } from "@/lib/groups/helpers";
 import type { GroupDoc } from "@/lib/groups/repo";
 import { usersCollection } from "@/lib/users/repo";
 import { buildMemberJoinedNotices, buildNewExpenseNotices, buildPaymentNotices } from "./messages";
-import { buildPlanCancelledNotices, buildPlanChangeNotices, buildPlanClosedNotices } from "./plan-messages";
+import { buildPlanCancelledNotices, buildPlanChangeNotices, buildPlanClosedNotices, buildPlanConfirmedNotices } from "./plan-messages";
 import { notify } from "./notify";
 import { runAfterResponse } from "./schedule";
-import type { GroupInfo, NewExpenseFact, NewExpenseMode, NoticeContext, PaymentFact, PlanCancelFact, PlanChangeFact, PlanClosedFact } from "./types";
+import type { GroupInfo, NewExpenseFact, NewExpenseMode, NoticeContext, PaymentFact, PlanCancelFact, PlanChangeFact, PlanClosedFact, PlanConfirmedFact } from "./types";
 
 type GroupRow = Pick<GroupDoc, "_id" | "name" | "members">;
 
@@ -45,6 +45,11 @@ export async function notifyMemberJoined(db: Db, groupId: string, joinerUid: str
 	await notify(db, buildMemberJoinedNotices({ groupId, groupName: g.name, members: g.members, joinerUid, joinerName: ctx.name(groupId, joinerUid) }));
 }
 
+export async function notifyPlanConfirmed(db: Db, f: PlanConfirmedFact): Promise<void> {
+	const ctx = await loadContext(db, [f.groupId], [f.actorUid]);
+	await notify(db, buildPlanConfirmedNotices(f, ctx));
+}
+
 export async function notifyPayments(db: Db, facts: PaymentFact[]): Promise<void> {
 	if (facts.length === 0) return;
 	const ctx = await loadContext(db, facts.map((f) => f.groupId), facts.flatMap((f) => [f.actorUid, f.paidBy, f.debtorUid]));
@@ -71,3 +76,10 @@ export const afterNewExpenses = (facts: NewExpenseFact[] | undefined, mode: NewE
 export const afterPlanChange = (f: PlanChangeFact) => runAfterResponse(async () => notify(await getDb(), buildPlanChangeNotices(f)));
 export const afterPlanCancelled = (f: PlanCancelFact) => runAfterResponse(async () => notify(await getDb(), buildPlanCancelledNotices(f)));
 export const afterPlanClosed = (f: PlanClosedFact) => runAfterResponse(async () => notify(await getDb(), buildPlanClosedNotices(f)));
+/** Plano fechado: primeiro "Plano confirmado" (grupo criado), depois o "Nova despesa" de sempre, em sequência. */
+export const afterPlanConfirmed = (f: PlanConfirmedFact, expense: NewExpenseFact | undefined) =>
+	runAfterResponse(async () => {
+		const db = await getDb();
+		await notifyPlanConfirmed(db, f);
+		if (expense) await notifyNewExpenses(db, [expense], "created");
+	});

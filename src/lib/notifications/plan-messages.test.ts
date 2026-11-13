@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildPlanCancelledNotices, buildPlanChangeNotices, buildPlanClosedNotices, planLoginOf } from "./plan-messages";
-import type { PlanChangeFact, PlanNoticeBase, PlanSnapshot } from "./types";
+import { buildPlanCancelledNotices, buildPlanChangeNotices, buildPlanClosedNotices, buildPlanConfirmedNotices, planLoginOf } from "./plan-messages";
+import type { NoticeContext, PlanChangeFact, PlanNoticeBase, PlanSnapshot } from "./types";
 
 const base: PlanNoticeBase = {
 	planId: "p1",
@@ -11,8 +11,8 @@ const base: PlanNoticeBase = {
 	participants: ["cri", "ana", "bia"],
 	guests: [{ id: "pg_1", name: "Benjamim", addedBy: "bia" }],
 };
-const snap = (o: Partial<PlanSnapshot> = {}): PlanSnapshot => ({ fits: false, shareCents: null, includedUids: [], aboveLimitUids: [], shareIfIncluded: {}, ...o });
-const change = (o: Partial<PlanChangeFact>): PlanChangeFact => ({ ...base, before: snap(), after: snap(), limits: {}, ...o });
+const snap = (o: Partial<PlanSnapshot> = {}): PlanSnapshot => ({ fits: false, shareCents: null, includedUids: [], ...o });
+const change = (o: Partial<PlanChangeFact>): PlanChangeFact => ({ ...base, before: snap(), after: snap(), ...o });
 
 describe("planLoginOf", () => {
 	it("participante é ele mesmo; pessoa sem celular vira quem a acrescentou; fora do plano, ninguém", () => {
@@ -33,51 +33,13 @@ describe("avisos de mudança", () => {
 		const s = snap({ fits: true, shareCents: 100, includedUids: ["cri"] });
 		expect(buildPlanChangeNotices(change({ before: s, after: { ...s, shareCents: 90 } }))).toEqual([]);
 	});
-	it("passou a ficar acima do limite: só ela, com o limite dela", () => {
-		const n = buildPlanChangeNotices(
-			change({
-				actorUid: "cri",
-				before: snap({ fits: true, shareCents: 25000, includedUids: ["cri", "ana"] }),
-				after: snap({ fits: true, shareCents: 25000, includedUids: ["cri", "ana"], aboveLimitUids: ["ana"], shareIfIncluded: { ana: 27778 } }),
-				limits: { ana: 25000, cri: 99999 },
-			}),
-		);
-		expect(n).toEqual([
-			{ uid: "ana", title: "Acima do seu limite por enquanto", body: 'No plano "Hotel", com o seu limite você entra quando pelo menos 10 pessoas confirmarem. Você pode esperar ou mudar seu limite.', url: "/app/planos/p1" },
-		]);
+	it("nunca avisa quem fez a ação", () => {
+		const n = buildPlanChangeNotices(change({ actorUid: "ana", after: snap({ fits: true, shareCents: 25000, includedUids: ["cri", "ana"] }) }));
+		expect(n.map((x) => x.uid)).toEqual(["cri"]);
 	});
-	it("limite que não cabe nem com o plano cheio", () => {
-		const n = buildPlanChangeNotices(change({ actorUid: "cri", after: snap({ aboveLimitUids: ["ana"] }), limits: { ana: 100 } }));
-		expect(n[0].body).toBe('No plano "Hotel", o seu limite fica abaixo da parte mesmo com o plano cheio. Você pode mudar seu limite.');
-	});
-	it("quem já estava acima do limite não é avisado de novo", () => {
-		const s = snap({ aboveLimitUids: ["ana"], shareIfIncluded: { ana: 100 } });
-		expect(buildPlanChangeNotices(change({ actorUid: "cri", before: s, after: s, limits: { ana: 50 } }))).toEqual([]);
-	});
-	it("nunca avisa quem fez a ação (nem do próprio limite)", () => {
-		const n = buildPlanChangeNotices(change({ actorUid: "ana", after: snap({ aboveLimitUids: ["ana"], shareIfIncluded: { ana: 100 } }), limits: { ana: 50 } }));
-		expect(n).toEqual([]);
-	});
-	it("pessoa sem celular acima do limite: avisa quem a acrescentou, com o nome", () => {
-		const [n, ...rest] = buildPlanChangeNotices(change({ after: snap({ aboveLimitUids: ["pg_1"], shareIfIncluded: { pg_1: 30000 } }), limits: { pg_1: 20000 } }));
-		expect(rest).toEqual([]);
-		expect(n.uid).toBe("bia");
-		expect(n.title).toBe("Acima do limite por enquanto");
-		expect(n.body).toBe('No plano "Hotel", com o limite de Benjamim, Benjamim entra quando pelo menos 13 pessoas confirmarem. Você pode esperar ou mudar o limite.');
-	});
-	it("o limite de uma pessoa nunca aparece no aviso de outra", () => {
-		const n = buildPlanChangeNotices(
-			change({
-				before: snap(),
-				after: snap({ fits: true, shareCents: 25000, includedUids: ["cri", "bia"], aboveLimitUids: ["ana"], shareIfIncluded: { ana: 27778 } }),
-				limits: { ana: 12345, bia: 54321 },
-			}),
-		);
-		for (const x of n.filter((y) => y.uid !== "ana")) expect(x.body).not.toMatch(/123,45|543,21/);
-		expect(n.find((x) => x.uid === "ana")).toBeUndefined(); // ana é quem agiu
-	});
-	it("sem limite conhecido, não inventa aviso", () => {
-		expect(buildPlanChangeNotices(change({ actorUid: "cri", after: snap({ aboveLimitUids: ["ana"], shareIfIncluded: { ana: 100 } }) }))).toEqual([]);
+	it("não existe mais aviso de limite: ficar acima do limite não gera nada", () => {
+		const s = snap({ fits: true, shareCents: 25000, includedUids: ["cri", "ana"] });
+		expect(buildPlanChangeNotices(change({ actorUid: "cri", before: s, after: s }))).toEqual([]);
 	});
 });
 
@@ -97,4 +59,27 @@ describe("plano cancelado e fechado", () => {
 		const n = buildPlanCancelledNotices({ ...base, name: "x".repeat(100), actorUid: "cri", goingIds: ["ana"] });
 		expect(n[0].body.length).toBeLessThan(90);
 	});
+});
+
+describe("plano confirmado (grupo criado)", () => {
+	const members = [
+		{ uid: "cri", role: "admin" as const },
+		{ uid: "ana", role: "member" as const },
+		{ uid: "bia", role: "member" as const },
+		{ uid: "m_ben", role: "member" as const, kind: "managed" as const, managedBy: "bia" },
+	];
+	const ctx: NoticeContext = { group: (id) => (id === "g1" ? { name: "Hotel", members } : undefined), name: (_g, u) => u };
+	const fact = { planName: "Hotel", groupName: "Hotel de verão", groupId: "g1", actorUid: "cri" };
+	it("todas as pessoas com login do grupo, menos quem fechou; um aviso por pessoa; sem valor", () => {
+		const n = buildPlanConfirmedNotices(fact, ctx);
+		expect(n.map((x) => x.uid).sort()).toEqual(["ana", "bia"]);
+		expect(n[0]).toEqual({
+			uid: "ana",
+			title: "Plano confirmado",
+			body: 'O plano "Hotel" está confirmado e o grupo "Hotel de verão" foi criado. Você já está no grupo.',
+			url: "/app/grupos/g1",
+			scope: { kind: "group", name: "Hotel de verão" },
+		});
+	});
+	it("grupo desconhecido: nenhum aviso", () => expect(buildPlanConfirmedNotices({ ...fact, groupId: "outro" }, ctx)).toEqual([]));
 });

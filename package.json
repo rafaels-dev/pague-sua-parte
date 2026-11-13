@@ -12,6 +12,12 @@
     "db:migrate-shares": "node --env-file=.env.local scripts/migrate-shares.mjs"
   },
   "dependencies": {
+    "@react-email/button": "^0.2.1",
+    "@react-email/head": "^0.0.13",
+    "@react-email/html": "^0.0.12",
+    "@react-email/img": "^0.0.12",
+    "@react-email/preview": "^0.0.14",
+    "@react-email/render": "^2.3.1",
     "@vercel/functions": "^3.11.1",
     "aws4fetch": "^1.0.20",
     "firebase": "^13.2.0",
