@@ -1,6 +1,6 @@
 import { ObjectId } from "mongodb";
 import { describe, expect, it, vi } from "vitest";
-import { seenCutoff, markSeen, startInbox, waitInbox, countUnseen, isInboxId, markAllRead, markRead, recordInbox, safeInboxUrl, toInboxDocs, toInboxItem, UNSEEN_CAP } from "./inbox";
+import { listCutoff, seenCutoff, markSeen, startInbox, waitInbox, countUnseen, isInboxId, markAllRead, markRead, recordInbox, safeInboxUrl, toInboxDocs, toInboxItem, UNSEEN_CAP } from "./inbox";
 import type { Notice } from "./types";
 
 const n = (o: Partial<Notice> = {}): Notice => ({ uid: "u1", title: "T", body: "B", url: "/app/grupos/g1", ...o });
@@ -212,5 +212,42 @@ describe("corte do GET", () => {
 		const db = { collection: () => ({ find: () => ({ sort: () => ({ limit: () => ({ toArray: async () => [] }) }) }), countDocuments: async () => 0, findOne: async () => null }) } as never;
 		const now = new Date("2026-11-13T12:00:10Z");
 		expect((await listInbox(db, "u1", undefined, now)).seenUpTo).toBe("2026-11-13T12:00:00.000Z");
+	});
+});
+
+describe("seenUpTo = max(aviso mais novo listado, agora - 10 s), no máximo agora", () => {
+	const now = new Date("2026-11-13T12:00:00.000Z");
+	const at = (msAgo: number) => ({ createdAt: new Date(now.getTime() - msAgo) });
+	it("lista vazia = agora - 10 s", () => expect(listCutoff([], now)).toEqual(new Date("2026-11-13T11:59:50.000Z")));
+	it("mais novo com 5 min = agora - 10 s", () => expect(listCutoff([at(300_000), at(400_000)], now)).toEqual(new Date("2026-11-13T11:59:50.000Z")));
+	it("mais novo há 2 s = o createdAt dele, com milissegundos", () => {
+		const d = { createdAt: new Date("2026-11-13T11:59:58.123Z") };
+		expect(listCutoff([d, at(900_000)], now)).toEqual(d.createdAt);
+		expect(new Date(d.createdAt.toISOString()).getTime()).toBe(d.createdAt.getTime());
+	});
+	it("createdAt no futuro (relógio de outra instância) não passa de agora", () => {
+		expect(listCutoff([{ createdAt: new Date(now.getTime() + 60_000) }], now)).toEqual(now);
+	});
+	it("fim a fim: listado há 2 s fica visto depois do seen; inserido depois do corte conta 1", async () => {
+		const listed = { _id: new ObjectId(), uid: "u1", title: "t", body: "b", url: "/app", createdAt: new Date(now.getTime() - 2_000) };
+		const late = { ...listed, _id: new ObjectId(), createdAt: new Date(now.getTime() + 1) };
+		let seenAt: Date | undefined;
+		const docs = [listed];
+		const db = {
+			collection: (name: string) =>
+				name === "users"
+					? { findOne: async () => ({ inboxSeenAt: seenAt }), updateOne: async (_f: unknown, u: { $set: { inboxSeenAt: Date } }) => void (seenAt = u.$set.inboxSeenAt) }
+					: {
+							find: () => ({ sort: () => ({ limit: () => ({ toArray: async () => docs }) }) }),
+							countDocuments: async (f: { createdAt?: { $gt: Date } }) => docs.filter((d) => !f.createdAt || d.createdAt > f.createdAt.$gt).length,
+						},
+		} as never;
+		const { listInbox } = await import("./inbox");
+		const r = await listInbox(db, "u1", undefined, now);
+		expect(r.unseen).toBe(1);
+		await markSeen(db, "u1", new Date(r.seenUpTo), now);
+		expect(await countUnseen(db, "u1")).toBe(0);
+		docs.push(late);
+		expect(await countUnseen(db, "u1")).toBe(1);
 	});
 });

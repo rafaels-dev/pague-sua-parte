@@ -133,6 +133,17 @@ export async function countUnseen(db: Db, uid: string): Promise<number> {
 }
 
 /**
+ * Corte devolvido pela lista: `max(createdAt do aviso mais novo listado, agora - 10 s)`, nunca maior que agora (relógio de outra instância).
+ * Todo aviso que apareceu na lista conta como visto; a folga protege o insert atrasado quando o mais novo da lista é antigo.
+ * Milissegundos preservados (a contagem usa `createdAt > inboxSeenAt`).
+ */
+export function listCutoff(docs: { createdAt: Date }[], now: Date): Date {
+	const slack = now.getTime() - SEEN_SLACK_MS;
+	const newest = docs.reduce((m, d) => Math.max(m, d.createdAt.getTime()), -Infinity);
+	return new Date(Math.min(now.getTime(), Math.max(newest, slack)));
+}
+
+/**
  * Os mais recentes da própria pessoa, o contador e `seenUpTo`: o instante do servidor ANTES da leitura. O cliente o devolve em `seen`,
  * assim o aviso que chega entre a leitura e o toque nunca é dado como visto sem ter aparecido.
  */
@@ -141,7 +152,7 @@ export async function listInbox(db: Db, uid: string, appUrl?: string, now = new 
 		inboxCollection(db).find({ uid }).sort({ createdAt: -1 }).limit(INBOX_PAGE_SIZE).toArray(),
 		countUnseen(db, uid),
 	]);
-	return { items: docs.map((d) => toInboxItem(d, appUrl)), unseen, seenUpTo: new Date(now.getTime() - SEEN_SLACK_MS).toISOString() };
+	return { items: docs.map((d) => toInboxItem(d, appUrl)), unseen, seenUpTo: listCutoff(docs, now).toISOString() };
 }
 
 /** O corte válido: `min(upTo, agora)`; sem `upTo`, agora. */
