@@ -3,7 +3,9 @@
 import { useState } from "react";
 import { AppShellView } from "@/components/app-shell";
 import { AttachmentPicker } from "@/components/expenses/attachment-picker";
+import { AdvanceContent } from "@/components/expenses/advance-sheet";
 import { OtherAmountContent } from "@/components/expenses/other-amount";
+import type { AdvancePlanData } from "@/lib/ui/advance";
 import { ReceiptSheetContent } from "@/components/expenses/receipt-sheet";
 import { undoPartCentsOf } from "@/lib/ui/partial-pay";
 import type { ReceiptMode } from "@/lib/ui/receipts";
@@ -605,7 +607,7 @@ const ATTACHMENTS: AttachmentView[] = [
 ];
 
 type RawDetail = Omit<ExpenseDetailData, "canHelp" | "helpAsUids" | "helpShareCents" | "ownerAlone" | "canEdit" | "adminOnly" | "launchedBy">;
-export type MockMode = "help-alone" | "help-split" | "helped" | "help-care" | "installment" | "overdue" | "owner-installment" | "monthly" | "cashback" | "cashback-installment" | "batch" | "debtor" | "payer" | "partial" | "refund" | "owner-return" | "recalc" | "two-parts" | "care-paid" | "self-owner" | "self-debtor" | "admin-view" | "admin-launched" | "refund-pay" | "refund-nopix" | "refund-done" | "partial-owner" | "partial-installment";
+export type MockMode = "help-alone" | "help-split" | "helped" | "help-care" | "installment" | "overdue" | "owner-installment" | "monthly" | "cashback" | "cashback-installment" | "batch" | "debtor" | "payer" | "partial" | "refund" | "owner-return" | "recalc" | "two-parts" | "care-paid" | "self-owner" | "self-debtor" | "admin-view" | "admin-launched" | "refund-pay" | "refund-nopix" | "refund-done" | "partial-owner" | "partial-installment" | "advance-start" | "advance-older" | "advance-two-recipients" | "advance-done" | "advance-done-first" | "advance-owner" | "advance-owner-done";
 const isCare = (mode: MockMode) => mode === "two-parts" || mode === "care-paid" || mode === "help-care";
 
 type MS = Partial<ExpenseShare> & Pick<ExpenseShare, "uid" | "name" | "amountCents" | "status">;
@@ -746,6 +748,94 @@ function installmentDetail(mode: "installment" | "overdue" | "partial-installmen
 		series,
 	};
 }
+
+const ADVANCE_BATCH = { totalCents: 34700, count: 4 };
+
+/**
+ * Sofá em 10 parcelas de R$ 200,00 (R$ 100,00 para cada um dos dois). "start": parcela 1, nada pago. "done": depois do adiantamento de
+ * R$ 347,00, vista na parcela 4 (R$ 47,00 pagos, faltam R$ 53,00). "done-first": a parcela 1, já paga pelo adiantamento. "owner": a mesma
+ * compra vista por quem pagou (Rafael); "owner-done": quem pagou vendo a parcela 4.
+ */
+function advanceDetail(mode: "advance-start" | "advance-older" | "advance-two-recipients" | "advance-done" | "advance-done-first" | "advance-owner" | "advance-owner-done"): RawDetail {
+	const after = mode === "advance-done" || mode === "advance-done-first" || mode === "advance-owner-done";
+	const owner = mode === "advance-owner" || mode === "advance-owner-done";
+	const current = mode === "advance-done" || mode === "advance-owner-done" || mode === "advance-older" ? 4 : mode === "advance-two-recipients" ? 3 : 1;
+	const series: ExpenseSeries = {
+		count: 10,
+		items: Array.from({ length: 10 }, (_, i) => ({
+			id: `p${i + 1}`,
+			number: i + 1,
+			dueDate: addMonthsClamped(DUE_NEXT, i),
+			settled: (after && i < 3) || (mode === "advance-older" && i === 0),
+			...(after && i === 3 ? { partial: true } : {}),
+			amountCents: 20000,
+		})),
+	};
+	const debtor = owner ? B : A;
+	const part: ExpenseShare["parts"][number] = { id: "adv4", cents: 4700, at: PAID_AT, method: "self", byAdmin: false, markedByName: null, receipt: PART_RECEIPT, batch: ADVANCE_BATCH };
+	const debtorShare =
+		!after
+			? share({ ...debtor, amountCents: 10000, status: "pending", isYou: !owner })
+			: current === 4
+				? share({ ...debtor, amountCents: 10000, status: "pending", isYou: !owner, paidCents: 4700, dueCents: 5300, parts: [part], canUndoOwnPart: !owner, last: { cents: 4700, method: "self", partial: true } })
+				: share({ ...debtor, amountCents: 10000, status: "paid", isYou: !owner, paidAt: PAID_AT, method: "self", receipt: PART_RECEIPT, batch: ADVANCE_BATCH, canAddReceipt: !owner });
+	const payer = owner ? A : B;
+	const shares = [share({ ...payer, amountCents: 10000, status: "payer", isYou: owner }), debtorShare];
+	return {
+		id: `p${current}`,
+		groupId: "1",
+		description: "Sofá da sala",
+		amountCents: 20000,
+		date: daysAgo(30),
+		createdAt: new Date().toISOString(),
+		canDelete: false,
+		canMarkPaid: owner,
+		canEditParticipants: owner,
+		paidBy: { ...payer, picture: null, isYou: owner, kind: "user", youManage: false },
+		pix: { type: "cpf", key: "52998224725", payeeName: payer.name },
+		attachments: [],
+		shares,
+		participantUids: shares.map((x) => x.uid),
+		dueDate: addMonthsClamped(DUE_NEXT, current - 1),
+		installment: { seriesId: "s1", number: current, count: 10 },
+		recurrence: null,
+		overdue: false,
+		series,
+	};
+}
+
+/** O que o servidor devolveria em "adiantar parcelas": 10 parcelas de R$ 100,00 em aberto para a pessoa, a partir da primeira. */
+const ADVANCE_PLAN: AdvancePlanData = {
+	shareUid: "a",
+	currentNumber: 1,
+	thisDueCents: 10000,
+	totalDueCents: 100000,
+	items: Array.from({ length: 10 }, (_, i) => ({ id: `p${i + 1}`, number: i + 1, dueDate: addMonthsClamped(DUE_NEXT, i), dueCents: 10000 })),
+	recipient: { id: "r_0123456789abcdef01234567", name: "Maria das Dores Silva", pix: { type: "cpf", key: "52998224725", payeeName: "Maria das Dores Silva" } },
+	moreRecipients: false,
+};
+
+/** Parcela 4 aberta na tela, mas as parcelas 2 e 3 também estão em aberto: o dinheiro vai primeiro para a 2. */
+const ADVANCE_PLAN_OLDER: AdvancePlanData = {
+	shareUid: "a",
+	currentNumber: 4,
+	thisDueCents: 10000,
+	totalDueCents: 90000,
+	items: Array.from({ length: 9 }, (_, i) => ({ id: `p${i + 2}`, number: i + 2, dueDate: addMonthsClamped(DUE_NEXT, i + 1), dueCents: 10000 })),
+	recipient: { id: "r_0123456789abcdef01234567", name: "Maria das Dores Silva", pix: { type: "cpf", key: "52998224725", payeeName: "Maria das Dores Silva" } },
+	moreRecipients: false,
+};
+
+/** Parcelas 1 e 2 vão para a Maria; a 3 em diante vão para outra pessoa (José): a folha explica e só oferece as da Maria. */
+const ADVANCE_PLAN_TWO_RECIPIENTS: AdvancePlanData = {
+	shareUid: "a",
+	currentNumber: 3,
+	thisDueCents: 0,
+	totalDueCents: 20000,
+	items: Array.from({ length: 2 }, (_, i) => ({ id: `p${i + 1}`, number: i + 1, dueDate: addMonthsClamped(DUE_NEXT, i), dueCents: 10000 })),
+	recipient: { id: "r_0123456789abcdef01234567", name: "Maria das Dores Silva", pix: { type: "cpf", key: "52998224725", payeeName: "Maria das Dores Silva" } },
+	moreRecipients: true,
+};
 
 /** Compra de R$ 1.000,00 com R$ 50,00 de cashback (à vista) ou parcela 1 de 3 com cashback só na primeira, vista por quem deve. */
 function cashbackDetail(installment: boolean): RawDetail {
@@ -913,6 +1003,7 @@ function detail(mode: MockMode): ExpenseDetailData {
 function rawDetail(mode: MockMode): RawDetail {
 	if (mode === "installment" || mode === "overdue" || mode === "partial-installment") return installmentDetail(mode);
 	if (mode === "owner-installment") return ownerInstallmentDetail();
+	if (mode === "advance-start" || mode === "advance-older" || mode === "advance-two-recipients" || mode === "advance-done" || mode === "advance-done-first" || mode === "advance-owner" || mode === "advance-owner-done") return advanceDetail(mode);
 	if (mode === "monthly") return monthlyDetail();
 	if (mode === "cashback" || mode === "cashback-installment") return cashbackDetail(mode === "cashback-installment");
 	if (isCare(mode)) return careDetail(mode as "two-parts" | "care-paid");
@@ -1070,7 +1161,10 @@ export function MockExpense({
 	summarySheet = false,
 	otherAmount,
 	receivePartial = false,
+	advance,
 }: Readonly<{
+	/** Abre "Adiantar parcelas" ("self" = quem deve; "manual" = quem recebeu) com este valor já digitado (0 = vazio; null = carregando). */
+	advance?: { mode: "self" | "manual"; cents: number | null };
 	mode: MockMode;
 	/** Abre "Pagar outro valor" (da parte do Rafael) com este valor já digitado (0 = vazio). */
 	otherAmount?: number;
@@ -1111,6 +1205,7 @@ export function MockExpense({
 	);
 	const [receiptView, setReceiptView] = useState(false);
 	const [other, setOther] = useState<number | null>(otherAmount ?? null);
+	const [adv, setAdv] = useState<{ mode: "self" | "manual"; cents: number; loading: boolean } | null>(advance ? { mode: advance.mode, cents: advance.cents ?? 0, loading: advance.cents === null } : null);
 	const expense = detail(mode);
 	const members = (isCare(mode) ? CARE_GROUP : MOCK_GROUP).members.map(({ uid, name, picture, isYou, kind }) => ({ uid, name, picture, isYou, kind }));
 	const who = useWhoSplits(members.map((m) => m.uid), resplit ?? expense.participantUids);
@@ -1136,7 +1231,7 @@ export function MockExpense({
 				onShare={() => setShareOpen(true)}
 				onHelp={() => setHelpOpen(true)}
 				onPaid={() => setReceiptOpen("pay")}
-				onOtherAmount={() => setOther(0)}
+				onOtherAmount={() => (expense.installment ? setAdv({ mode: "self", cents: 0, loading: false }) : setOther(0))}
 				onViewPartReceipt={() => setReceiptView(true)}
 				onViewReceipt={() => setReceiptView(true)}
 				onAttachReceipt={() => setReceiptOpen("attach")}
@@ -1157,6 +1252,26 @@ export function MockExpense({
 					onShare={noop}
 					onClose={() => setSummaryOpen(false)}
 				/>
+			</Sheet>
+			<Sheet open={!!adv} onClose={() => setAdv(null)} title={adv?.mode === "manual" ? "Recebi um valor" : "Adiantar parcelas"}>
+				{adv && (
+					<AdvanceContent
+						mode={adv.mode}
+						plan={adv.loading ? null : { ...(mode === "advance-older" ? ADVANCE_PLAN_OLDER : mode === "advance-two-recipients" ? ADVANCE_PLAN_TWO_RECIPIENTS : ADVANCE_PLAN), shareUid: adv.mode === "manual" ? "b" : "a" }}
+						personName={adv.mode === "manual" ? "Maria" : "Rafael"}
+						payeeName={expense.pix?.payeeName ?? ""}
+						cents={adv.cents}
+						hasPix
+						canCopy
+						onCents={(cents) => setAdv({ ...adv, cents })}
+						onCopy={noop}
+						onConfirm={() => {
+							if (adv.mode === "self") setReceiptOpen("pay");
+							setAdv(null);
+						}}
+						onCancel={() => setAdv(null)}
+					/>
+				)}
 			</Sheet>
 			<Sheet open={other !== null} onClose={() => setOther(null)} title="Pagar outro valor">
 				{other !== null && (
@@ -1224,6 +1339,14 @@ export function MockExpense({
 						dueCents={target.dueCents}
 						undoPartCents={action.mode === "pending" ? undoPartCentsOf(target) : undefined}
 						initialPartial={receivePartial}
+						onAdvance={
+							expense.installment && action.mode === "paid"
+								? () => {
+										setAction(null);
+										setAdv({ mode: "manual", cents: 0, loading: false });
+									}
+								: undefined
+						}
 						busy={false}
 						error={null}
 						onConfirm={() => setAction(null)}

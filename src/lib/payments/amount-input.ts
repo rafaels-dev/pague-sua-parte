@@ -34,6 +34,27 @@ export function readPartialRequest(
 	return a === null || e === null ? { ok: false } : { ok: true, amountCents: a, expectedPaidCents: e };
 }
 
+export type AdvanceRequest = { ok: true; shareUid: string; mode: "self" | "manual"; amountCents: number; expectedDueCents: number; recipientId: string } | { ok: false; field: "shareUid" | "mode" | "amountCents" | "expectedDueCents" | "recipientId" };
+
+/**
+ * Lê um pedido de "adiantar parcelas": `shareUid` (texto 1 a 200), `mode` ("self" = paguei, "manual" = recebi), `amountCents` (>= 1)
+ * `expectedDueCents` (>= 0, o total que a tela mostrava faltando) e `recipientId` (quem recebe, como a tela viu). As cinco chaves são obrigatórias; vazio, nulo, decimal,
+ * negativo, texto com sinal/espaço/notação científica ou acima do teto são recusados (nunca viram outro valor).
+ */
+export function readAdvanceRequest(fields: { shareUid?: unknown; mode?: unknown; amountCents?: unknown; expectedDueCents?: unknown; recipientId?: unknown }): AdvanceRequest {
+	const { shareUid, mode } = fields;
+	if (typeof shareUid !== "string" || shareUid.length < 1 || shareUid.length > 200) return { ok: false, field: "shareUid" };
+	if (mode !== "self" && mode !== "manual") return { ok: false, field: "mode" };
+	const amountCents = parseCents(fields.amountCents, 1);
+	if (amountCents === null) return { ok: false, field: "amountCents" };
+	const expectedDueCents = parseCents(fields.expectedDueCents, 0);
+	if (expectedDueCents === null) return { ok: false, field: "expectedDueCents" };
+	// Quem recebe, como a tela o viu (mesmo padrão do Pagar tudo): se a chave Pix ou o destinatário mudou, o servidor recusa.
+	const { recipientId } = fields;
+	if (typeof recipientId !== "string" || !/^r_[0-9a-f]{24}$/.test(recipientId)) return { ok: false, field: "recipientId" };
+	return { ok: true, shareUid, mode, amountCents, expectedDueCents, recipientId };
+}
+
 /** Presença de uma chave num objeto JSON (`null` e vazio contam como presentes). */
 export const hasKey = (obj: unknown, key: string): boolean => !!obj && typeof obj === "object" && Object.hasOwn(obj, key);
 

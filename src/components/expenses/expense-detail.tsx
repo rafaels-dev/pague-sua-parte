@@ -20,6 +20,8 @@ import { RECURRING_CHIP } from "@/lib/ui/recurrences";
 import { isImageType } from "@/lib/ui/attachments";
 import { cashbackDetailLine } from "@/lib/ui/cashback";
 import { installmentShareInfo } from "@/lib/ui/installment-share";
+import { ADVANCE_LINK, advanceDoneMessage, advancePayload, type AdvanceDoneData, type AdvancePlanData } from "@/lib/ui/advance";
+import { ADVANCE_UNCERTAIN, buildAdvanceShareText } from "@/lib/payments/advance";
 import { buildExpenseShareText, buildPaidShareText, shareIntro } from "@/lib/ui/expense-share";
 import { paidByLabel, shareStatusChip } from "@/lib/ui/expense-status";
 import { buildExpenseStatusText, buildRefundShareText, expenseSummaryIntro } from "@/lib/ui/expense-summary";
@@ -32,6 +34,7 @@ import { ExpenseAttachments, type AttachmentView } from "./expense-attachments";
 import { DeleteInstallmentContent, ResplitScopeContent, type InstallmentScope } from "./installment-scope";
 import { InstallmentsSection } from "./installments-section";
 import { ShareExpenseContent } from "./expense-share";
+import { AdvanceContent } from "./advance-sheet";
 import { OtherAmountContent } from "./other-amount";
 import { openBlobInNewTab } from "./open-blob";
 import { ReceiptSheetBody } from "./receipt-sheet";
@@ -165,7 +168,7 @@ function ShareRow({
 				<ul className="ml-16 mt-1 space-y-1 text-sm text-on-surface-variant" aria-label={`Pagamentos de ${s.name}`}>
 					{s.parts.map((p) => (
 						<li key={p.id}>
-							{partLine(p, paidDateLabel(p.at))}
+							{partLine(p, p.at ? paidDateLabel(p.at) : "data não registrada")}
 							{p.receipt && (
 								<>
 									{" · "}
@@ -492,7 +495,8 @@ export function ExpenseDetailView({
 							onCopyKey={onCopyKey}
 							canPay={s.canPay}
 							onPaid={() => onPaid(s.uid)}
-							onOtherAmount={onOtherAmount && s.dueCents > 1 ? () => onOtherAmount(s.uid) : undefined}
+							onOtherAmount={onOtherAmount && (s.dueCents > 1 || expense.installment) ? () => onOtherAmount(s.uid) : undefined}
+							otherLabel={expense.installment ? ADVANCE_LINK : undefined}
 						/>
 					);
 				}
@@ -708,7 +712,10 @@ export function SharePaidContent({
 	onCancel,
 	initialPartial = false,
 	onPartialChange,
+	onAdvance,
 }: Readonly<{
+	/** Compra parcelada com parcelas seguintes em aberto: abre "Recebi um valor" que abate das próximas parcelas. */
+	onAdvance?: () => void;
 	/** Só para as telas de exemplo: "Recebi só uma parte" já aberto. */
 	initialPartial?: boolean;
 	/** Avisa quando "Recebi só uma parte" abre ou fecha (o título da folha muda). */
@@ -758,6 +765,11 @@ export function SharePaidContent({
 					}}
 					className="rounded-sm text-body-large text-primary underline underline-offset-2">
 					Recebi só uma parte
+				</button>
+			)}
+			{marking && onAdvance && !partialOpen && (
+				<button type="button" onClick={onAdvance} className="block rounded-sm text-left text-body-large text-primary underline underline-offset-2">
+					Recebi um valor que passa desta parcela
 				</button>
 			)}
 			{marking && partialOpen && (
@@ -824,7 +836,7 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 	const [qrOpen, setQrOpen] = useState<string | null>(null);
 	const [codeFallback, setCodeFallback] = useState<string | null>(null);
 	// Recém lançada: em vez do recadinho, abrimos o sheet "Avisar o grupo".
-	const [paidNotice, setPaidNotice] = useState<{ amountCents: number; forName: string | null; hasReceipt: boolean; remainingCents?: number; afterParts?: boolean } | null>(null);
+	const [paidNotice, setPaidNotice] = useState<{ amountCents: number; forName: string | null; hasReceipt: boolean; remainingCents?: number; afterParts?: boolean; /** Adiantamento de parcelas: o texto fala das parcelas abatidas. */ advance?: AdvanceDoneData } | null>(null);
 	const [shareOpen, setShareOpen] = useState<"launched" | "manual" | "paid" | "summary" | "refund" | null>(() => (peekFlash() === LAUNCHED_FLASH ? "launched" : null));
 	const [snack, setSnack] = useState<string | null>(() => {
 		const f = peekFlash();
@@ -852,9 +864,11 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 	const [shareBusy, setShareBusy] = useState(false);
 	const [shareError, setShareError] = useState<string | null>(null);
 	// "Já paguei" / "Anexar comprovante" e o visualizador de comprovante (imagem).
-	const [receiptSheet, setReceiptSheet] = useState<{ uid: string; mode: ReceiptMode; /** Pagamento parcial: quanto foi pago. */ amountCents?: number; /** Quanto a tela mostrava como já pago nesta parte (confere no servidor). */ expectedPaidCents?: number } | null>(null);
+	const [receiptSheet, setReceiptSheet] = useState<{ uid: string; mode: ReceiptMode; /** Pagamento parcial: quanto foi pago. */ amountCents?: number; /** Quanto a tela mostrava como já pago nesta parte (confere no servidor). */ expectedPaidCents?: number; /** Adiantamento de parcelas: o total que a tela mostrava faltando e quem recebe (confere no servidor). */ advance?: { dueCents: number; recipientId: string; recipientName: string } } | null>(null);
 	// "Pagar outro valor": a parte (uid) e o valor digitado.
 	const [otherAmount, setOtherAmount] = useState<{ uid: string; cents: number } | null>(null);
+	// "Adiantar parcelas": a parte (uid), quem está agindo ("self" = paguei, "manual" = recebi), o valor e as parcelas em aberto (do servidor).
+	const [advance, setAdvance] = useState<{ uid: string; mode: "self" | "manual"; cents: number; plan: AdvancePlanData | null; loadError: string | null; busy: boolean; error: string | null } | null>(null);
 	const [receiptBusy, setReceiptBusy] = useState(false);
 	const [receiptError, setReceiptError] = useState<string | null>(null);
 	const [receiptFileError, setReceiptFileError] = useState<string | null>(null);
@@ -979,16 +993,124 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 		}
 	}
 
-	function openReceiptSheet(uid: string, mode: ReceiptMode, amountCents?: number) {
+	function openReceiptSheet(uid: string, mode: ReceiptMode, amountCents?: number, advance?: { dueCents: number; recipientId: string; recipientName: string }) {
 		setReceiptError(null);
 		setReceiptFileError(null);
 		// `expectedPaidCents` sai do que a tela mostra agora; se a parte não está no estado local fica indefinido (e o envio não segue).
-		setReceiptSheet({ uid, mode, amountCents, expectedPaidCents: amountCents !== undefined ? expense?.shares.find((s) => s.uid === uid)?.paidCents : undefined });
+		setReceiptSheet({ uid, mode, amountCents, expectedPaidCents: amountCents !== undefined ? expense?.shares.find((s) => s.uid === uid)?.paidCents : undefined, advance });
+	}
+
+	/** Fecha a folha do comprovante. Se era de um adiantamento, volta para a folha de adiantar com o valor que a pessoa digitou. */
+	function cancelReceipt() {
+		const r = receiptSheet;
+		setReceiptSheet(null);
+		if (r?.advance && r.amountCents !== undefined) {
+			setAdvance({ uid: r.uid, mode: "self", cents: r.amountCents, plan: null, loadError: null, busy: false, error: null });
+			void loadAdvancePlan(r.uid, "self");
+		}
+	}
+
+	const advanceUrl = `/api/groups/${encodeURIComponent(groupId)}/expenses/${encodeURIComponent(expenseId)}/advance`;
+
+	/** Abre a folha de adiantar parcelas e busca no servidor as parcelas em aberto da pessoa na compra toda. */
+	function openAdvance(uid: string, mode: "self" | "manual") {
+		setAdvance({ uid, mode, cents: 0, plan: null, loadError: null, busy: false, error: null });
+		void loadAdvancePlan(uid, mode);
+	}
+
+	// Respostas fora de ordem (fechar e reabrir, "Tentar de novo") não sobrescrevem o plano novo: só vale a ÚLTIMA busca pedida.
+	const advanceReq = useRef(0);
+	async function loadAdvancePlan(uid: string, mode: "self" | "manual") {
+		const mine = ++advanceReq.current;
+		try {
+			const plan = await apiFetch<AdvancePlanData>(`${advanceUrl}?shareUid=${encodeURIComponent(uid)}&mode=${mode}`);
+			if (mine !== advanceReq.current) return;
+			setAdvance((a) => (a && a.uid === uid ? { ...a, plan, loadError: null } : a));
+		} catch (e) {
+			if (mine !== advanceReq.current) return;
+			if (isNotMemberError(e) || isMissingExpenseError(e)) {
+				setAdvance(null);
+				setError({ message: "", kind: isNotMemberError(e) ? "notMember" : "missing" });
+				return;
+			}
+			setAdvance((a) => (a && a.uid === uid ? { ...a, plan: null, loadError: e instanceof ApiError ? e.message : "Não foi possível carregar as parcelas." } : a));
+		}
+	}
+	/** Fecha a folha e invalida qualquer busca em andamento. */
+	function closeAdvance() {
+		advanceReq.current++;
+		setAdvance(null);
+	}
+
+	/**
+	 * Erro ao registrar um adiantamento. Os valores mudaram (409): mostra a mensagem e atualiza a folha. Falha no meio (`advance_uncertain`,
+	 * ou sem resposta da rede): parte do pagamento pode ter sido registrada, então recarrega a tela e pede para conferir antes de pagar de novo.
+	 */
+	async function handleAdvanceError(e: unknown, uid: string, mode: "self" | "manual", cents: number): Promise<"handled" | "other"> {
+		if (isNotMemberError(e) || isMissingExpenseError(e)) {
+			advanceReq.current++;
+			setAdvance(null);
+			setReceiptSheet(null);
+			setError({ message: "", kind: isNotMemberError(e) ? "notMember" : "missing" });
+			return "handled";
+		}
+		const uncertain = !(e instanceof ApiError) || e.status >= 500 || (e.status === 409 && e.code === "advance_uncertain");
+		if (uncertain) {
+			// Mostra a mensagem, recarrega os dados e mantém a folha com o valor digitado (a pessoa confere antes de pagar de novo).
+			const message = e instanceof ApiError && e.status === 409 ? e.message : ADVANCE_UNCERTAIN;
+			setReceiptSheet(null);
+			setAdvance({ uid, mode, cents, plan: null, loadError: null, busy: false, error: message });
+			setReloadKey((k) => k + 1);
+			await loadAdvancePlan(uid, mode);
+			return "handled";
+		}
+		if (e.status === 409) {
+			setReceiptSheet(null);
+			await refreshAfterAdvanceConflict(uid, e.message, mode);
+			return "handled";
+		}
+		return "other";
+	}
+
+	/** O servidor diz que os valores mudaram: mostra a mensagem, recarrega a despesa e atualiza a folha com os valores novos. */
+	async function refreshAfterAdvanceConflict(uid: string, message: string, mode: "self" | "manual") {
+		setSnack(message);
+		try {
+			setExpense(normalizeExpense(await apiFetch<ExpenseDetailData>(`/api/groups/${encodeURIComponent(groupId)}/expenses/${encodeURIComponent(expenseId)}`)));
+		} catch {
+			setReloadKey((k) => k + 1);
+		}
+		setAdvance({ uid, mode, cents: 0, plan: null, loadError: null, busy: false, error: null });
+		await loadAdvancePlan(uid, mode);
+	}
+
+	/** "Sim, recebi": quem pagou a despesa (ou o administrador) registra o valor, que o servidor reparte pelas parcelas. */
+	async function confirmAdvanceReceived() {
+		if (!advance?.plan || !expense) return;
+		const { uid, cents, plan } = advance;
+		const target = expense.shares.find((x) => x.uid === uid);
+		setAdvance({ ...advance, busy: true, error: null });
+		try {
+			const res = await apiFetch<{ expense: ExpenseDetailData | null; advance: AdvanceDoneData }>(advanceUrl, {
+				method: "POST",
+				body: JSON.stringify({ shareUid: uid, mode: "manual", amountCents: cents, expectedDueCents: plan.totalDueCents, recipientId: plan.recipient?.id }),
+			});
+			if (res.expense) setExpense(normalizeExpense(res.expense));
+			else setReloadKey((k) => k + 1);
+			closeAdvance();
+			setSnack(advanceDoneMessage(res.advance, { mode: "manual", name: target?.name ?? "a pessoa" }));
+		} catch (e) {
+			if ((await handleAdvanceError(e, uid, "manual", cents)) === "other") setAdvance((a) => (a ? { ...a, busy: false, error: e instanceof ApiError ? e.message : "Não foi possível salvar. Tente de novo." } : a));
+		}
 	}
 
 	async function submitReceipt(file: File | null) {
 		if (!receiptSheet) return;
-		const { uid, mode, amountCents, expectedPaidCents } = receiptSheet;
+		const { uid, mode, amountCents, expectedPaidCents, advance: adv } = receiptSheet;
+		if (adv && amountCents !== undefined) {
+			await submitAdvanceReceipt(file, uid, amountCents, adv);
+			return;
+		}
 		if (mode === "pay" && amountCents !== undefined && expectedPaidCents === undefined) {
 			// A parte não está no que a tela tem: não adivinha "0 já pago". Recarrega e pede para tentar de novo.
 			setReceiptSheet(null);
@@ -1048,6 +1170,42 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 				} catch {
 					setReloadKey((k) => k + 1);
 				}
+			} else if (e instanceof ApiError && e.status === 422 && e.field === "file") {
+				setReceiptFileError(e.message);
+			} else {
+				setReceiptError(e instanceof ApiError ? e.message : "Não foi possível enviar. Tente de novo.");
+			}
+		} finally {
+			setReceiptBusy(false);
+		}
+	}
+
+	/** "Já paguei" de um adiantamento: um valor, um comprovante opcional; o servidor reparte pelas parcelas (tudo ou nada). */
+	async function submitAdvanceReceipt(file: File | null, uid: string, amountCents: number, adv: { dueCents: number; recipientId: string; recipientName: string }) {
+		setReceiptBusy(true);
+		setReceiptError(null);
+		setReceiptFileError(null);
+		try {
+			const body = new FormData();
+			if (file) body.append("file", file);
+			body.append("shareUid", uid);
+			body.append("mode", "self");
+			body.append("amountCents", String(amountCents));
+			body.append("expectedDueCents", String(adv.dueCents));
+			body.append("recipientId", adv.recipientId);
+			const res = await apiFetch<{ expense: ExpenseDetailData | null; advance: AdvanceDoneData }>(advanceUrl, { method: "POST", body });
+			const next = res.expense ? normalizeExpense(res.expense) : null;
+			if (next) setExpense(next);
+			else setReloadKey((k) => k + 1);
+			setReceiptSheet(null);
+			const mine = (next ?? expense)?.shares.find((x) => x.uid === uid);
+			setSnack(advanceDoneMessage(res.advance, { mode: "self", name: mine?.name ?? "" }));
+			// Oferece avisar no WhatsApp: o texto fala das parcelas abatidas, sem chave Pix.
+			setPaidNotice({ amountCents: res.advance.totalCents, forName: mine && !mine.isYou ? mine.name : null, hasReceipt: res.advance.hasReceipt, advance: res.advance });
+			setShareOpen("paid");
+		} catch (e) {
+			if ((await handleAdvanceError(e, uid, "self", amountCents)) === "handled") {
+				/* tratado */
 			} else if (e instanceof ApiError && e.status === 422 && e.field === "file") {
 				setReceiptFileError(e.message);
 			} else {
@@ -1238,7 +1396,9 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 	const shareLink = expenseShareLink(shareOpen ?? "launched", window.location.origin, shareInvite.token, groupId, expenseId);
 	const shareText =
 		shareOpen === "paid" && paidNotice
-			? buildPaidShareText({ ...paidNotice, description: expense.description }, shareLink)
+			? paidNotice.advance
+				? buildAdvanceShareText({ totalCents: paidNotice.advance.totalCents, description: expense.description, forName: paidNotice.forName, items: paidNotice.advance.items, hasReceipt: paidNotice.hasReceipt }, shareLink)
+				: buildPaidShareText({ ...paidNotice, description: expense.description }, shareLink)
 			: shareOpen === "refund" && refundNotice
 				? buildRefundShareText({ ...refundNotice, description: expense.description }, shareLink)
 				: shareOpen === "summary"
@@ -1285,7 +1445,7 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 				onShareSummary={() => setShareOpen("summary")}
 				onViewRefundReceipt={(uid) => void viewReceipt(uid, "refund")}
 				onViewPartReceipt={(uid, partId) => void viewReceipt(uid, "payment", partId)}
-				onOtherAmount={(uid) => setOtherAmount({ uid, cents: 0 })}
+				onOtherAmount={(uid) => (expense.installment ? openAdvance(uid, "self") : setOtherAmount({ uid, cents: 0 }))}
 				onOpenImage={(id) => setViewing(id)}
 				onOpenPdf={(id) => void openPdf(id)}
 				onAskDelete={() => {
@@ -1314,6 +1474,52 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 					setShareOpen("paid");
 				}}
 			/>
+
+			<Sheet
+				open={!!advance}
+				onClose={() => {
+					if (!advance?.busy) closeAdvance();
+				}}
+				title={advance?.mode === "manual" ? "Recebi um valor" : "Adiantar parcelas"}
+			>
+				{advance && (
+					<AdvanceContent
+						mode={advance.mode}
+						plan={advance.plan}
+						loadError={advance.loadError}
+						personName={expense.shares.find((x) => x.uid === advance.uid)?.name ?? ""}
+						payeeName={advance.plan?.recipient?.name ?? expense.paidBy.name}
+						cents={advance.cents}
+						hasPix={!!advance.plan?.recipient?.pix}
+						canCopy={advance.mode === "self" && !!advance.plan && advancePayload(advance.plan, expense.description, advance.cents) !== null}
+						busy={advance.busy}
+						error={advance.error}
+						onCents={(cents) => setAdvance((a) => (a ? { ...a, cents, error: null } : a))}
+						onCopy={() => {
+							const code = advance.plan ? advancePayload(advance.plan, expense.description, advance.cents) : null;
+							if (code) void copyText(code).then((ok) => setSnack(ok ? "Código Pix copiado! Agora cole no app do seu banco." : "Não deu para copiar sozinho. Use a chave Pix da tela."));
+						}}
+						onCopyKey={() => {
+							const key = advance.plan?.recipient?.pix?.key;
+							if (key) void copyText(key).then((ok) => setSnack(ok ? "Chave Pix copiada!" : "Não deu para copiar. Selecione a chave e copie."));
+						}}
+						onRetry={() => {
+							setAdvance({ ...advance, loadError: null });
+							void loadAdvancePlan(advance.uid, advance.mode);
+						}}
+						onConfirm={() => {
+							if (!advance.plan?.recipient) return;
+							if (advance.mode === "manual") void confirmAdvanceReceived();
+							else {
+								const { uid, cents, plan } = advance;
+								closeAdvance();
+								openReceiptSheet(uid, "pay", cents, { dueCents: plan.totalDueCents, recipientId: plan.recipient!.id, recipientName: plan.recipient!.name });
+							}
+						}}
+						onCancel={closeAdvance}
+					/>
+				)}
+			</Sheet>
 
 			<Sheet open={!!otherAmount} onClose={() => setOtherAmount(null)} title="Pagar outro valor">
 				{otherAmount && otherTarget && (
@@ -1347,21 +1553,21 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 			<Sheet
 				open={!!receiptSheet}
 				onClose={() => {
-					if (!receiptBusy) setReceiptSheet(null);
+					if (!receiptBusy) cancelReceipt();
 				}}
-				title={receiptSheet ? receiptSheetCopy(receiptSheet.mode, receiptSheet.mode === "refund" ? (expense.shares.find((s) => s.uid === receiptSheet.uid)?.name ?? "") : (expense.pix?.payeeName ?? expense.paidBy.name), 0, receiptSheet.amountCents).title : ""}
+				title={receiptSheet ? receiptSheetCopy(receiptSheet.mode, receiptSheet.mode === "refund" ? (expense.shares.find((s) => s.uid === receiptSheet.uid)?.name ?? "") : (receiptSheet.advance?.recipientName ?? expense.pix?.payeeName ?? expense.paidBy.name), 0, receiptSheet.amountCents).title : ""}
 			>
 				{receiptSheet && (
 					<ReceiptSheetBody
 						key={`${receiptSheet.uid}-${receiptSheet.mode}`}
 						mode={receiptSheet.mode}
 						partialCents={receiptSheet.amountCents}
-						payeeName={receiptSheet.mode === "refund" ? (expense.shares.find((s) => s.uid === receiptSheet.uid)?.name ?? "") : (expense.pix?.payeeName ?? expense.paidBy.name)}
+						payeeName={receiptSheet.mode === "refund" ? (expense.shares.find((s) => s.uid === receiptSheet.uid)?.name ?? "") : (receiptSheet.advance?.recipientName ?? expense.pix?.payeeName ?? expense.paidBy.name)}
 						busy={receiptBusy}
 						error={receiptError}
 						fileError={receiptFileError}
 						onSubmit={(f) => void submitReceipt(f)}
-						onCancel={() => setReceiptSheet(null)}
+						onCancel={cancelReceipt}
 					/>
 				)}
 			</Sheet>
@@ -1478,6 +1684,15 @@ export function ExpenseDetail({ groupId, expenseId }: Readonly<{ groupId: string
 						undoPartCents={shareAction.mode === "pending" ? undoPartCentsOf(shareTarget) : undefined}
 						dueCents={shareTarget.dueCents}
 						onPartialChange={(partial) => setShareAction((a) => (a ? { ...a, partial } : a))}
+						onAdvance={
+							expense.installment && shareAction.mode === "paid" && (expense.series?.items ?? []).some((i) => i.id !== expense.id && i.openUids?.includes(shareAction.uid))
+								? () => {
+										const uid = shareAction.uid;
+										setShareAction(null);
+										openAdvance(uid, "manual");
+									}
+								: undefined
+						}
 						busy={shareBusy}
 						error={shareError}
 						onConfirm={(amountCents) => void confirmShare(amountCents)}

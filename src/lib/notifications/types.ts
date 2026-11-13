@@ -29,6 +29,23 @@ export type PaymentFact = {
 	partial?: { shareCents: number; remainingCents: number };
 };
 
+/**
+ * Um adiantamento de parcelas: um valor que abateu de várias parcelas de uma vez. UM fato por adiantamento (não um por parcela);
+ * `expenseId` é a parcela em que a pessoa estava (o aviso leva a ela).
+ */
+export type AdvanceFact = {
+	groupId: string;
+	expenseId: string;
+	description: string;
+	paidBy: string;
+	debtorUid: string;
+	actorUid: string;
+	/** Registrado por outra pessoa (quem recebeu ou o administrador), e não pela própria pessoa. */
+	manual: boolean;
+	totalCents: number;
+	items: { number: number; cents: number; settled: boolean; remainingCents: number }[];
+};
+
 /** Uma despesa nova (ou pessoas que entraram numa despesa existente). */
 export type NewExpenseFact = {
 	groupId: string;

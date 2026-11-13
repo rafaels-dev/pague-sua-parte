@@ -50,7 +50,7 @@ export type ExpenseSummary = {
 
 export type InstallmentRef = { seriesId: string; number: number; count: number };
 
-export type SeriesItem = { id: string; number: number; dueDate: string | null; settled: boolean; /** Já recebeu pagamento parcial, mas ainda falta (nunca conta como quitada). */ partial?: boolean; amountCents?: number };
+export type SeriesItem = { id: string; number: number; dueDate: string | null; settled: boolean; /** Já recebeu pagamento parcial, mas ainda falta (nunca conta como quitada). */ partial?: boolean; amountCents?: number; /** Quem ainda deve algo nesta parcela. */ openUids?: string[] };
 
 export type ExpenseSeries = { count: number; items: SeriesItem[] };
 
@@ -190,7 +190,7 @@ function normalizeSeries(raw: unknown): ExpenseSeries | null {
 	if (!Array.isArray(r.items)) return null;
 	const items: SeriesItem[] = (r.items as Record<string, unknown>[])
 		.filter((i) => i && typeof i.id === "string" && typeof i.number === "number")
-		.map((i) => ({ id: i.id as string, number: i.number as number, dueDate: typeof i.dueDate === "string" ? i.dueDate : null, settled: !!i.settled, ...(i.partial === true ? { partial: true } : {}), ...(typeof i.amountCents === "number" ? { amountCents: i.amountCents } : {}) }))
+		.map((i) => ({ id: i.id as string, number: i.number as number, dueDate: typeof i.dueDate === "string" ? i.dueDate : null, settled: !!i.settled, ...(i.partial === true ? { partial: true } : {}), ...(typeof i.amountCents === "number" ? { amountCents: i.amountCents } : {}), ...(Array.isArray(i.openUids) ? { openUids: (i.openUids as unknown[]).filter((u): u is string => typeof u === "string") } : {}) }))
 		.sort((a, b) => a.number - b.number);
 	if (items.length === 0) return null;
 	return { count: typeof r.count === "number" ? r.count : items.length, items };

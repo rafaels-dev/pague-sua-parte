@@ -36,7 +36,8 @@ export type ShareRefund = {
 export type SharePart = {
 	id: string;
 	cents: number;
-	at: Date;
+	/** Ausente quando o pagamento rebaixado vinha do modelo antigo, sem data (a tela mostra "data não registrada"). */
+	at?: Date;
 	markedBy: string;
 	method: ShareMethod;
 	/** Marcado pelo administrador do grupo (só com `method: "manual"`). */
@@ -107,11 +108,13 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object
 function cleanPart(raw: unknown): SharePart | null {
 	if (!isObj(raw)) return null;
 	const { id, cents, markedBy, method, byAdmin, receipt, batch } = raw;
-	const at = raw.at instanceof Date ? raw.at : typeof raw.at === "string" || typeof raw.at === "number" ? new Date(raw.at) : null;
+	const at = raw.at instanceof Date ? raw.at : typeof raw.at === "string" || typeof raw.at === "number" ? new Date(raw.at) : raw.at === undefined || raw.at === null ? undefined : null;
 	if (typeof id !== "string" || id === "" || typeof cents !== "number" || !Number.isSafeInteger(cents) || cents < 1) return null;
 	if (method !== "self" && method !== "manual") return null;
-	if (!at || Number.isNaN(at.getTime())) return null;
-	const out: SharePart = { id, cents, at, markedBy: typeof markedBy === "string" ? markedBy : "", method };
+	if (at === null || (at && Number.isNaN(at.getTime()))) return null;
+	const out: SharePart = { id, cents, markedBy: typeof markedBy === "string" ? markedBy : "", method };
+	// Época zero (1970) é o "sem data" que uma versão anterior gravou: lê como sem data (sem gravar nada por isso).
+	if (at && at.getTime() !== 0) out.at = at;
 	if (byAdmin === true) out.byAdmin = true;
 	if (isObj(receipt) && typeof receipt.key === "string") out.receipt = receipt as unknown as ShareReceipt;
 	if (isObj(batch) && typeof batch.id === "string") out.batch = batch as unknown as ShareBatch;
@@ -125,7 +128,7 @@ function partsAreClean(parts: unknown): boolean {
 function isCleanShape(p: unknown): boolean {
 	if (!isObj(p)) return false;
 	const c = cleanPart(p);
-	return c !== null && p.at instanceof Date && (p.receipt === undefined || (isObj(p.receipt) && typeof p.receipt.key === "string")) && (p.batch === undefined || (isObj(p.batch) && typeof p.batch.id === "string")) && typeof p.markedBy === "string";
+	return c !== null && (p.at === undefined || (p.at instanceof Date && p.at.getTime() !== 0)) && (p.receipt === undefined || (isObj(p.receipt) && typeof p.receipt.key === "string")) && (p.batch === undefined || (isObj(p.batch) && typeof p.batch.id === "string")) && typeof p.markedBy === "string";
 }
 
 export const normalizeShares = (shares: ExpenseShare[]): ExpenseShare[] =>
@@ -312,7 +315,8 @@ function demoteTop(s: ExpenseShare): ExpenseShare {
 	const base = stripTop(s);
 	if (cents <= 0) return withParts(base, parts);
 	// Sem data, quem marcou ou método (modelo antigo): o valor continua pago, com o que se sabe.
-	const part: SharePart = { id: newPartId(), cents, at: s.paidAt ?? new Date(0), markedBy: s.markedBy ?? "", method: s.method ?? "manual" };
+	const part: SharePart = { id: newPartId(), cents, markedBy: s.markedBy ?? "", method: s.method ?? "manual" };
+	if (s.paidAt) part.at = s.paidAt;
 	if (s.method === "manual" && s.markedByAdmin) part.byAdmin = true;
 	if (s.receipt) part.receipt = s.receipt;
 	if (s.batch) part.batch = s.batch;

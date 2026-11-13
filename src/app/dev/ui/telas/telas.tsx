@@ -11,6 +11,7 @@ import { LandingView } from "@/components/landing-view";
 import { todayISO } from "@/lib/ui/dates";
 import { nextDayOfMonth } from "@/lib/ui/due-dates";
 import { MockHomePlans, MockPlan, MockPlanClose, MockPlanForm, MockPlanInvite, MockPlanList, MockPlanShare } from "../plan-mocks";
+import { buildAdvanceShareText } from "@/lib/payments/advance";
 import { MockPayAll } from "../pay-all-mocks";
 import { MockReceivables } from "../receivables-mocks";
 import { DUE_GROUPS, MOCK_GROUP, Shell as MockShell, MockExpense, MockGroup, MockHome, MockManagedSheet, MockNewExpense, MockNoPixKey, MockRecurrenceSheet, MockReport } from "../expense-mocks";
@@ -26,6 +27,37 @@ function ShareSheetMock({ notice, loading = false }: Readonly<{ notice?: string;
 				intro={shareIntro("launched")}
 				notice={notice}
 				loading={loading}
+				canShare
+				copyFailed={false}
+				preview
+				onCopy={() => {}}
+				onShare={() => {}}
+				onClose={() => {}}
+			/>
+		</main>
+	);
+}
+
+function AdvanceShareMock() {
+	return (
+		<main className="mx-auto w-full max-w-md space-y-4 bg-surface-container-low p-5">
+			<h1 className="text-headline-small">Avisar no WhatsApp</h1>
+			<ShareExpenseContent
+				text={buildAdvanceShareText(
+					{
+						totalCents: 34700,
+						description: "Sofá da sala",
+						hasReceipt: true,
+						items: [
+							{ number: 1, cents: 10000, settled: true, remainingCents: 0 },
+							{ number: 2, cents: 10000, settled: true, remainingCents: 0 },
+							{ number: 3, cents: 10000, settled: true, remainingCents: 0 },
+							{ number: 4, cents: 4700, settled: false, remainingCents: 5300 },
+						],
+					},
+					expenseShareLink("paid", ORIGIN, null, "1", "p1"),
+				)}
+				intro="Mande para Maria das Dores Silva saber que você pagou. O link abre a despesa com o seu comprovante."
 				canShare
 				copyFailed={false}
 				preview
@@ -243,6 +275,34 @@ export function Telas({ tela }: Readonly<{ tela: string }>) {
 			return <MockExpense mode="partial" confirm={{ uid: "a", mode: "pending" }} framed={false} />;
 		case "parcial-parcela":
 			return <MockExpense mode="partial-installment" framed={false} />;
+		case "adiantar-parcela":
+			return <MockExpense mode="advance-start" framed={false} />;
+		case "adiantar-carregando":
+			return <MockExpense mode="advance-start" advance={{ mode: "self", cents: null }} framed={false} />;
+		case "adiantar-vazio":
+			return <MockExpense mode="advance-start" advance={{ mode: "self", cents: 0 }} framed={false} />;
+		case "adiantar-347":
+			return <MockExpense mode="advance-start" advance={{ mode: "self", cents: 34700 }} framed={false} />;
+		case "adiantar-maior":
+			return <MockExpense mode="advance-start" advance={{ mode: "self", cents: 120000 }} framed={false} />;
+		case "adiantar-antiga-aberta":
+			return <MockExpense mode="advance-older" advance={{ mode: "self", cents: 25000 }} framed={false} />;
+		case "adiantar-dois-destinatarios":
+			return <MockExpense mode="advance-two-recipients" advance={{ mode: "self", cents: 15000 }} framed={false} />;
+		case "adiantar-depois-4":
+			return <MockExpense mode="advance-done" framed={false} />;
+		case "adiantar-depois-1":
+			return <MockExpense mode="advance-done-first" framed={false} />;
+		case "adiantar-dono":
+			return <MockExpense mode="advance-owner" framed={false} />;
+		case "adiantar-dono-recebi":
+			return <MockExpense mode="advance-owner" confirm={{ uid: "b", mode: "paid" }} framed={false} />;
+		case "adiantar-dono-347":
+			return <MockExpense mode="advance-owner" advance={{ mode: "manual", cents: 34700 }} framed={false} />;
+		case "adiantar-dono-depois":
+			return <MockExpense mode="advance-owner-done" framed={false} />;
+		case "adiantar-whatsapp":
+			return <AdvanceShareMock />;
 		case "parcial-pagar-tudo":
 			return <MockPayAll framed={false} scene="parte-paga" />;
 		case "parcial-quem-me-deve":

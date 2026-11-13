@@ -246,7 +246,7 @@ export type ExpenseDetail = {
 	/** Venceu (antes de hoje, em São Paulo) e ainda há cota de outra pessoa com valor em aberto. */
 	overdue: boolean;
 	/** Todas as parcelas da série que ainda existem, em ordem. */
-	series: { count: number; items: { id: string; number: number; dueDate: string | null; settled: boolean; /** Alguém já pagou parte do que deve, mas ainda falta (só presente quando verdadeiro). */ partial?: boolean; /** Valor que se divide nesta parcela (com cashback as parcelas podem diferir). */ amountCents: number }[] } | null;
+	series: { count: number; items: { id: string; number: number; dueDate: string | null; settled: boolean; /** Alguém já pagou parte do que deve, mas ainda falta (só presente quando verdadeiro). */ partial?: boolean; /** Quem ainda deve algo nesta parcela. */ openUids: string[]; /** Valor que se divide nesta parcela (com cashback as parcelas podem diferir). */ amountCents: number }[] } | null;
 };
 
 /** Nenhuma cota de outra pessoa com valor em aberto. */
@@ -312,6 +312,8 @@ async function seriesOf(db: Db, e: ExpenseDoc, known?: ExpenseDoc[]) {
 				settled: noDue({ paidBy: d.paidBy, shares }),
 				...(shares.some((s) => dueCents(s, d.paidBy) > 0 && s.paidCents > 0) ? { partial: true } : {}),
 				amountCents: d.amountCents,
+				// Quem ainda deve algo nesta parcela (a tela só oferece "Recebi um valor que passa desta parcela" se ESSA pessoa tem outra parcela em aberto).
+				openUids: shares.filter((s) => dueCents(s, d.paidBy) > 0).map((s) => s.uid),
 			};
 		})
 		.sort((a, b) => a.number - b.number);
@@ -454,7 +456,7 @@ async function toDetail(db: Db, e: ExpenseDoc, group: GroupDoc, uid: string, now
 				parts: (s.parts ?? []).map((p) => ({
 					id: p.id,
 					cents: p.cents,
-					at: new Date(p.at).toISOString(),
+					at: p.at ? new Date(p.at).toISOString() : "",
 					method: p.method,
 					byAdmin: p.byAdmin === true,
 					markedByName: p.byAdmin ? dir.name(p.markedBy) : null,
