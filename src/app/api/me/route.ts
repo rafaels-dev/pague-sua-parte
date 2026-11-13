@@ -3,7 +3,8 @@ import { handleError as sharedHandleError, jsonError } from "@/lib/api/http";
 import { requireUser } from "@/lib/auth/server";
 import { getDb } from "@/lib/db/client";
 import { normalizePixKey } from "@/lib/pix/key";
-import { updateProfile, upsertFromAuth, type UserDoc } from "@/lib/users/repo";
+import { updateProfile, type UserDoc } from "@/lib/users/repo";
+import { upsertAndWelcome } from "@/lib/notifications/welcome";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +38,7 @@ function handleError(err: unknown) {
 export async function GET(request: Request) {
 	try {
 		const user = await requireUser(request);
-		const doc = await upsertFromAuth(await getDb(), user);
+		const doc = await upsertAndWelcome(await getDb(), user);
 		return Response.json(toProfile(doc));
 	} catch (err) {
 		return handleError(err);
@@ -72,7 +73,7 @@ export async function PUT(request: Request) {
 		}
 
 		const db = await getDb();
-		const current = await upsertFromAuth(db, user);
+		const current = await upsertAndWelcome(db, user);
 		const updated = (await updateProfile(db, user.uid, patch)) ?? current;
 		return Response.json(toProfile(updated));
 	} catch (err) {

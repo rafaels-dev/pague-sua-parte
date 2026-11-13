@@ -21,6 +21,17 @@ export async function runPool(tasks: (() => Promise<unknown>)[], limit: number):
 	await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
 }
 
+/** Roda os passos em ordem, cada um com o seu tratamento de erro: um que falha (só o log, sem dados) nunca impede o seguinte. */
+export async function runSettledInOrder(steps: (() => Promise<unknown>)[]): Promise<void> {
+	for (const step of steps) {
+		try {
+			await step();
+		} catch (err) {
+			console.error("notificação error:", describeError(err));
+		}
+	}
+}
+
 /** Uma nova tentativa quando o serviço responde 429, se couber no tempo total. */
 export async function sendEmailWithRetry(send: () => Promise<unknown>, deadline: number, sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms))): Promise<void> {
 	try {
@@ -50,8 +61,10 @@ export async function notify(db: Db, notices: Notice[]): Promise<void> {
 			(await db.collection<NotifyUser>("users").find({ _id: { $in: uids } }, { projection: { email: 1, emailVerified: 1, notify: 1 } }).toArray()).map((u) => [u._id, u]),
 		);
 		const subs = new Map<string, { endpoint: string; keys: { p256dh: string; auth: string } }[]>();
-		if (wantPush) {
-			for (const s of await subscriptionsCollection(db).find({ uid: { $in: uids } }).toArray()) subs.set(s.uid, [...(subs.get(s.uid) ?? []), s]);
+		// Aviso só de e-mail (boas-vindas) nunca consulta inscrições de push.
+		const pushUids = [...new Set(notices.filter((n) => !n.emailOnly).map((n) => n.uid))];
+		if (wantPush && pushUids.length > 0) {
+			for (const s of await subscriptionsCollection(db).find({ uid: { $in: pushUids } }).toArray()) subs.set(s.uid, [...(subs.get(s.uid) ?? []), s]);
 		}
 		const gone: string[] = [];
 		const emailTasks: (() => Promise<unknown>)[] = [];

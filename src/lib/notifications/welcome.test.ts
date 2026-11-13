@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildEmailText } from "./email-content";
 import { renderNoticeEmail } from "./email-template";
 import { buildWelcomeNotice, firstName } from "./welcome";
@@ -27,5 +27,22 @@ describe("boas-vindas", () => {
 	it("nome com HTML é escapado", async () => {
 		const { html } = await renderNoticeEmail(buildWelcomeNotice({ uid: "u", name: "<script>x</script>" }), "https://x.test");
 		expect(html).not.toContain("<script>x");
+	});
+});
+
+describe("upsertAndWelcome", () => {
+	it("agenda as boas-vindas só quando o upsert inseriu, e devolve o usuário", async () => {
+		vi.resetModules();
+		const after = vi.fn();
+		vi.doMock("@/lib/notifications/schedule", () => ({ runAfterResponse: after }));
+		const mk = (inserted: boolean) =>
+			({ collection: () => ({ findOneAndUpdate: async () => ({ value: { _id: "u1", name: "Ana" }, lastErrorObject: inserted ? { updatedExisting: false, upserted: "u1" } : { updatedExisting: true } }) }) }) as never;
+		const { upsertAndWelcome } = await import("./welcome");
+		const au = { uid: "u1", email: "a@b.com", emailVerified: true, name: "Ana" };
+		expect(await upsertAndWelcome(mk(false), au)).toMatchObject({ _id: "u1" });
+		expect(after).not.toHaveBeenCalled();
+		await upsertAndWelcome(mk(true), au);
+		expect(after).toHaveBeenCalledTimes(1);
+		vi.doUnmock("@/lib/notifications/schedule");
 	});
 });

@@ -6,7 +6,7 @@ import { readPhotos } from "@/lib/plans/http";
 import { createPlan, hasOldPlans, listPlans } from "@/lib/plans/repo";
 import { parsePlanInput } from "@/lib/plans/validation";
 import { getAttachmentStore } from "@/lib/storage/attachments";
-import { upsertFromAuth } from "@/lib/users/repo";
+import { upsertAndWelcome } from "@/lib/notifications/welcome";
 
 export const dynamic = "force-dynamic";
 
@@ -50,7 +50,7 @@ export async function POST(request: Request) {
 		if (!photos.ok) return jsonError(photos.error, photos.status, photos.field);
 
 		const db = await getDb();
-		await upsertFromAuth(db, user); // o nome aparece na lista de participantes
+		await upsertAndWelcome(db, user); // o nome aparece na lista de participantes
 		return Response.json(await createPlan(db, getAttachmentStore(), user.uid, input.value, photos.files), { status: 201 });
 	} catch (err) {
 		return handleError(err, "api/plans POST");

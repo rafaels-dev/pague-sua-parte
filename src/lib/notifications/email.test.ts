@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { appLink, buildEmailText, ctaLabel, emailSubject, highlight, oneLine } from "./email-content";
 import { SAMPLE_NOTICES } from "./email-samples";
 import { renderNoticeEmail } from "./email-template";
-import { appBaseUrl, EmailError, emailConfigured, renderEmail, sendEmail } from "./email";
+import { appBaseUrl, EmailError, emailConfigured, rateLimitWait, renderEmail, sendEmail } from "./email";
 import { sendEmailWithRetry } from "./notify";
 import type { Notice } from "./types";
 
@@ -143,16 +143,42 @@ describe("canal de e-mail (Mailgun)", () => {
 	it("codifica acentos, emoji, & e = e tira quebras de linha de assunto, remetente e destinatário", async () => {
 		const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
 		const n: Notice = { ...notice, title: "Ação & café = ok 🎉\r\nBcc: x@y.test", body: "João & Maria = 50%\n+ mais" };
-		await sendEmail("p@q.com\r\nBcc: z@y.test", n, e({ EMAIL_FROM: "Pagô & Cia <a@mg.x.test>\nX: y" }));
+		await sendEmail("p@q.com", n, e({ EMAIL_FROM: "Pagô & Cia <a@mg.x.test>\nX: y" }));
 		const raw = (f.mock.calls[0][1] as RequestInit).body as string;
 		expect(raw).not.toMatch(/[\r\n]/);
 		const b = form(f);
 		expect(b.get("subject")).toBe("Ação & café = ok 🎉 Bcc: x@y.test");
 		expect(b.get("from")).toBe("Pagô & Cia <a@mg.x.test> X: y");
-		expect(b.get("to")).toBe("p@q.com Bcc: z@y.test");
+		expect(b.get("to")).toBe("p@q.com");
 		expect(b.get("html")).toContain("João &amp; Maria = 50%");
 		expect(b.get("text")).toContain("João & Maria = 50%");
 		expect([...b.keys()].sort()).toEqual(["from", "html", "o:tracking", "o:tracking-clicks", "o:tracking-opens", "subject", "text", "to"]);
+	});
+
+	it("só envia para UM endereço: lista, espaço, <> ou aspas não saem e o log não traz o endereço", async () => {
+		const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
+		const log = vi.spyOn(console, "error").mockImplementation(() => {});
+		for (const bad of ["a@b.com,c@d.com", "a@b.com;c@d.com", "a@b.com c@d.com", "Fulano <a@b.com>", '"a"@b.com', "a@b.com\r\nBcc: z@y.test", "semarroba", ""]) {
+			expect(await sendEmail(bad, notice, env), bad).toBe(false);
+		}
+		expect(f).not.toHaveBeenCalled();
+		expect(JSON.stringify(log.mock.calls)).not.toMatch(/@/);
+		expect(await sendEmail("ok+tag@dominio.com.br", notice, env)).toBe(true);
+	});
+
+	it("espera do 429: milissegundos Unix, segundos Unix e Retry-After, sempre entre 1 e 60 s", () => {
+		const now = 1_800_000_000_000;
+		const h = (o: Record<string, string>) => ({ headers: new Headers(o) });
+		expect(rateLimitWait(h({ "x-ratelimit-reset": String(now + 2500) }), now)).toBe(3);
+		expect(rateLimitWait(h({ "x-ratelimit-reset": String(now / 1000 + 5) }), now)).toBe(5);
+		expect(rateLimitWait(h({ "x-ratelimit-reset": String(now + 3_600_000) }), now)).toBe(60);
+		expect(rateLimitWait(h({ "x-ratelimit-reset": String(now - 5000) }), now)).toBeUndefined();
+		expect(rateLimitWait(h({ "x-ratelimit-reset": "abc" }), now)).toBeUndefined();
+		expect(rateLimitWait(h({ "retry-after": "2" }), now)).toBe(2);
+		expect(rateLimitWait(h({ "retry-after": "-3" }), now)).toBeUndefined();
+		expect(rateLimitWait(h({ "retry-after": "99999" }), now)).toBe(60);
+		expect(rateLimitWait(h({ "retry-after": "Wed, 21 Oct 2026 07:28:00 GMT" }), now)).toBeUndefined();
+		expect(rateLimitWait(h({}), now)).toBeUndefined();
 	});
 
 	it("usa o resultado já renderizado, sem renderizar de novo", async () => {

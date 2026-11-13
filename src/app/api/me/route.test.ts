@@ -6,7 +6,8 @@ vi.mock("@/lib/auth/server", () => ({ requireUser, UnauthorizedError }));
 vi.mock("@/lib/db/client", () => ({ getDb: vi.fn().mockResolvedValue({ fake: true }) }));
 const upsertFromAuth = vi.fn();
 const updateProfile = vi.fn();
-vi.mock("@/lib/users/repo", () => ({ upsertFromAuth, updateProfile }));
+vi.mock("@/lib/users/repo", () => ({ updateProfile }));
+vi.mock("@/lib/notifications/welcome", () => ({ upsertAndWelcome: upsertFromAuth }));
 
 const { GET, PUT } = await import("./route");
 

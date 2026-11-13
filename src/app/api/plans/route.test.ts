@@ -6,7 +6,7 @@ vi.mock("@/lib/auth/server", () => ({ requireUser, UnauthorizedError }));
 vi.mock("@/lib/db/client", () => ({ getDb: vi.fn().mockResolvedValue({ fake: true }) }));
 const store = { fakeStore: true };
 vi.mock("@/lib/storage/attachments", () => ({ getAttachmentStore: () => store }));
-vi.mock("@/lib/users/repo", () => ({ upsertFromAuth: vi.fn() }));
+vi.mock("@/lib/notifications/welcome", () => ({ upsertAndWelcome: vi.fn() }));
 const createPlan = vi.fn();
 const listPlans = vi.fn();
 vi.mock("@/lib/plans/repo", () => ({ createPlan, listPlans }));

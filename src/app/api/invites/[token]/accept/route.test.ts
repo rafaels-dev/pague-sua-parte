@@ -7,7 +7,7 @@ vi.mock("@/lib/db/client", () => ({ getDb: vi.fn().mockResolvedValue({ fake: tru
 const acceptInvite = vi.fn();
 vi.mock("@/lib/groups/repo", () => ({ acceptInvite }));
 const upsertFromAuth = vi.fn();
-vi.mock("@/lib/users/repo", () => ({ upsertFromAuth }));
+vi.mock("@/lib/notifications/welcome", () => ({ upsertAndWelcome: upsertFromAuth }));
 
 const { POST } = await import("./route");
 const user = { uid: "u1", email: "a@b.com", name: "Ana" };

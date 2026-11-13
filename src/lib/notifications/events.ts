@@ -5,7 +5,7 @@ import type { GroupDoc } from "@/lib/groups/repo";
 import { usersCollection } from "@/lib/users/repo";
 import { buildAdvanceNotices, buildMemberJoinedNotices, buildNewExpenseNotices, buildPaymentNotices } from "./messages";
 import { buildPlanCancelledNotices, buildPlanChangeNotices, buildPlanClosedNotices, buildPlanConfirmedNotices } from "./plan-messages";
-import { notify } from "./notify";
+import { notify, runSettledInOrder } from "./notify";
 import { runAfterResponse } from "./schedule";
 import type { AdvanceFact, GroupInfo, NewExpenseFact, NewExpenseMode, NoticeContext, PaymentFact, PlanCancelFact, PlanChangeFact, PlanClosedFact, PlanConfirmedFact } from "./types";
 
@@ -84,10 +84,9 @@ export const afterNewExpenses = (facts: NewExpenseFact[] | undefined, mode: NewE
 export const afterPlanChange = (f: PlanChangeFact) => runAfterResponse(async () => notify(await getDb(), buildPlanChangeNotices(f)));
 export const afterPlanCancelled = (f: PlanCancelFact) => runAfterResponse(async () => notify(await getDb(), buildPlanCancelledNotices(f)));
 export const afterPlanClosed = (f: PlanClosedFact) => runAfterResponse(async () => notify(await getDb(), buildPlanClosedNotices(f)));
-/** Plano fechado: primeiro "Plano confirmado" (grupo criado), depois o "Nova despesa" de sempre, em sequência. */
+/** Plano fechado: primeiro "Plano confirmado" (grupo criado), depois o "Nova despesa" de sempre. Cada envio tem o seu próprio tratamento de erro. */
 export const afterPlanConfirmed = (f: PlanConfirmedFact, expense: NewExpenseFact | undefined) =>
 	runAfterResponse(async () => {
 		const db = await getDb();
-		await notifyPlanConfirmed(db, f);
-		if (expense) await notifyNewExpenses(db, [expense], "created");
+		await runSettledInOrder([() => notifyPlanConfirmed(db, f), ...(expense ? [() => notifyNewExpenses(db, [expense], "created")] : [])]);
 	});

@@ -1,5 +1,4 @@
 import { oneLine } from "./email-content";
-import { renderNoticeEmail } from "./email-template";
 import type { Notice } from "./types";
 
 /** Endereço público do app (links dos e-mails). `APP_URL` no ambiente; sem ela, produção e desenvolvimento têm um padrão. */
@@ -20,10 +19,14 @@ export class EmailError extends Error {
 	}
 }
 
-export type RenderedEmail = Awaited<ReturnType<typeof renderNoticeEmail>>;
+export type RenderedEmail = { subject: string; html: string; text: string };
 
 /** Renderiza uma vez (quem tenta de novo depois de um 429 passa o resultado a `sendEmail`). */
-export const renderEmail = (notice: Notice, env: NodeJS.ProcessEnv = process.env): Promise<RenderedEmail> => renderNoticeEmail(notice, appBaseUrl(env));
+export async function renderEmail(notice: Notice, env: NodeJS.ProcessEnv = process.env): Promise<RenderedEmail> {
+	// Sob demanda: React Email e react-dom/server só carregam quando um e-mail vai mesmo ser renderizado.
+	const { renderNoticeEmail } = await import("./email-template");
+	return renderNoticeEmail(notice, appBaseUrl(env));
+}
 
 /** Nome de domínio válido (letras, números e hífens em rótulos separados por ponto): vai para o caminho da URL. */
 const DOMAIN_RE = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i;
@@ -34,15 +37,28 @@ export function mailgunBase(env: NodeJS.ProcessEnv = process.env): string {
 	return env.MAILGUN_REGION?.trim().toLowerCase() === "eu" ? "https://api.eu.mailgun.net" : "https://api.mailgun.net";
 }
 
-function rateLimitWait(res: Response): number | undefined {
-	const reset = Number(res.headers.get("x-ratelimit-reset")); // Mailgun: milissegundos Unix
-	if (Number.isFinite(reset) && reset > 1e12) {
-		const s = Math.ceil((reset - Date.now()) / 1000);
-		if (s > 0) return s;
+const MAX_WAIT_S = 60;
+
+/**
+ * Espera pedida num 429, em segundos inteiros entre 1 e 60 (o `notify` ainda limita ao que cabe no orçamento de tempo).
+ * Fonte: documentação do Mailgun (https://documentation.mailgun.com/docs/mailgun/api-reference/api-overview): `X-RateLimit-Reset`
+ * é um instante Unix em MILISSEGUNDOS (UTC); a página não cita `Retry-After`. Por segurança aceita também um instante em
+ * segundos e, em `Retry-After`, uma quantidade de segundos. Valor inválido, no passado ou absurdo vira `undefined`.
+ */
+export function rateLimitWait(res: Pick<Response, "headers">, now: number = Date.now()): number | undefined {
+	const clamp = (s: number) => (Number.isFinite(s) && s > 0 ? Math.min(MAX_WAIT_S, Math.max(1, Math.ceil(s))) : undefined);
+	const reset = Number(res.headers.get("x-ratelimit-reset"));
+	if (Number.isFinite(reset) && reset > 0) {
+		const ms = reset > 1e11 ? reset : reset * 1000; // >1e11: já em ms; senão, segundos Unix
+		const wait = clamp((ms - now) / 1000);
+		if (wait !== undefined) return wait;
 	}
-	const retry = Number(res.headers.get("retry-after"));
-	return Number.isFinite(retry) && retry > 0 ? retry : undefined;
+	const retry = res.headers.get("retry-after");
+	return retry && /^\d+$/.test(retry.trim()) ? clamp(Number(retry)) : undefined;
 }
+
+/** Um único endereço (sem vírgula, ponto e vírgula, espaço, `<>` nem aspas): o campo `to` do Mailgun aceita lista. */
+export const isSingleAddress = (a: string): boolean => /^[^\s,;<>"]+@[^\s,;<>"]+$/.test(a);
 
 /**
  * Envia pela API HTTP do Mailgun (fetch direto, sem SDK). Sem chave, domínio válido e remetente, não faz nada. Devolve se enviou.
@@ -53,10 +69,15 @@ export async function sendEmail(to: string, notice: Notice, env: NodeJS.ProcessE
 	if (!emailConfigured(env)) return false;
 	const key = env.MAILGUN_SENDING_KEY as string;
 	const domain = env.MAILGUN_DOMAIN as string;
+	const address = oneLine(to);
+	if (!isSingleAddress(address)) {
+		console.error("e-mail não enviado: destinatário inválido");
+		return false;
+	}
 	const { subject, html, text } = rendered ?? (await renderEmail(notice, env));
 	const form = new URLSearchParams({
 		from: oneLine(env.EMAIL_FROM as string),
-		to: oneLine(to),
+		to: address,
 		subject: oneLine(subject),
 		html,
 		text,

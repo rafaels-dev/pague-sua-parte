@@ -98,7 +98,7 @@ export function NoticeEmail({ notice, baseUrl }: Readonly<{ notice: Notice; base
 													<table role="presentation" width="100%" cellPadding={0} cellSpacing={0} border={0}>
 														<tbody>
 															<tr>
-																<td className="dm-ink" style={text({ fontSize: 26, lineHeight: "32px", fontWeight: 700 })}>
+																<td>
 																	<h1 className="dm-ink" style={text({ fontSize: 26, lineHeight: "32px", fontWeight: 700 })}>{oneLine(notice.title)}</h1>
 																</td>
 															</tr>
@@ -112,8 +112,8 @@ export function NoticeEmail({ notice, baseUrl }: Readonly<{ notice: Notice; base
 																	<td style={{ paddingTop: 16 }}>
 																		<table role="presentation" width="100%" cellPadding={0} cellSpacing={0} border={0}>
 																			<tbody>
-																				{notice.list.map((item) => (
-																					<tr key={item}>
+																				{notice.list.map((item, i) => (
+																					<tr key={i}>
 																						<td className="dm-brand" valign="top" width={28} style={text({ fontSize: 18, lineHeight: "28px", fontWeight: 700, color: C.primary, paddingBottom: 8 })}>
 																							&#8226;
 																						</td>

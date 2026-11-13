@@ -5,7 +5,8 @@ import { getDb } from "@/lib/db/client";
 import { emailConfigured } from "@/lib/notifications/email";
 import { pushConfigured } from "@/lib/notifications/push";
 import { normalizeNotifyPrefs } from "@/lib/notifications/prefs";
-import { updateNotifyPrefs, upsertFromAuth, type UserDoc } from "@/lib/users/repo";
+import { updateNotifyPrefs, type UserDoc } from "@/lib/users/repo";
+import { upsertAndWelcome } from "@/lib/notifications/welcome";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +27,7 @@ const handleError = (err: unknown) => sharedHandleError(err, "api/me/notificatio
 export async function GET(request: Request) {
 	try {
 		const user = await requireUser(request);
-		return Response.json(view(await upsertFromAuth(await getDb(), user)));
+		return Response.json(view(await upsertAndWelcome(await getDb(), user)));
 	} catch (err) {
 		return handleError(err);
 	}
@@ -39,7 +40,7 @@ export async function PATCH(request: Request) {
 		const parsed = bodySchema.safeParse(json);
 		if (!parsed.success) return jsonError("Pedido inválido.", 422);
 		const db = await getDb();
-		const current = await upsertFromAuth(db, user);
+		const current = await upsertAndWelcome(db, user);
 		const updated = (await updateNotifyPrefs(db, user.uid, parsed.data)) ?? current;
 		return Response.json(view(updated));
 	} catch (err) {

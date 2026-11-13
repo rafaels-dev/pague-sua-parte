@@ -1,6 +1,5 @@
 import type { Db } from "mongodb";
 import type { AuthUser } from "@/lib/auth/server";
-import { afterWelcome } from "@/lib/notifications/welcome";
 import type { PixKey } from "@/lib/pix/key";
 
 export type UserDoc = {
@@ -22,8 +21,11 @@ export function usersCollection(db: Db) {
 	return db.collection<UserDoc>("users");
 }
 
-/** Cria no primeiro login; depois atualiza nome/e-mail/foto. Nunca mexe em pixKey/displayName. */
-export async function upsertFromAuth(db: Db, user: AuthUser): Promise<UserDoc> {
+/**
+ * Cria no primeiro login; depois atualiza nome/e-mail/foto. Nunca mexe em pixKey/displayName.
+ * `created` é verdadeiro só para quem de fato inseriu (resultado do upsert): é a base das boas-vindas, que ficam fora deste arquivo.
+ */
+export async function upsertFromAuth(db: Db, user: AuthUser): Promise<{ user: UserDoc; created: boolean }> {
 	const now = new Date();
 	const $set: Partial<UserDoc> = { email: user.email, emailVerified: user.emailVerified, name: user.name, updatedAt: now };
 	const update: Record<string, unknown> = { $set, $setOnInsert: { createdAt: now } };
@@ -38,8 +40,7 @@ export async function upsertFromAuth(db: Db, user: AuthUser): Promise<UserDoc> {
 	});
 	const doc = res?.value;
 	if (!doc) throw new Error("Falha ao gravar o usuário.");
-	if (res.lastErrorObject?.upserted !== undefined) afterWelcome({ uid: doc._id, name: doc.name, displayName: doc.displayName }); // conta nova: boas-vindas uma única vez
-	return doc;
+	return { user: doc, created: res.lastErrorObject?.upserted !== undefined };
 }
 
 /** `pixKey: null` remove a chave. Campos ausentes não são alterados. */
