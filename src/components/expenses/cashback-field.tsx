@@ -5,8 +5,8 @@ import { Button, MoneyField, SegmentedButton } from "@/components/ui";
 import type { CashbackMode } from "@/lib/expenses/cashback";
 
 const MODES = [
-	{ value: "spread", label: "Dividir entre todas as parcelas" },
-	{ value: "first", label: "Tudo na primeira parcela" },
+	{ value: "first", label: "Abater da primeira parcela" },
+	{ value: "spread", label: "Dividir igual em todas as parcelas" },
 ] as const;
 
 /**
@@ -43,9 +43,9 @@ export function CashbackField({
 	return (
 		<div className="space-y-3">
 			<MoneyField id="campo-cashback" label="Cashback (se teve)" cents={cents} onChange={onCents} error={error} supportingText={summary ?? "O cashback baixa o valor que o grupo divide."} />
-			{installments && cents > 0 && (
+			{installments && (
 				<div className="space-y-2">
-					<p className="text-title-medium text-on-surface-variant">Como entra nas parcelas?</p>
+					<p className="text-title-medium text-on-surface-variant">Como abater o cashback?</p>
 					<SegmentedButton label="Como o cashback entra nas parcelas" value={mode} options={MODES} onChange={onMode} />
 				</div>
 			)}
