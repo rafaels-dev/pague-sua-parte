@@ -2,6 +2,10 @@
 
 import { ShareExpenseContent } from "@/components/expenses/expense-share";
 import { InviteErrorContent, InviteMemberContent, InviteShell } from "@/components/groups/invite-accept";
+import { MemberSheetContent } from "@/components/groups/member-sheet";
+import { GroupDetailView } from "@/components/groups/group-detail";
+import { ExpenseListView } from "@/components/expenses/expense-list";
+import { Button } from "@/components/ui";
 import { NotMemberState } from "@/components/groups/not-member";
 import { buildExpenseShareText, shareIntro } from "@/lib/ui/expense-share";
 import { expenseShareLink, SOLO_SHARE_EXPENSE_HINT, SOLO_SHARE_NOTICE } from "@/lib/ui/share-link";
@@ -10,7 +14,7 @@ import { GoogleButtonView } from "@/components/auth/sign-in-button";
 import { LandingView } from "@/components/landing-view";
 import { todayISO } from "@/lib/ui/dates";
 import { nextDayOfMonth } from "@/lib/ui/due-dates";
-import { MockHomePlans, MockPlan, MockPlanClose, MockPlanForm, MockPlanInvite, MockPlanList, MockPlanShare } from "../plan-mocks";
+import { MockHomePlans, MockPlan, MockPlanClose, MockPlanForm, MockPlanInvite, MockPlanInviteClosed, MockPlanList, MockPlanShare } from "../plan-mocks";
 import { buildAdvanceShareText } from "@/lib/payments/advance";
 import { MockPayAll } from "../pay-all-mocks";
 import { MockReceivables } from "../receivables-mocks";
@@ -153,6 +157,34 @@ export function Telas({ tela }: Readonly<{ tela: string }>) {
 			return <MockPlanClose fits={false} framed={false} />;
 		case "plano-convite":
 			return <MockPlanInvite />;
+		case "plano-convite-confirmado":
+			return <MockPlanInviteClosed />;
+		case "plano-convite-vencido":
+			return (
+				<InviteShell>
+					<InviteErrorContent message="Este plano já virou o grupo e o link não vale mais. Peça o link do grupo a quem te convidou." onRetry={() => {}} />
+				</InviteShell>
+			);
+		case "grupo-remover":
+			return (
+				<MockShell pathname="/app/grupos/1" framed={false}>
+					<div className="space-y-4 rounded-shape-lg bg-surface-container-low p-5">
+						<h2 className="text-title-large">Maria das Dores Silva</h2>
+						<MemberSheetContent member={{ name: "Maria das Dores Silva", role: "member" }} busy={false} error={null} confirmingRemove allowReturn onAllowReturn={() => {}} onToggleRole={() => {}} onAskRemove={() => {}} onCancelRemove={() => {}} onConfirmRemove={() => {}} />
+					</div>
+				</MockShell>
+			);
+		case "grupo-nao-voltam":
+			return (
+				<MockShell pathname="/app/grupos/1" framed={false}>
+					<GroupDetailView
+						group={{ ...MOCK_GROUP, role: "admin", blocked: [{ uid: "x1", name: "Carlos Pereira" }, { uid: "x2", name: "Maria das Dores Silva" }] }}
+						invite={<Button icon="share" fullWidth className="md:w-auto">Convidar pessoas</Button>}
+						expenses={<ExpenseListView groupId="1" state={{ kind: "ready", expenses: [] }} />}
+						onAllowReturn={() => {}}
+					/>
+				</MockShell>
+			);
 		case "plano-lista":
 			return <MockPlanList framed={false} />;
 		case "nao-membro":

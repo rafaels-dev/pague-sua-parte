@@ -1,10 +1,11 @@
 import { ObjectId, type Db } from "mongodb";
 import { loadPeople } from "@/lib/expenses/repo";
 import { isObjectIdHex, isPlausibleToken, generateInviteToken } from "@/lib/groups/helpers";
-import { groupsCollection } from "@/lib/groups/repo";
+import { groupsCollection, joinGroupById } from "@/lib/groups/repo";
 import { deleteAttachments, putPlanAttachment, randomId, type AttachmentMeta, type AttachmentStore } from "@/lib/storage/attachments";
 import type { SniffedFile } from "@/lib/expenses/validation";
 import { recoverIfStale } from "./closing";
+import { groupLinkOpen } from "./group-link";
 import { allCountOf, buildPlanSummary, buildPlanView, canAnswerFor, type PersonInfo, type PlanSummary, type PlanView } from "./view";
 import { maxShare, type PlanComputation } from "./compute";
 import {
@@ -302,29 +303,72 @@ export type PlanInvitePreview = {
 	alreadyParticipant: boolean;
 };
 
+/** Plano do link (qualquer status; o chamador decide o que cada um permite). Convite vencido ou token estranho = null. */
 async function findByToken(db: Db, token: string, now: Date): Promise<PlanDoc | null> {
 	if (!isPlausibleToken(token)) return null;
-	return plansCollection(db).findOne({ "invite.token": token, "invite.expiresAt": { $gt: now }, status: "open" });
+	return plansCollection(db).findOne({ "invite.token": token, "invite.expiresAt": { $gt: now } });
 }
 
-export async function previewPlanInvite(db: Db, token: string, uid: string): Promise<PlanInvitePreview | null> {
-	const plan = await findByToken(db, token, new Date());
+/**
+ * Plano que já virou grupo (`done`): o link deixa a pessoa entrar no grupo, até o último dia do prazo (`groupLinkOpen`) E enquanto o
+ * convite (`invite.expiresAt`, já conferido em `findByToken`) valer: vale o que vencer primeiro. `closing` e `cancelled` não entram.
+ */
+const isClosedWithGroup = (plan: PlanDoc): plan is PlanDoc & { groupId: string } => plan.status === "done" && typeof plan.groupId === "string";
+
+/** Prévia de um plano que já virou grupo: só nomes. Sem valores, placar, limites, pessoas, data nem chave Pix. */
+export type PlanInviteClosedPreview = {
+	closed: true;
+	planName: string;
+	groupName: string;
+	creatorName: string;
+	alreadyMember: boolean;
+	/** Só para quem já é membro (a tela leva direto ao grupo). */
+	groupId?: string;
+};
+/** O prazo do link de um plano que virou grupo acabou. Não revela nome do plano nem do grupo. */
+export type PlanInviteGone = { gone: true };
+
+export async function previewPlanInvite(db: Db, token: string, uid: string): Promise<PlanInvitePreview | PlanInviteClosedPreview | PlanInviteGone | null> {
+	const now = new Date();
+	const plan = await findByToken(db, token, now);
 	if (!plan) return null;
+	if (plan.status === "open") {
+		const info = await loadInfo(db, plan);
+		return {
+			planId: plan._id.toHexString(),
+			planName: plan.name,
+			creatorName: info(plan.createdBy).name,
+			totalCents: plan.totalCents,
+			eventDate: plan.eventDate ?? null,
+			peopleCount: peopleOf(plan).length,
+			allCount: allCountOf(plan.expectedPeople, peopleOf(plan).length),
+			shareIfAllCents: maxShare(plan.totalCents, allCountOf(plan.expectedPeople, peopleOf(plan).length)),
+			alreadyParticipant: plan.participants.some((p) => p.uid === uid),
+		};
+	}
+	if (!isClosedWithGroup(plan)) return null;
+	if (!groupLinkOpen(plan, now)) return { gone: true };
+	if (!isObjectIdHex(plan.groupId)) return null;
+	const group = await groupsCollection(db).findOne({ _id: new ObjectId(plan.groupId) }, { projection: { name: 1, members: 1, planLinkOff: 1 } });
+	if (!group) return null;
+	if (group.planLinkOff) return { gone: true }; // o administrador girou o link do grupo
 	const info = await loadInfo(db, plan);
-	return {
-		planId: plan._id.toHexString(),
-		planName: plan.name,
-		creatorName: info(plan.createdBy).name,
-		totalCents: plan.totalCents,
-		eventDate: plan.eventDate ?? null,
-		peopleCount: peopleOf(plan).length,
-		allCount: allCountOf(plan.expectedPeople, peopleOf(plan).length),
-		shareIfAllCents: maxShare(plan.totalCents, allCountOf(plan.expectedPeople, peopleOf(plan).length)),
-		alreadyParticipant: plan.participants.some((p) => p.uid === uid),
-	};
+	const alreadyMember = group.members.some((m) => m.uid === uid);
+	return { closed: true, planName: plan.name, groupName: group.name, creatorName: info(plan.createdBy).name, alreadyMember, ...(alreadyMember ? { groupId: plan.groupId } : {}) };
 }
 
-export type AcceptPlanResult = { status: "ok"; planId: string; joined?: true } | { status: "invalid" } | { status: "full" } | { status: "removed" };
+export type AcceptPlanResult =
+	| { status: "ok"; planId: string; joined?: true }
+	/** Plano já virou grupo: entrou (ou já era membro) no grupo. Nunca mexe no plano. */
+	| { status: "group"; groupId: string; joined?: true }
+	| { status: "invalid" }
+	/** Prazo do link de um plano que virou grupo acabou. */
+	| { status: "gone" }
+	| { status: "full" }
+	| { status: "group_full" }
+	| { status: "removed" }
+	/** Removido do GRUPO pelo administrador: não volta pelo link do plano. */
+	| { status: "group_removed" };
 
 export async function acceptPlanInvite(db: Db, token: string, uid: string): Promise<AcceptPlanResult> {
 	if (!isPlausibleToken(token)) return { status: "invalid" };
@@ -346,6 +390,22 @@ export async function acceptPlanInvite(db: Db, token: string, uid: string): Prom
 	if (res) return { status: "ok", planId: res._id.toHexString(), joined: true };
 	const plan = await findByToken(db, token, now);
 	if (!plan) return { status: "invalid" };
+	if (isClosedWithGroup(plan)) {
+		// Plano que virou grupo: qualquer pessoa com o link entra SÓ no grupo (membro comum, sem parte em despesa nenhuma),
+		// menos quem o criador tirou do plano. O plano não ganha participante.
+		if (!groupLinkOpen(plan, now)) return { status: "gone" };
+		if (plan.removed?.includes(uid)) {
+			// Removido do plano continua barrado, mas quem JÁ é membro do grupo recebe `ok` (idempotente).
+			const member = !isObjectIdHex(plan.groupId) ? null : await groupsCollection(db).findOne({ _id: new ObjectId(plan.groupId), "members.uid": uid }, { projection: { _id: 1 } });
+			if (!member) return { status: "removed" };
+		}
+		const joined = await joinGroupById(db, plan.groupId, uid);
+		if (joined.status === "ok") return { status: "group", groupId: joined.groupId, ...(joined.joined ? { joined: true as const } : {}) };
+		if (joined.status === "removed") return { status: "group_removed" };
+		if (joined.status === "gone") return { status: "gone" };
+		return { status: joined.status === "full" ? "group_full" : "invalid" };
+	}
+	if (plan.status !== "open") return { status: "invalid" };
 	if (plan.participants.some((p) => p.uid === uid)) return { status: "ok", planId: plan._id.toHexString() };
 	if (plan.removed?.includes(uid)) return { status: "removed" };
 	return { status: "full" };

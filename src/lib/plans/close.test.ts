@@ -63,6 +63,7 @@ describe("closePlan", () => {
 		expect(args.input.paidByUid).toBeUndefined();
 		const saved = f.data.plans[0];
 		expect(saved).toMatchObject({ status: "done", groupName: "Viagem", groupId: group._id.toHexString(), expenseId: args.expenseId });
+		expect((saved as { closedAt?: unknown }).closedAt).toBeInstanceOf(Date);
 		expect(saved.closing).toBeUndefined();
 		expect(r.status === "ok" && r.notChosenGoing.sort()).toEqual(["bia", "pg_2"]);
 	});

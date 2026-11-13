@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ObjectId, type Db } from "mongodb";
-import { acceptInvite, createGroup, getGroupDetail, getOrCreateInvite, listGroups, previewInvite, removeMember, setMemberRole } from "./repo";
+import { acceptInvite, allowReturnToGroup, joinGroupById, createGroup, getGroupDetail, getOrCreateInvite, listGroups, previewInvite, removeMember, setMemberRole } from "./repo";
 
 const GID = "507f1f77bcf86cd799439011";
 const TOKEN = "t".repeat(43);
@@ -231,6 +231,120 @@ describe("acceptInvite", () => {
 	});
 });
 
+describe("joinGroupById (entrada sem token do grupo)", () => {
+	it("update atômico por _id: membro comum, ainda fora, com teto", async () => {
+		const { db, groups } = mockDb({});
+		groups.findOneAndUpdate.mockResolvedValue({ _id: new ObjectId(GID) });
+		expect(await joinGroupById(db, GID, "u3")).toEqual({ status: "ok", groupId: GID, joined: true });
+		const [filter, update] = groups.findOneAndUpdate.mock.calls[0];
+		expect(filter._id).toEqual(new ObjectId(GID));
+		expect(filter["members.uid"]).toEqual({ $ne: "u3" });
+		expect(filter["members.49"]).toEqual({ $exists: false });
+		expect(update.$push.members).toMatchObject({ uid: "u3", role: "member" });
+	});
+	it("o filtro atômico recusa removido pelo administrador e grupo com o link do plano desligado", async () => {
+		const { db, groups } = mockDb({});
+		groups.findOneAndUpdate.mockResolvedValue({ _id: new ObjectId(GID) });
+		await joinGroupById(db, GID, "u3");
+		const [filter] = groups.findOneAndUpdate.mock.calls[0];
+		expect(filter.removedUids).toEqual({ $ne: "u3" });
+		expect(filter.planLinkOff).toEqual({ $ne: true });
+	});
+	it("explica a recusa: removed e gone (depois de conferir que não é membro)", async () => {
+		const { db, groups } = mockDb({});
+		groups.findOneAndUpdate.mockResolvedValue(null);
+		groups.findOne.mockResolvedValue(group({ removedUids: ["u3"] }));
+		expect(await joinGroupById(db, GID, "u3")).toEqual({ status: "removed" });
+		groups.findOne.mockResolvedValue(group({ planLinkOff: true }));
+		expect(await joinGroupById(db, GID, "u3")).toEqual({ status: "gone" });
+		expect(await joinGroupById(db, GID, "u2")).toEqual({ status: "ok", groupId: GID });
+	});
+	it("idempotente, cheio, inexistente e uid de pessoa cuidada", async () => {
+		const { db, groups } = mockDb({});
+		groups.findOneAndUpdate.mockResolvedValue(null);
+		groups.findOne.mockResolvedValue(group());
+		expect(await joinGroupById(db, GID, "u2")).toEqual({ status: "ok", groupId: GID });
+		expect(await joinGroupById(db, GID, "u3")).toEqual({ status: "full" });
+		groups.findOne.mockResolvedValue(null);
+		expect(await joinGroupById(db, GID, "u3")).toEqual({ status: "invalid" });
+		expect(await joinGroupById(db, "x", "u3")).toEqual({ status: "invalid" });
+		expect(await joinGroupById(db, GID, "m_ben")).toEqual({ status: "invalid" });
+	});
+});
+
+describe("removidos e link do grupo girado", () => {
+	it("acceptInvite (convite do grupo) barra quem está em removedUids no filtro atômico e não mexe na lista", async () => {
+		const { db, groups } = mockDb({});
+		groups.findOneAndUpdate.mockResolvedValue({ _id: new ObjectId(GID) });
+		await acceptInvite(db, TOKEN, "u3");
+		const [filter, update] = groups.findOneAndUpdate.mock.calls[0];
+		expect(filter.removedUids).toEqual({ $ne: "u3" });
+		expect(update.$pull).toBeUndefined();
+	});
+	it("acceptInvite explica: bloqueado = removed; membro continua ok", async () => {
+		const { db, groups } = mockDb({});
+		groups.findOneAndUpdate.mockResolvedValue(null);
+		groups.findOne.mockResolvedValue(group({ invite: { token: TOKEN, expiresAt: future() }, removedUids: ["u3"] }));
+		expect(await acceptInvite(db, TOKEN, "u3")).toEqual({ status: "removed" });
+		expect(await acceptInvite(db, TOKEN, "u2")).toEqual({ status: "ok", groupId: GID });
+	});
+	it("removeMember com allowReturn=false grava em removedUids (limitado), na mesma escrita; pessoa cuidada nunca", async () => {
+		const { db, groups } = mockDb({ groups: { updateOne: vi.fn().mockResolvedValue({ matchedCount: 1 }) } });
+		await removeMember(db, GID, "u1", "u2", false);
+		const u = groups.updateOne.mock.calls[0][1];
+		expect(u.$push.removedUids).toEqual({ $each: ["u2"], $slice: -200 });
+		expect(u.$pull).toEqual({ members: { uid: "u2" } });
+		await removeMember(db, GID, "u1", "m_ben", false);
+		expect(groups.updateOne.mock.calls[1][1].$push).toBeUndefined();
+		expect(groups.updateOne.mock.calls[1][1].$pull).toEqual({ members: { uid: "m_ben" } });
+	});
+	it("removeMember com allowReturn=true (padrão) limpa um bloqueio anterior", async () => {
+		const { db, groups } = mockDb({ groups: { updateOne: vi.fn().mockResolvedValue({ matchedCount: 1 }) } });
+		await removeMember(db, GID, "u1", "u2");
+		await removeMember(db, GID, "u1", "u2", true);
+		for (const i of [0, 1]) expect(groups.updateOne.mock.calls[i][1].$pull.removedUids).toBe("u2");
+	});
+	it("allowReturnToGroup: só admin (filtro), idempotente; membro comum forbidden, fora do grupo not_found", async () => {
+		const { db, groups } = mockDb({ groups: { updateOne: vi.fn().mockResolvedValue({ matchedCount: 1 }) } });
+		expect(await allowReturnToGroup(db, GID, "u1", "x")).toEqual({ status: "ok" });
+		const [filter, update] = groups.updateOne.mock.calls[0];
+		expect(filter.members).toEqual({ $elemMatch: { uid: "u1", role: "admin" } });
+		expect(update.$pull).toEqual({ removedUids: "x" });
+		groups.updateOne.mockResolvedValue({ matchedCount: 0 });
+		groups.findOne.mockResolvedValue(group());
+		expect(await allowReturnToGroup(db, GID, "u2", "x")).toEqual({ status: "forbidden" });
+		groups.findOne.mockResolvedValue(null);
+		expect(await allowReturnToGroup(db, GID, "zz", "x")).toEqual({ status: "not_found" });
+		expect(await allowReturnToGroup(db, "x", "u1", "x")).toEqual({ status: "not_found" });
+	});
+	it("a lista de bloqueados só vai para o administrador", async () => {
+		const users = [{ _id: "x1", name: "Carlos" }, { _id: "u1", name: "Adm" }, { _id: "u2", name: "Mem" }];
+		const g = group({ removedUids: ["x1"] });
+		const a = mockDb({ users });
+		a.groups.findOne.mockResolvedValue(g);
+		const asAdmin = await getGroupDetail(a.db, GID, "u1");
+		expect(asAdmin?.blocked).toEqual([{ uid: "x1", name: "Carlos" }]);
+		const m = mockDb({ users });
+		m.groups.findOne.mockResolvedValue(g);
+		const asMember = await getGroupDetail(m.db, GID, "u2");
+		expect(asMember).not.toHaveProperty("blocked");
+		expect(JSON.stringify(asMember)).not.toContain("x1");
+	});
+	it("só regenerate explícito liga planLinkOff; a renovação automática não", async () => {
+		const adm = group();
+		const a = mockDb({});
+		a.groups.findOne.mockResolvedValue(adm);
+		a.groups.updateOne.mockResolvedValue({ matchedCount: 1 });
+		await getOrCreateInvite(a.db, GID, "u1", true);
+		expect(a.groups.updateOne.mock.calls[0][1].$set.planLinkOff).toBe(true);
+		const b = mockDb({});
+		b.groups.findOne.mockResolvedValue(group({ invite: { token: TOKEN, expiresAt: past() } }));
+		b.groups.updateOne.mockResolvedValue({ matchedCount: 1 });
+		await getOrCreateInvite(b.db, GID, "u2", false);
+		expect(b.groups.updateOne.mock.calls[0][1].$set.planLinkOff).toBeUndefined();
+	});
+});
+
 describe("setMemberRole / removeMember", () => {
 	const matched = { matchedCount: 1 };
 	const none = { matchedCount: 0 };
@@ -263,7 +377,8 @@ describe("setMemberRole / removeMember", () => {
 		const [filter, update] = groups.updateOne.mock.calls[0];
 		expect(filter.members).toEqual({ $elemMatch: { uid: "u1", role: "admin" } });
 		expect(filter["members.uid"]).toBe("u2");
-		expect(update.$pull).toEqual({ members: { uid: "u2" } });
+		expect(update.$pull).toEqual({ members: { uid: "u2" }, removedUids: "u2" }); // padrão: pode voltar, sem bloqueio
+		expect(update.$push).toBeUndefined();
 		// O convite vigente é revogado junto com a remoção.
 		expect(update.$set.invite).toBeNull();
 	});

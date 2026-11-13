@@ -17,7 +17,14 @@ export type Member = {
 	/** Só vem para pessoas sem celular quando `canEdit`. */
 	pixKey: { type: PixKeyType; key: string } | null;
 };
-export type Group = { id: string; name: string; role: "admin" | "member"; members: Member[] };
+export type Group = {
+	id: string;
+	name: string;
+	role: "admin" | "member";
+	members: Member[];
+	/** Só para o administrador: quem não pode voltar por nenhum link. */
+	blocked?: { uid: string; name: string }[];
+};
 
 type RawMember = Partial<Member> & Pick<Member, "uid" | "name">;
 

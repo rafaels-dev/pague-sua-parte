@@ -7,6 +7,8 @@ export function MemberSheetContent({
 	busy,
 	error,
 	confirmingRemove,
+	allowReturn = true,
+	onAllowReturn,
 	onToggleRole,
 	onAskRemove,
 	onCancelRemove,
@@ -16,6 +18,9 @@ export function MemberSheetContent({
 	busy: boolean;
 	error: string | null;
 	confirmingRemove: boolean;
+	/** "Permitir que a pessoa volte ao grupo" (marcado por padrão). */
+	allowReturn?: boolean;
+	onAllowReturn?: (value: boolean) => void;
 	onToggleRole: () => void;
 	onAskRemove: () => void;
 	onCancelRemove: () => void;
@@ -30,7 +35,14 @@ export function MemberSheetContent({
 	if (confirmingRemove) {
 		return (
 			<div className="space-y-4">
-				<p className="text-body-large text-on-surface">Remover {member.name} do grupo? Essa pessoa só volta com um novo convite.</p>
+				<p className="text-body-large text-on-surface">Remover {member.name} do grupo?</p>
+				<label className="flex cursor-pointer items-start gap-3">
+					<input type="checkbox" checked={allowReturn} disabled={busy} onChange={(e) => onAllowReturn?.(e.target.checked)} className="mt-0.5 size-6 shrink-0 cursor-pointer accent-primary" />
+					<span className="space-y-1">
+						<span className="block text-body-large">Permitir que a pessoa volte ao grupo</span>
+						<span className="block text-body-medium text-on-surface-variant">Se desmarcar, ela não entra de novo por nenhum link.</span>
+					</span>
+				</label>
 				{errorBanner}
 				<div className="flex flex-col gap-3">
 					<Button onClick={onConfirmRemove} loading={busy} fullWidth className="bg-error! text-on-error!">

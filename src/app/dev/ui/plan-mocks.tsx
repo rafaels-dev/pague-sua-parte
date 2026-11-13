@@ -7,7 +7,7 @@ import { ShareExpenseContent } from "@/components/expenses/expense-share";
 import { PlanCloseView, initialClose, type CloseValues } from "@/components/plans/plan-close";
 import { PlanDetailView } from "@/components/plans/plan-detail";
 import { PlanFormView, EMPTY_PLAN_VALUES, type PlanFormValues } from "@/components/plans/plan-form";
-import { PlanInviteReady } from "@/components/plans/plan-invite-accept";
+import { PlanInviteClosed, PlanInviteReady } from "@/components/plans/plan-invite-accept";
 import { PlansSectionView } from "@/components/plans/plan-list";
 import { Sheet } from "@/components/ui";
 import { AttachmentPicker } from "@/components/expenses/attachment-picker";
@@ -223,6 +223,16 @@ export function MockPlanInvite() {
 					acceptError={null}
 					onAccept={noop}
 				/>
+			</div>
+		</main>
+	);
+}
+
+export function MockPlanInviteClosed() {
+	return (
+		<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center gap-8 px-5 py-10">
+			<div className="flex flex-col gap-5 rounded-shape-lg bg-surface-container-low p-6">
+				<PlanInviteClosed invite={{ planName: "Hotel da viagem de fim de ano", groupName: "Viagem de fim de ano" }} accepting={false} acceptError={null} onAccept={noop} />
 			</div>
 		</main>
 	);

@@ -41,6 +41,8 @@ export type PlanDoc = {
 	closing?: { at: Date; attemptId: string; groupId: string; /** Ausente quando o fechamento é só do grupo. */ expenseId?: string };
 	/** Código da tentativa que concluiu o fechamento (para uma resposta perdida não desfazer um fechamento concluído). */
 	closedAttemptId?: string;
+	/** Quando o plano virou grupo (gravado junto com `done`). Planos antigos não têm: vale `updatedAt`, que não muda depois do `done`. */
+	closedAt?: Date;
 	/** Quem o criador tirou do plano: não volta pelo mesmo link. (Quem saiu por conta própria pode voltar.) */
 	removed?: string[];
 	/** Cresce a cada escrita (concorrência otimista). */

@@ -32,9 +32,15 @@ export type GroupDoc = {
 	createdBy: string;
 	members: GroupMember[];
 	invite: { token: string; expiresAt: Date } | null;
+	/** Quem o administrador removeu (só pessoas com login; no máximo `MAX_REMOVED_UIDS`). Só entra aqui quem foi removido com "Permitir que a pessoa volte" desmarcado: nenhum link (do grupo ou do plano) traz de volta até o administrador permitir. */
+	removedUids?: string[];
+	/** O administrador girou o link do grupo (`regenerate`): o link do plano que virou este grupo deixa de valer. */
+	planLinkOff?: true;
 	createdAt: Date;
 	updatedAt: Date;
 };
+
+export const MAX_REMOVED_UIDS = 200;
 
 export function groupsCollection(db: Db) {
 	return db.collection<GroupDoc>("groups");
@@ -78,7 +84,14 @@ export async function listGroups(db: Db, uid: string, now: Date = new Date()): P
 	}));
 }
 
-export type GroupDetail = { id: string; name: string; role: Role; members: MemberView[] };
+export type GroupDetail = {
+	id: string;
+	name: string;
+	role: Role;
+	members: MemberView[];
+	/** Quem não pode voltar por nenhum link. SÓ vai para o administrador (nunca para membro comum). */
+	blocked?: { uid: string; name: string }[];
+};
 
 /** null se o id for inválido, o grupo não existir ou `uid` não for membro (indistinguíveis). */
 export async function getGroupDetail(db: Db, id: string, uid: string): Promise<GroupDetail | null> {
@@ -91,9 +104,10 @@ export async function getGroupDetail(db: Db, id: string, uid: string): Promise<G
 	// Projeção explícita: e-mail e chave Pix nunca saem do banco para esta resposta (só hasPixKey).
 	// Pessoas sem login não têm documento em `users`: o nome vem da entrada no grupo.
 	const realUids = group.members.filter((m) => m.kind !== "managed").map((m) => m.uid);
+	const blockedUids = role === "admin" ? (group.removedUids ?? []).filter((u) => !isManagedUid(u) && !realUids.includes(u)) : [];
 	const users = await usersCollection(db)
 		.find<Pick<UserDoc, "_id" | "name" | "displayName" | "picture"> & { hasPixKey?: boolean }>(
-			{ _id: { $in: realUids } },
+			{ _id: { $in: [...realUids, ...blockedUids] } },
 			{ projection: { name: 1, displayName: 1, picture: 1, pixKey: 1 } },
 		)
 		.toArray();
@@ -135,7 +149,8 @@ export async function getGroupDetail(db: Db, id: string, uid: string): Promise<G
 			canEdit: false,
 		};
 	});
-	return { id: group._id.toHexString(), name: group.name, role, members: sortMembers(members) };
+	const blocked = blockedUids.map((u) => ({ uid: u, name: realName(u) }));
+	return { id: group._id.toHexString(), name: group.name, role, members: sortMembers(members), ...(role === "admin" && blocked.length > 0 ? { blocked } : {}) };
 }
 
 export type InviteResult =
@@ -177,7 +192,8 @@ export async function getOrCreateInvite(
 				"members.uid": uid,
 				$or: [{ invite: null }, { "invite.expiresAt": { $lte: now } }],
 			};
-	const res = await groups.updateOne(filter, { $set: { invite, updatedAt: now } });
+	// Só o `regenerate` explícito desliga o link do plano que virou este grupo; a criação/renovação automática não.
+	const res = await groups.updateOne(filter, { $set: { invite, updatedAt: now, ...(regenerate ? { planLinkOff: true as const } : {}) } });
 	if (res.matchedCount > 0) return { status: "ok", ...invite };
 
 	// Perdeu a corrida (ou perdeu o acesso): releia.
@@ -207,7 +223,12 @@ export async function previewInvite(db: Db, token: string, uid: string): Promise
 	};
 }
 
-export type AcceptResult = { status: "ok"; groupId: string; /** Entrou agora (e não já era membro). */ joined?: true } | { status: "invalid" } | { status: "full" };
+export type AcceptResult =
+	| { status: "ok"; groupId: string; /** Entrou agora (e não já era membro). */ joined?: true }
+	| { status: "invalid" }
+	| { status: "full" }
+	/** O administrador removeu a pessoa e desmarcou "Permitir que a pessoa volte ao grupo": nenhum link a traz de volta. */
+	| { status: "removed" };
 
 export async function acceptInvite(db: Db, token: string, uid: string): Promise<AcceptResult> {
 	// Pessoas sem login nunca entram (nem agem) por convite: o uid vem sempre do token verificado.
@@ -221,6 +242,7 @@ export async function acceptInvite(db: Db, token: string, uid: string): Promise<
 			"invite.token": token,
 			"invite.expiresAt": { $gt: now },
 			"members.uid": { $ne: uid },
+			removedUids: { $ne: uid },
 			[`members.${MAX_MEMBERS - 1}`]: { $exists: false },
 		},
 		{ $push: { members: { uid, role: "member", joinedAt: now } }, $set: { updatedAt: now } },
@@ -231,6 +253,34 @@ export async function acceptInvite(db: Db, token: string, uid: string): Promise<
 	const group = await findByValidToken(db, token, now);
 	if (!group) return { status: "invalid" };
 	if (group.members.some((m) => m.uid === uid)) return { status: "ok", groupId: group._id.toHexString() };
+	if (group.removedUids?.includes(uid)) return { status: "removed" };
+	return { status: "full" };
+}
+
+export type JoinByIdResult = AcceptResult | { status: "gone" };
+
+/**
+ * Entra no grupo pelo id, SEM token de convite do grupo: quem chama já provou o direito por outro caminho (hoje, o link de um
+ * plano que virou este grupo, ainda dentro do prazo). Mesma regra de `acceptInvite`: membro comum, nunca administrador,
+ * idempotente, atômico e com o teto de pessoas. Quem já é membro volta `ok` sem `joined`. Recusa, no próprio filtro atômico,
+ * quem o administrador removeu (`removed`) e o grupo cujo link foi girado (`gone`, `planLinkOff`).
+ */
+export async function joinGroupById(db: Db, groupId: string, uid: string): Promise<JoinByIdResult> {
+	if (!isObjectIdHex(groupId) || isManagedUid(uid)) return { status: "invalid" };
+	const groups = groupsCollection(db);
+	const _id = new ObjectId(groupId);
+	const now = new Date();
+	const res = await groups.findOneAndUpdate(
+		{ _id, "members.uid": { $ne: uid }, removedUids: { $ne: uid }, planLinkOff: { $ne: true }, [`members.${MAX_MEMBERS - 1}`]: { $exists: false } },
+		{ $push: { members: { uid, role: "member", joinedAt: now } }, $set: { updatedAt: now } },
+		{ returnDocument: "after", projection: { _id: 1 } },
+	);
+	if (res) return { status: "ok", groupId, joined: true };
+	const group = await groups.findOne({ _id }, { projection: { members: 1, removedUids: 1, planLinkOff: 1 } });
+	if (!group) return { status: "invalid" };
+	if (group.members.some((m) => m.uid === uid)) return { status: "ok", groupId };
+	if (group.planLinkOff) return { status: "gone" };
+	if (group.removedUids?.includes(uid)) return { status: "removed" };
 	return { status: "full" };
 }
 
@@ -312,7 +362,7 @@ export async function setMemberRole(
 }
 
 /** Remove um membro real (sem ninguém sob seus cuidados) ou uma pessoa sem login. Só administradores. */
-export async function removeMember(db: Db, id: string, actorUid: string, targetUid: string): Promise<MemberActionResult> {
+export async function removeMember(db: Db, id: string, actorUid: string, targetUid: string, allowReturn = true): Promise<MemberActionResult> {
 	if (!isObjectIdHex(id)) return { status: "not_found" };
 	const groups = groupsCollection(db);
 	const _id = new ObjectId(id);
@@ -326,13 +376,28 @@ export async function removeMember(db: Db, id: string, actorUid: string, targetU
 			$nor: [{ members: { $elemMatch: { managedBy: targetUid } } }],
 		},
 		{
-			$pull: { members: { uid: targetUid } },
+			// Por padrão (`allowReturn`) a pessoa pode voltar por um link válido e sai da lista de bloqueados, se estava nela.
+			// Com `allowReturn: false` (só pessoa com login; pessoa cuidada nunca) vai para `removedUids`, que barra TODO link
+			// (do grupo e do plano) até o administrador permitir. Limite simples: os últimos MAX_REMOVED_UIDS.
+			$pull: isManagedUid(targetUid) || !allowReturn ? { members: { uid: targetUid } } : { members: { uid: targetUid }, removedUids: targetUid },
+			...(isManagedUid(targetUid) || allowReturn ? {} : { $push: { removedUids: { $each: [targetUid], $slice: -MAX_REMOVED_UIDS } } }),
 			// Invalida o convite atual na mesma operação: quem foi removido não volta com o link antigo.
 			$set: { invite: null, updatedAt: new Date() },
 		},
 	);
 	if (res.matchedCount > 0) return { status: "ok" };
 	return explainNoMatch(db, _id, actorUid, targetUid, opts);
+}
+
+/** "Permitir voltar": só administrador; tira o uid da lista de bloqueados (idempotente). A pessoa entra de novo por um link. */
+export async function allowReturnToGroup(db: Db, id: string, actorUid: string, targetUid: string): Promise<{ status: "ok" | "not_found" | "forbidden" }> {
+	if (!isObjectIdHex(id)) return { status: "not_found" };
+	const groups = groupsCollection(db);
+	const _id = new ObjectId(id);
+	const res = await groups.updateOne({ _id, members: { $elemMatch: { uid: actorUid, role: "admin" } } }, { $pull: { removedUids: targetUid }, $set: { updatedAt: new Date() } });
+	if (res.matchedCount > 0) return { status: "ok" };
+	const g = await groups.findOne({ _id, "members.uid": actorUid }, { projection: { _id: 1 } });
+	return { status: g ? "forbidden" : "not_found" };
 }
 
 // ---------- pessoas sem login ----------

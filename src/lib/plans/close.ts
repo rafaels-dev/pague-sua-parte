@@ -140,7 +140,7 @@ export async function closePlan(
 		}
 		const done = await plansCollection(db).updateOne(
 			{ _id: plan._id, status: "closing", "closing.attemptId": attemptId },
-			{ $set: { status: "done", closedAttemptId: attemptId, groupId: closing.groupId, groupName: input.groupName, ...(closing.expenseId ? { expenseId: closing.expenseId } : {}), updatedAt: new Date() }, $unset: { closing: "" }, $inc: { version: 1 } },
+			{ $set: { status: "done", closedAttemptId: attemptId, closedAt: new Date(), groupId: closing.groupId, groupName: input.groupName, ...(closing.expenseId ? { expenseId: closing.expenseId } : {}), updatedAt: new Date() }, $unset: { closing: "" }, $inc: { version: 1 } },
 		);
 		if (done.matchedCount === 0) {
 			// A recuperação desfez esta tentativa (ela demorou demais): apaga só o que ELA criou e falha limpo.

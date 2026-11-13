@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ id: string; uid: string }> };
 
+const removeSchema = z.object({ allowReturn: z.boolean().optional() });
 const bodySchema = z.object({ role: z.enum(["admin", "member"]) });
 
 function joinNames(names: string[]): string {
@@ -61,7 +62,21 @@ export async function DELETE(request: Request, { params }: Ctx) {
 	try {
 		const user = await requireUser(request);
 		const { id, uid } = await params;
-		const result = await removeMember(await getDb(), id, user.uid, uid);
+		// Corpo opcional: `allowReturn` (ausente = true; cliente antigo segue valendo). Valor que não é booleano = 422.
+		let allowReturn = true;
+		const raw = await request.text();
+		if (raw.trim()) {
+			let json: unknown;
+			try {
+				json = JSON.parse(raw);
+			} catch {
+				return jsonError("Pedido inválido.", 422);
+			}
+			const parsed = removeSchema.safeParse(json);
+			if (!parsed.success) return jsonError("Pedido inválido.", 422);
+			allowReturn = parsed.data.allowReturn ?? true;
+		}
+		const result = await removeMember(await getDb(), id, user.uid, uid, allowReturn);
 		return failure(result, "Você não pode remover a si mesmo do grupo.") ?? Response.json({ ok: true });
 	} catch (err) {
 		return handleError(err, "api/groups/[id]/members/[uid]");

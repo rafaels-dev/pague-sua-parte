@@ -10,7 +10,8 @@ import { apiFetch, ApiError } from "@/lib/api-client";
 import { formatBRL } from "@/lib/money";
 import { formatDateLong } from "@/lib/ui/dates";
 import { inviteGoal } from "@/lib/ui/plans";
-import type { PlanInvitePreview } from "@/lib/plans/repo";
+import { setFlash } from "@/components/expenses/types";
+import type { PlanInviteClosedPreview, PlanInvitePreview } from "@/lib/plans/repo";
 
 function PlanBadge() {
 	return (
@@ -65,10 +66,43 @@ export function PlanInviteReady({
 	);
 }
 
+/** Plano que já virou grupo: o link leva ao grupo (visual). Sem "Vou"/"Não vou", sem limite, sem valores. */
+export function PlanInviteClosed({
+	invite,
+	accepting,
+	acceptError,
+	onAccept,
+}: Readonly<{ invite: Pick<PlanInviteClosedPreview, "planName" | "groupName">; accepting: boolean; acceptError: string | null; onAccept: () => void }>) {
+	return (
+		<>
+			<PlanBadge />
+			<div className="space-y-2">
+				<h1 className="break-words text-headline-medium font-bold">{invite.planName} já está confirmado</h1>
+				<p className="break-words text-body-large text-on-surface-variant">
+					O plano virou o grupo “{invite.groupName}” e o pessoal já está dividindo as despesas por lá.
+				</p>
+			</div>
+			{acceptError && (
+				<Banner tone="error" icon="error" role="alert">
+					{acceptError}
+				</Banner>
+			)}
+			<div className="flex flex-col gap-2">
+				<Button onClick={onAccept} loading={accepting} fullWidth>
+					{accepting ? "Entrando..." : "Entrar no grupo"}
+				</Button>
+				<Button href="/app" variant="text" size="md" fullWidth>
+					Agora não
+				</Button>
+			</div>
+		</>
+	);
+}
+
 export function PlanInviteAccept({ token }: Readonly<{ token: string }>) {
 	const router = useRouter();
 	const { user, loading } = useAuth();
-	const [invite, setInvite] = useState<PlanInvitePreview | null>(null);
+	const [invite, setInvite] = useState<PlanInvitePreview | PlanInviteClosedPreview | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [reloadKey, setReloadKey] = useState(0);
 	const [accepting, setAccepting] = useState(false);
@@ -77,7 +111,7 @@ export function PlanInviteAccept({ token }: Readonly<{ token: string }>) {
 	useEffect(() => {
 		if (!user) return;
 		let cancelled = false;
-		apiFetch<PlanInvitePreview>(`/api/plan-invites/${encodeURIComponent(token)}`)
+		apiFetch<PlanInvitePreview | PlanInviteClosedPreview>(`/api/plan-invites/${encodeURIComponent(token)}`)
 			.then((i) => {
 				if (!cancelled) setInvite(i);
 			})
@@ -89,11 +123,21 @@ export function PlanInviteAccept({ token }: Readonly<{ token: string }>) {
 		};
 	}, [user, token, reloadKey]);
 
+	// Quem já é membro do grupo do plano que virou grupo vai direto para ele (sem aviso: não entrou agora).
+	useEffect(() => {
+		if (invite && "closed" in invite && invite.alreadyMember && invite.groupId) router.replace(`/app/grupos/${encodeURIComponent(invite.groupId)}`);
+	}, [invite, router]);
+
 	async function accept() {
 		setAccepting(true);
 		setAcceptError(null);
 		try {
-			const res = await apiFetch<{ planId: string }>(`/api/plan-invites/${encodeURIComponent(token)}/accept`, { method: "POST", body: JSON.stringify({}) });
+			const res = await apiFetch<{ planId?: string; groupId?: string }>(`/api/plan-invites/${encodeURIComponent(token)}/accept`, { method: "POST", body: JSON.stringify({}) });
+			if (res.groupId) {
+				setFlash("Você entrou no grupo. Quem organiza vai incluir você nas despesas.");
+				router.push(`/app/grupos/${encodeURIComponent(res.groupId)}`);
+				return;
+			}
 			router.push(`/app/planos/${res.planId}`);
 		} catch (e) {
 			setAcceptError(e instanceof ApiError ? e.message : "Não foi possível entrar no plano. Tente de novo.");
@@ -155,6 +199,23 @@ export function PlanInviteAccept({ token }: Readonly<{ token: string }>) {
 					<CircularProgress label="Abrindo o convite..." />
 					<p className="text-body-large text-on-surface-variant">Abrindo o convite...</p>
 				</div>
+			</InviteShell>
+		);
+	}
+	if ("closed" in invite) {
+		if (invite.alreadyMember) {
+			return (
+				<InviteShell>
+					<div className="flex flex-col items-center gap-3 py-6 text-primary">
+						<CircularProgress label="Abrindo o grupo..." />
+						<p className="text-body-large text-on-surface-variant">Abrindo o grupo...</p>
+					</div>
+				</InviteShell>
+			);
+		}
+		return (
+			<InviteShell>
+				<PlanInviteClosed invite={invite} accepting={accepting} acceptError={acceptError} onAccept={() => void accept()} />
 			</InviteShell>
 		);
 	}

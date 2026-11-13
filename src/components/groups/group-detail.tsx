@@ -61,7 +61,12 @@ export function GroupDetailView({
 	expenses,
 	onMemberOptions,
 	onShareSummary,
+	onAllowReturn,
+	returningUid,
 }: Readonly<{
+	/** "Permitir voltar" de quem foi removido e bloqueado (só administrador). */
+	onAllowReturn?: (uid: string) => void;
+	returningUid?: string | null;
 	/** Abre o sheet "Compartilhar resumo" (WhatsApp), para qualquer membro. */
 	onShareSummary?: () => void;
 	group: Group;
@@ -141,6 +146,25 @@ export function GroupDetailView({
 				</div>
 			</details>
 
+			{isAdmin && group.blocked && group.blocked.length > 0 && (
+				<details className="rounded-shape-md bg-surface-container-low">
+					<summary className="state-layer flex min-h-12 cursor-pointer items-center rounded-shape-md px-4 text-body-large text-on-surface-variant">
+						Não podem voltar ({group.blocked.length})
+					</summary>
+					<ul className="space-y-1 px-4 pb-3">
+						{group.blocked.map((b) => (
+							<li key={b.uid} className="flex items-center justify-between gap-2">
+								<span className="min-w-0 break-words text-body-large">{b.name}</span>
+								<Button variant="text" size="md" disabled={returningUid === b.uid} loading={returningUid === b.uid} onClick={() => onAllowReturn?.(b.uid)}>
+									Permitir voltar
+								</Button>
+							</li>
+						))}
+					</ul>
+					<p className="px-4 pb-3 text-body-large text-on-surface-variant">A pessoa não volta sozinha: ela precisa abrir um link de convite de novo.</p>
+				</details>
+			)}
+
 			{recurrences}
 
 			{expenses}
@@ -173,6 +197,8 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 	const [group, setGroup] = useState<Group | null>(null);
 	const [error, setError] = useState<{ message: string; notFound: boolean } | null>(null);
 	const [reloadKey, setReloadKey] = useState(0);
+	const [allowReturn, setAllowReturn] = useState(true);
+	const [returningUid, setReturningUid] = useState<string | null>(null);
 	const [sheet, setSheet] = useState<Sheet | null>(null);
 	const [confirmingRemove, setConfirmingRemove] = useState(false);
 	const [busy, setBusy] = useState(false);
@@ -342,6 +368,19 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 		setFormErrors({});
 	}
 
+	async function permitReturn(uid: string) {
+		setReturningUid(uid);
+		try {
+			await apiFetch(`/api/groups/${encodeURIComponent(id)}/removed/${encodeURIComponent(uid)}`, { method: "DELETE" });
+			setSnack("Pronto. A pessoa pode voltar por um link de convite.");
+			setReloadKey((k) => k + 1);
+		} catch (e) {
+			setSnack(e instanceof ApiError ? e.message : "Não foi possível concluir. Tente de novo.");
+		} finally {
+			setReturningUid(null);
+		}
+	}
+
 	async function run(request: () => Promise<unknown>, message: string) {
 		setBusy(true);
 		setActionError(null);
@@ -460,6 +499,8 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 				expenses={<ExpenseList groupId={group.id} />}
 				onMemberOptions={(m) => openSheet({ kind: "options", uid: m.uid }, m)}
 				onShareSummary={openSummary}
+				onAllowReturn={(uid) => void permitReturn(uid)}
+				returningUid={returningUid}
 			/>
 			<Sheet open={summary.kind !== "closed"} onClose={() => setSummary({ kind: "closed" })} title="Compartilhar resumo">
 				{summary.kind === "loading" && (
@@ -668,6 +709,8 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 							busy={busy}
 							error={actionError}
 							confirmingRemove={confirmingRemove}
+							allowReturn={allowReturn}
+							onAllowReturn={setAllowReturn}
 							onToggleRole={() => {
 								const promote = selected.role !== "admin";
 								void run(
@@ -675,9 +718,12 @@ export function GroupDetail({ id }: Readonly<{ id: string }>) {
 									promote ? `${selected.name} agora administra o grupo.` : `${selected.name} não administra mais o grupo.`,
 								);
 							}}
-							onAskRemove={() => setConfirmingRemove(true)}
+							onAskRemove={() => {
+								setAllowReturn(true);
+								setConfirmingRemove(true);
+							}}
 							onCancelRemove={() => setConfirmingRemove(false)}
-							onConfirmRemove={() => void run(() => apiFetch(memberUrl(selected), { method: "DELETE" }), `${selected.name} saiu do grupo.`)}
+							onConfirmRemove={() => void run(() => apiFetch(memberUrl(selected), { method: "DELETE", body: JSON.stringify({ allowReturn }) }), `${selected.name} saiu do grupo.`)}
 						/>
 					))}
 			</Sheet>

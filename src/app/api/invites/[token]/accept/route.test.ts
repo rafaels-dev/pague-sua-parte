@@ -33,6 +33,12 @@ describe("POST /api/invites/:token/accept", () => {
 		expect((await call()).status).toBe(200);
 		expect((await call()).status).toBe(200);
 	});
+	it("403 para quem o administrador removeu e bloqueou", async () => {
+		acceptInvite.mockResolvedValue({ status: "removed" });
+		const res = await call();
+		expect(res.status).toBe(403);
+		expect(await res.json()).toEqual({ error: "Você não pode entrar neste grupo. Fale com quem organiza." });
+	});
 	it("404 para convite inválido ou expirado", async () => {
 		acceptInvite.mockResolvedValue({ status: "invalid" });
 		const res = await call();

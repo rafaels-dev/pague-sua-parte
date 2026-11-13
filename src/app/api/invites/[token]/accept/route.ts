@@ -20,6 +20,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
 		if (result.status === "invalid") {
 			return jsonError(INVALID_INVITE, 404);
 		}
+		if (result.status === "removed") return jsonError("Você não pode entrar neste grupo. Fale com quem organiza.", 403);
 		if (result.status === "full") return jsonError("Este grupo já está cheio.", 409);
 		if (result.joined) afterMemberJoined(result.groupId, user.uid);
 		return Response.json({ groupId: result.groupId });

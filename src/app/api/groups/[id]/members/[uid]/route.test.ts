@@ -73,7 +73,18 @@ describe("DELETE /api/groups/:id/members/:uid", () => {
 		const res = await del();
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ ok: true });
-		expect(removeMember).toHaveBeenCalledWith({ fake: true }, GID, "u1", "u2");
+		expect(removeMember).toHaveBeenCalledWith({ fake: true }, GID, "u1", "u2", true); // ausente = true
+	});
+	it("allowReturn false/true repassado; não booleano ou JSON ruim = 422", async () => {
+		removeMember.mockResolvedValue({ status: "ok" });
+		const withBody = (b: string) => DELETE(new Request("http://x", { method: "DELETE", body: b }), ctx());
+		await withBody(JSON.stringify({ allowReturn: false }));
+		expect(removeMember).toHaveBeenLastCalledWith({ fake: true }, GID, "u1", "u2", false);
+		await withBody(JSON.stringify({ allowReturn: true }));
+		expect(removeMember).toHaveBeenLastCalledWith({ fake: true }, GID, "u1", "u2", true);
+		removeMember.mockClear();
+		for (const bad of [JSON.stringify({ allowReturn: "false" }), JSON.stringify({ allowReturn: null }), JSON.stringify({ allowReturn: 0 }), "{x"]) expect((await withBody(bad)).status).toBe(422);
+		expect(removeMember).not.toHaveBeenCalled();
 	});
 	it("403 para não admin", async () => {
 		removeMember.mockResolvedValue({ status: "forbidden" });
