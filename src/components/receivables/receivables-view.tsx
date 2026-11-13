@@ -8,6 +8,7 @@ import { todayISO } from "@/lib/ui/dates";
 import { dueShort, installmentLabel, untilEndOfMonthLine } from "@/lib/ui/due-dates";
 import { receivablesUrl } from "@/lib/ui/group-scope";
 import { debtorCaption, payeeNote, REFUND_BACK_CHIP, type Debtor, type Receivables, type ReceivableItem } from "@/lib/ui/receivables";
+import { PARTIAL_CHIP, partialLine } from "@/lib/ui/partial-pay";
 import { RECURRING_CHIP } from "@/lib/ui/recurrences";
 
 export type ReceivablesPageState =
@@ -27,6 +28,7 @@ function ItemRow({ item, today, showGroup = true }: Readonly<{ item: ReceivableI
 		item.kind === "refund" && { tone: "ok" as const, text: REFUND_BACK_CHIP },
 		note && { tone: "wait" as const, text: note },
 		item.installment && { tone: "neutral" as const, text: installmentLabel(item.installment) },
+		item.kind === "share" && (item.paidCents ?? 0) > 0 && { tone: "wait" as const, text: PARTIAL_CHIP },
 		item.recurrence && { tone: "neutral" as const, text: RECURRING_CHIP },
 	].filter((c): c is { tone: "wait" | "neutral" | "ok"; text: string } => !!c);
 	return (
@@ -39,6 +41,7 @@ function ItemRow({ item, today, showGroup = true }: Readonly<{ item: ReceivableI
 					<span className="block break-words text-body-large font-medium text-on-surface">{item.description}</span>
 					{showGroup && item.groupName && <span className="block break-words text-sm text-on-surface-variant">{item.groupName}</span>}
 					{due && <span className={`block text-sm ${due.overdue ? "font-medium text-error" : "text-on-surface-variant"}`}>{due.text}</span>}
+					{item.kind === "share" && (item.paidCents ?? 0) > 0 && <span className="block text-sm text-on-surface-variant">{partialLine(item.paidCents ?? 0, item.dueCents)}</span>}
 					{chips.length > 0 && (
 						<span className="mt-1.5 flex flex-wrap gap-1.5">
 							{chips.map((c) => (

@@ -44,6 +44,8 @@ try {
 	console.log("expenses:", await expenses.createIndex({ "shares.receipt.key": 1 }, { name: "share_receipt_key", sparse: true }));
 	// O comprovante de uma devolução também pode estar em várias cotas (pagar tudo de uma vez): mesma consulta, outro campo.
 	console.log("expenses:", await expenses.createIndex({ "shares.refund.receipt.key": 1 }, { name: "share_refund_receipt_key", sparse: true }));
+	// O comprovante de um pagamento parcial (shares.parts[].receipt) também pode ser referenciado por várias cotas (lote): mesma consulta.
+	console.log("expenses:", await expenses.createIndex({ "shares.parts.receipt.key": 1 }, { name: "share_parts_receipt_key", sparse: true }));
 	const recurrences = client.db(dbName).collection("recurrences");
 	console.log("recurrences:", await recurrences.createIndex({ groupId: 1, active: 1, nextPeriod: 1 }, { name: "group_active_next" }));
 	// Avisos (push): um aparelho tem um só endereço; busca por usuário ao avisar.

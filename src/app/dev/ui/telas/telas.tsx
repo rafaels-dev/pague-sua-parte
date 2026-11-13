@@ -221,6 +221,32 @@ export function Telas({ tela }: Readonly<{ tela: string }>) {
 			return <MockExpense mode="owner-return" resplit={["a", "b", "c", "d"]} framed={false} />;
 		case "devo-parcial":
 			return <MockExpense mode="partial" framed={false} />;
+		case "parcial-pagar-outro-valor":
+			return <MockExpense mode="partial" otherAmount={4700} framed={false} />;
+		case "parcial-pagar-outro-valor-vazio":
+			return <MockExpense mode="partial" otherAmount={0} framed={false} />;
+		case "parcial-pagar-outro-valor-maior":
+			return <MockExpense mode="partial" otherAmount={9000} framed={false} />;
+		case "parcial-ja-paguei":
+			return <MockExpense mode="partial" receiptSheet={{ mode: "pay", filled: true }} framed={false} />;
+		case "parcial-dono":
+			return <MockExpense mode="partial-owner" framed={false} />;
+		case "parcial-recebi":
+			return <MockExpense mode="partial-owner" confirm={{ uid: "b", mode: "paid" }} framed={false} />;
+		case "parcial-recebi-parte":
+			return <MockExpense mode="partial-owner" confirm={{ uid: "b", mode: "paid" }} receivePartial framed={false} />;
+		case "parcial-desfazer":
+			return <MockExpense mode="partial-owner" confirm={{ uid: "b", mode: "pending" }} framed={false} />;
+		case "parcial-desfazer-quitacao":
+			return <MockExpense mode="partial-owner" confirm={{ uid: "e", mode: "pending" }} framed={false} />;
+		case "parcial-desfazer-meu":
+			return <MockExpense mode="partial" confirm={{ uid: "a", mode: "pending" }} framed={false} />;
+		case "parcial-parcela":
+			return <MockExpense mode="partial-installment" framed={false} />;
+		case "parcial-pagar-tudo":
+			return <MockPayAll framed={false} scene="parte-paga" />;
+		case "parcial-quem-me-deve":
+			return <MockReceivables framed={false} scene="parte-paga" />;
 		case "receber-de-volta":
 			return <MockExpense mode="refund" framed={false} />;
 		case "dono-devolver":

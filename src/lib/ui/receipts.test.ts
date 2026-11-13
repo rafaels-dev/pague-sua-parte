@@ -53,10 +53,15 @@ describe("paidCaption", () => {
 });
 
 describe("undoLabel", () => {
-	it("Não recebi só quando a pessoa avisou", () => {
-		expect(undoLabel({ method: "self" })).toBe("Não recebi");
-		expect(undoLabel({ method: "manual" })).toBe("Desfazer");
-		expect(undoLabel({ method: null })).toBe("Desfazer");
+	it("quem recebe: \"Não recebi\" só quando o último pagamento foi aviso da pessoa; em aberto desfaz o último", () => {
+		expect(undoLabel({ status: "paid", last: { method: "self", partial: false } }, "owner")).toBe("Não recebi");
+		expect(undoLabel({ status: "paid", last: { method: "manual", partial: false } }, "owner")).toBe("Desfazer");
+		expect(undoLabel({ status: "paid", last: null }, "owner")).toBe("Desfazer");
+		expect(undoLabel({ status: "pending", last: { method: "self", partial: true } }, "owner")).toBe("Desfazer último pagamento");
+	});
+	it("a própria pessoa desfazendo o seu aviso nunca lê \"Não recebi\", mesmo com a parte já paga só por parciais", () => {
+		expect(undoLabel({ status: "paid", last: { method: "self", partial: true } }, "debtor")).toBe("Desfazer meu último pagamento");
+		expect(undoLabel({ status: "pending", last: { method: "self", partial: true } }, "debtor")).toBe("Desfazer meu último pagamento");
 	});
 });
 

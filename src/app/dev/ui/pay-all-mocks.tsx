@@ -87,7 +87,7 @@ const DONE_PARTIAL: DoneBatch = {
 	hasReceipt: false,
 };
 
-export type PayAllScene = "devolucao" | "grupo" | "grupo-vazio" | "lista" | "pix" | "desmarcado" | "nada" | "comprovante" | "comprovante-arquivo" | "pago" | "parcial" | "avisar" | "vazio" | "carregando" | "erro" | "indisponivel";
+export type PayAllScene = "devolucao" | "grupo" | "grupo-vazio" | "lista" | "pix" | "desmarcado" | "nada" | "comprovante" | "comprovante-arquivo" | "pago" | "parcial" | "parte-paga" | "avisar" | "vazio" | "carregando" | "erro" | "indisponivel";
 
 /** Id (de mentira, mas com cara de id de verdade) do grupo das telas "só deste grupo". */
 export const SCOPE_GROUP_ID = "0123456789abcdef01234567";
@@ -122,6 +122,11 @@ const sceneState = (scene: PayAllScene): PayAllPageState => {
 			return { kind: "ready", recipients: RECIPIENTS.slice(1), done: [DONE_FULL] };
 		case "avisar":
 			return { kind: "ready", recipients: RECIPIENTS.slice(1), done: [DONE_FULL] };
+		case "parte-paga": {
+			// Remédios: a Maria já recebeu R$ 47,00 desta parte; o Pagar tudo cobra só o que falta (R$ 25,48) e quita.
+			const items = [item({ expenseId: "e1", description: "Remédios da farmácia", dueCents: 2548, paidCents: 4700 }), ...MARIA_ITEMS.slice(1, 3)];
+			return { kind: "ready", recipients: [{ ...RECIPIENTS[0], items, totalCents: total(items) }, RECIPIENTS[1]], done: [] };
+		}
 		case "parcial":
 			return { kind: "ready", recipients: [{ ...RECIPIENTS[0], items: MARIA_ITEMS.slice(3), totalCents: total(MARIA_ITEMS.slice(3)) }, RECIPIENTS[1]], done: [DONE_PARTIAL] };
 		default:

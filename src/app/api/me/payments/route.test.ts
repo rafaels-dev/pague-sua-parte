@@ -38,6 +38,19 @@ describe("POST /api/me/payments", () => {
 		expect(args[1]).toBe(store);
 		expect(args[2]).toMatchObject({ uid: "u1", items: [ITEM], file: { name: "pix.png", contentType: "image/png" } });
 	});
+	it("expectedTotalCents (o total que a tela mostrou) é repassado; ausente = cliente antigo; inválido = 422 sem chamar o repo", async () => {
+		expect((await multipart({ items: [ITEM], expectedTotalCents: 1000 })).status).toBe(200);
+		expect(payBatch.mock.calls.at(-1)?.[2]).toMatchObject({ expectedTotalCents: 1000 });
+		expect((await json({ items: [ITEM] })).status).toBe(200);
+		expect(payBatch.mock.calls.at(-1)?.[2].expectedTotalCents).toBeUndefined();
+		payBatch.mockClear();
+		for (const bad of [-1, 1.5, "10", null, 1e12]) expect((await json({ items: [ITEM], expectedTotalCents: bad })).status).toBe(422);
+		expect(payBatch).not.toHaveBeenCalled();
+	});
+	it("total que mudou: 409 com a mensagem simples", async () => {
+		payBatch.mockResolvedValue({ status: "stale" });
+		expect(await out(await json({ items: [ITEM], expectedTotalCents: 1000 }))).toEqual([409, { error: "Os valores mudaram. Atualize e confira antes de pagar." }]);
+	});
 	it("200 sem comprovante: multipart sem arquivo e JSON puro", async () => {
 		expect((await multipart({ items: [ITEM] })).status).toBe(200);
 		expect((await json({ items: [ITEM] })).status).toBe(200);

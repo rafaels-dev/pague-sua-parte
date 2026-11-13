@@ -19,6 +19,8 @@ export type PayableItem = {
 	shareName: string;
 	isYou: boolean;
 	dueCents: number;
+	/** Pagamento parcial: quanto já foi pago desta parte (só quando há; o `dueCents` já é o que falta). */
+	paidCents?: number;
 	dueDate: string | null;
 	overdue: boolean;
 	installment: { number: number; count: number } | null;
@@ -91,6 +93,7 @@ export function buildPayables(args: {
 					shareName: dir.name(s.uid),
 					isYou: s.uid === uid,
 					dueCents: due,
+					...(s.paidCents > 0 ? { paidCents: s.paidCents } : {}),
 					dueDate: e.dueDate ?? null,
 					overdue: isPastDue(e.dueDate, today),
 					installment: e.installment ? { number: e.installment.number, count: e.installment.count } : null,

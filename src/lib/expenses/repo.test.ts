@@ -12,7 +12,7 @@ const member = (uid: string, role: "admin" | "member" = "member") => ({ uid, rol
 const group = () => ({ _id: new ObjectId(GID), name: "G", members: [member("u1", "admin"), member("u2"), member("u3"), member("u4")] });
 const PIX = { type: "email", key: "ana@x.com" };
 
-type Share = { uid: string; amountCents: number; paidCents: number; paidAt?: Date; markedBy?: string; markedByAdmin?: boolean; refund?: { cents: number; at: Date; markedBy: string; byAdmin?: boolean; receipt?: { id: string; key: string; name: string; contentType: string; size: number } }; method?: "manual" | "self"; receipt?: { id: string; key: string; name: string; contentType: string; size: number }; batch?: { id: string; totalCents: number; count: number } };
+type Share = { uid: string; amountCents: number; paidCents: number; parts?: { id: string; cents: number; at: Date; markedBy: string; method: "manual" | "self"; byAdmin?: boolean; receipt?: { id: string; key: string; name: string; contentType: string; size: number }; batch?: { id: string; totalCents: number; count: number } }[]; paidAt?: Date; markedBy?: string; markedByAdmin?: boolean; refund?: { cents: number; at: Date; markedBy: string; byAdmin?: boolean; receipt?: { id: string; key: string; name: string; contentType: string; size: number } }; method?: "manual" | "self"; receipt?: { id: string; key: string; name: string; contentType: string; size: number }; batch?: { id: string; totalCents: number; count: number } };
 const S = (uid: string, amountCents: number, paidCents = 0, extra: Partial<Share> = {}): Share => ({ uid, amountCents, paidCents, ...extra });
 const expense = (over: Record<string, unknown> = {}) => ({
 	_id: new ObjectId(EID),
@@ -215,7 +215,7 @@ describe("deleteExpense", () => {
 		const m = mockDb();
 		const store = fakeStore();
 		expect(await deleteExpense(m.db, store, GID, EID, "u2")).toEqual({ status: "ok", deleted: 1, kept: 0 });
-		expect(m.expenses.deleteOne).toHaveBeenCalledWith(expect.objectContaining({ shares: { $not: { $elemMatch: { $or: [{ paidCents: { $gt: 0 } }, { status: "paid" }, { refund: { $exists: true } }, { receipt: { $exists: true } }] } } } }));
+		expect(m.expenses.deleteOne).toHaveBeenCalledWith(expect.objectContaining({ shares: { $not: { $elemMatch: { $or: [{ paidCents: { $gt: 0 } }, { status: "paid" }, { refund: { $exists: true } }, { receipt: { $exists: true } }, { "parts.0": { $exists: true } }] } } } }));
 		expect(store.delete).toHaveBeenCalledWith(["groups/g/e/" + AID]);
 	});
 	it("admin apaga despesa de outro", async () => {
@@ -310,11 +310,13 @@ function statefulDb(initial: ReturnType<typeof expense>, opts: { failUpdates?: n
 	const writes: unknown[] = [];
 	const expenses = {
 		findOne: vi.fn(async () => clone(doc)),
-		// Consulta de referências a comprovantes (`shares.receipt.key`): devolve a despesa se alguma cota usa uma das chaves.
-		find: vi.fn((filter: Record<string, { $in?: string[] }>) => ({
+		// Consulta de referências a comprovantes (`releaseReceipts`): devolve a despesa se alguma cota usa uma das chaves
+		// (no pagamento que quitou, na devolução ou num pagamento parcial).
+		find: vi.fn((filter: { $or?: Record<string, { $in?: string[] }>[] }) => ({
 			toArray: async () => {
-				const keys = filter["shares.receipt.key"]?.$in ?? [];
-				return doc.shares.some((x) => x.receipt && keys.includes(x.receipt.key)) ? [clone(doc)] : [];
+				const keys = new Set((filter.$or ?? []).flatMap((c) => Object.values(c).flatMap((v) => v.$in ?? [])));
+				const used = doc.shares.flatMap((x) => [x.receipt?.key, x.refund?.receipt?.key, ...((x as { parts?: { receipt?: { key: string } }[] }).parts ?? []).map((p) => p.receipt?.key)]);
+				return used.some((k) => k && keys.has(k)) ? [clone(doc)] : [];
 			},
 		})),
 		updateOne: vi.fn(async (filter: Record<string, unknown>, update: { $set: Record<string, unknown>; $unset?: Record<string, ""> ; $inc?: { version: number } }) => {
@@ -1120,3 +1122,426 @@ describe("revisão: corridas, vencimento antigo, resumo parcial e apagar com his
 		expect(await editExpense(mk().db, fakeStore(), { groupId: GID, eid: EID, uid: "u1", input: { ...input, participantUids: ["u2", "u1", "u3", "intruso"] } })).toMatchObject({ status: "invalid", field: "participantUids" });
 	});
 });
+
+// ---------- pagamento parcial ----------
+
+/** Quanto a tela mostraria como já pago na parte `uid` agora (lê o documento do banco de mentira). */
+const paidNow = async (db: Db, uid: string) => ((await (db.collection("expenses") as unknown as { findOne: () => Promise<{ shares: Share[] }> }).findOne()).shares.find((x) => x.uid === uid)?.paidCents ?? 0);
+
+describe("pagamento parcial de uma parte", () => {
+	const png = (n = 1) => ({ name: `p${n}.png`, contentType: "image/png" as const, bytes: new Uint8Array([0x89, 0x50, 0x4e, n]) });
+	const partial = async (db: Db, store: AttachmentStore, amountCents: number | undefined, o: { uid?: string; target?: string; file?: ReturnType<typeof png>; expected?: number } = {}) =>
+		markSelfPaid(db, store, { groupId: GID, eid: EID, uid: o.uid ?? "u3", targetUid: o.target ?? "u3", file: o.file, amountCents, expectedPaidCents: amountCents === undefined ? undefined : (o.expected ?? (await paidNow(db, o.target ?? "u3"))) });
+	const u3 = (m: { doc: { shares: Share[] } }) => m.doc.shares.find((x) => x.uid === "u3")!;
+	const detailOf = (r: Awaited<ReturnType<typeof markSelfPaid>>) => {
+		if (r.status !== "ok") throw new Error("esperava ok, veio " + r.status);
+		return r.expense.shares.find((x) => x.uid === "u3")!;
+	};
+
+	it("\"Já paguei\" com valor menor: a parte fica em aberto, com histórico, comprovante e sem campos de topo", async () => {
+		const m = statefulDb(expense());
+		const store = fakeStore();
+		const r = await partial(m.db, store, 400, { file: png() });
+		expect(u3(m)).toMatchObject({ paidCents: 400, parts: [{ cents: 400, markedBy: "u3", method: "self", receipt: { name: "p1.png" } }] });
+		for (const k of ["paidAt", "markedBy", "method", "receipt"] as const) expect(u3(m)).not.toHaveProperty(k);
+		const view = detailOf(r);
+		expect(view).toMatchObject({ status: "pending", paidCents: 400, dueCents: 600, canPay: true, canUndoOwnPart: true, receipt: null, paidAt: null });
+		expect(view.parts).toEqual([expect.objectContaining({ cents: 400, method: "self", byAdmin: false, receipt: { name: "p1.png", contentType: "image/png", size: 4 } })]);
+		expect(JSON.stringify(r)).not.toContain("receipts/");
+		expect(store.delete).not.toHaveBeenCalled();
+	});
+	it("sem amountCents o comportamento é o de sempre (quita o que falta) mesmo com parcial antes; os dois comprovantes ficam", async () => {
+		const m = statefulDb(expense());
+		const store = fakeStore();
+		await partial(m.db, store, 400, { file: png(1) });
+		const done = await partial(m.db, store, undefined, { file: png(2) });
+		expect(u3(m)).toMatchObject({ paidCents: 1000, method: "self", markedBy: "u3", receipt: { name: "p2.png" } });
+		expect(u3(m).parts).toHaveLength(1);
+		expect(store.delete).not.toHaveBeenCalled();
+		expect(detailOf(done)).toMatchObject({ status: "paid", parts: [expect.objectContaining({ cents: 400 })] });
+	});
+	it("valor igual ao que falta quita; maior, zero, negativo ou decimal são recusados sem gravar nem deixar arquivo", async () => {
+		const m = statefulDb(expense());
+		const store = fakeStore();
+		expect((await partial(m.db, store, 1000)).status).toBe("ok");
+		expect(u3(m)).toMatchObject({ paidCents: 1000, method: "self" });
+		const m2 = statefulDb(expense());
+		const store2 = fakeStore();
+		expect(await partial(m2.db, store2, 1001, { file: png() })).toEqual({ status: "too_much" });
+		expect(await partial(m2.db, store2, 0, { file: png() })).toEqual({ status: "invalid_amount" });
+		expect(await partial(m2.db, store2, -5)).toEqual({ status: "invalid_amount" });
+		expect(await partial(m2.db, store2, 10.5)).toEqual({ status: "invalid_amount" });
+		expect(m2.expenses.updateOne).not.toHaveBeenCalled();
+		expect(store2.put).not.toHaveBeenCalled(); // a conferência acontece antes de subir o arquivo
+	});
+	it("expectedPaidCents divergente (toque duplo, resposta perdida, tela velha): 409 \"stale\", sem gravar e sem subir arquivo", async () => {
+		const m = statefulDb(expense());
+		const store = fakeStore();
+		expect((await partial(m.db, store, 400, { file: png(1) })).status).toBe("ok");
+		// o mesmo pedido de novo (a tela ainda mostrava 0 como já pago)
+		expect(await partial(m.db, store, 400, { file: png(2), expected: 0 })).toEqual({ status: "stale" });
+		expect(await partial(m.db, store, 400, { expected: 399 })).toEqual({ status: "stale" });
+		expect(u3(m).paidCents).toBe(400);
+		expect(u3(m).parts).toHaveLength(1);
+		expect(store.put).toHaveBeenCalledTimes(1); // só o do primeiro; o do segundo nem subiu
+		// valor sem expectedPaidCents (cliente que não manda): recusado como inválido; sem amountCents segue como sempre
+		expect(await markSelfPaid(m.db, store, { groupId: GID, eid: EID, uid: "u3", targetUid: "u3", amountCents: 100 })).toEqual({ status: "invalid_amount" });
+		expect((await markSelfPaid(m.db, store, { groupId: GID, eid: EID, uid: "u3", targetUid: "u3" })).status).toBe("ok");
+		expect(u3(m)).toMatchObject({ paidCents: 1000, method: "self" });
+	});
+	it("o valor é conferido contra o que falta NO MOMENTO da gravação: corrida que quitou no meio recusa e apaga o arquivo", async () => {
+		const m = statefulDb(expense());
+		const store = fakeStore();
+		// entre a conferência prévia e a gravação, a parte foi quitada por outro caminho
+		const find = m.expenses.findOne;
+		let calls = 0;
+		m.expenses.findOne = vi.fn(async (...a: unknown[]) => {
+			if (++calls === 3) (m.doc.shares.find((x) => x.uid === "u3") as Share).paidCents = 1000;
+			return (find as (...x: unknown[]) => Promise<unknown>)(...a);
+		}) as typeof m.expenses.findOne;
+		const r = await partial(m.db, store, 400, { file: png() });
+		expect(r.status).toBe("stale"); // a parte mudou (já paga) entre a conferência prévia e a gravação
+		expect(store.delete).toHaveBeenCalledTimes(1);
+		expect(m.expenses.updateOne).not.toHaveBeenCalled();
+	});
+	it("quem não age pela pessoa continua forbidden; parte de quem pagou ou inexistente = no_share", async () => {
+		const m = statefulDb(expense());
+		expect((await partial(m.db, fakeStore(), 100, { uid: "u4", target: "u3" })).status).toBe("forbidden");
+		expect((await partial(m.db, fakeStore(), 100, { uid: "u2", target: "u2" })).status).toBe("no_share");
+		expect(m.expenses.updateOne).not.toHaveBeenCalled();
+	});
+	it("no máximo 20 parciais por parte (too_many_parts), mas quitar continua possível", async () => {
+		const m = statefulDb(expense({ amountCents: 300000, shares: [S("u2", 100000), S("u3", 100000), S("u1", 100000)] }));
+		for (let i = 0; i < 20; i++) expect((await partial(m.db, fakeStore(), 1)).status).toBe("ok");
+		expect(await partial(m.db, fakeStore(), 1)).toEqual({ status: "too_many_parts" });
+		expect((await partial(m.db, fakeStore(), undefined)).status).toBe("ok");
+		expect(u3(m)).toMatchObject({ paidCents: 100000, method: "self" });
+	});
+	it("pagamento parcial gera fato de aviso com o valor pago e o que falta; quitar depois avisa só o último pagamento", async () => {
+		const m = statefulDb(expense());
+		const r = await partial(m.db, fakeStore(), 400);
+		if (r.status !== "ok") throw new Error();
+		expect(r.payments).toEqual([expect.objectContaining({ kind: "payment", debtorUid: "u3", amountCents: 400, partial: { shareCents: 1000, remainingCents: 600 }, manual: false })]);
+		const done = await partial(m.db, fakeStore(), undefined);
+		if (done.status !== "ok") throw new Error();
+		expect(done.payments).toEqual([expect.objectContaining({ amountCents: 600 })]);
+		expect(done.payments![0]).not.toHaveProperty("partial");
+	});
+});
+
+describe("recebi só uma parte (setSharePaid com amountCents)", () => {
+	const recv = async (db: Db, uid: string, cents?: number, status: "paid" | "pending" = "paid", target = "u3", expected?: number) =>
+		setSharePaid(db, GID, EID, uid, target, status, undefined, undefined, cents, cents === undefined && status === "paid" ? undefined : (expected ?? (await paidNow(db, target))));
+	const u3 = (m: { doc: { shares: Share[] } }) => m.doc.shares.find((x) => x.uid === "u3")!;
+
+	it("quem pagou a despesa e o administrador registram; o admin fica marcado; membro comum não", async () => {
+		const m = statefulDb(expense());
+		expect((await recv(m.db, "u2", 347)).status).toBe("ok");
+		expect((await recv(m.db, "u1", 100)).status).toBe("ok");
+		expect(u3(m)).toMatchObject({ paidCents: 447, parts: [{ cents: 347, markedBy: "u2", method: "manual" }, { cents: 100, markedBy: "u1", method: "manual", byAdmin: true }] });
+		expect(u3(m).parts![0]).not.toHaveProperty("byAdmin");
+		expect(u3(m)).not.toHaveProperty("paidAt");
+		expect(await recv(m.db, "u4", 100)).toEqual({ status: "forbidden" });
+		expect(await recv(m.db, "u3", 100)).toEqual({ status: "forbidden" }); // o devedor não "recebe" da própria parte
+	});
+	it("detalhe do administrador mostra quem marcou o parcial (nome só quando foi administrador)", async () => {
+		const m = statefulDb(expense());
+		await recv(m.db, "u1", 100);
+		const r = await recv(m.db, "u2", 50);
+		if (r.status !== "ok") throw new Error();
+		const parts = r.expense.shares.find((x) => x.uid === "u3")!.parts;
+		expect(parts.map((p) => [p.cents, p.byAdmin, p.markedByName])).toEqual([[100, true, "Aninha"], [50, false, null]]);
+	});
+	it("valor maior que o que falta, zero e decimal são recusados; igual quita; sem valor é o de sempre", async () => {
+		const m = statefulDb(expense());
+		expect(await recv(m.db, "u2", 1001)).toEqual({ status: "too_much" });
+		expect(await recv(m.db, "u2", 0)).toEqual({ status: "invalid_amount" });
+		expect(await recv(m.db, "u2", 3.3)).toEqual({ status: "invalid_amount" });
+		expect(m.expenses.updateOne).not.toHaveBeenCalled();
+		await recv(m.db, "u2", 400);
+		expect(await recv(m.db, "u2", 601)).toEqual({ status: "too_much" });
+		await recv(m.db, "u2", 600);
+		expect(u3(m)).toMatchObject({ paidCents: 1000, method: "manual", markedBy: "u2" });
+		const m2 = statefulDb(expense());
+		await recv(m2.db, "u2", 400);
+		await recv(m2.db, "u2");
+		expect(u3(m2)).toMatchObject({ paidCents: 1000, method: "manual" });
+	});
+	it("desfazer: dono tira só o último; a pessoa desfaz o parcial que ela mesma avisou, mas não o que outro registrou nem a quitação", async () => {
+		const m = statefulDb(expense());
+		await markSelfPaid(m.db, fakeStore(), { groupId: GID, eid: EID, uid: "u3", targetUid: "u3", amountCents: 200, expectedPaidCents: 0 });
+		await recv(m.db, "u2", 300);
+		// o último parcial é do dono: u3 não pode desfazê-lo
+		expect(await recv(m.db, "u3", undefined, "pending")).toEqual({ status: "forbidden" });
+		expect((await recv(m.db, "u2", undefined, "pending")).status).toBe("ok");
+		expect(u3(m)).toMatchObject({ paidCents: 200, parts: [expect.objectContaining({ cents: 200, method: "self" })] });
+		// agora o último é o dele: pode desfazer
+		const r = await recv(m.db, "u3", undefined, "pending");
+		expect(r.status).toBe("ok");
+		expect(u3(m)).toEqual({ uid: "u3", amountCents: 1000, paidCents: 0 });
+		// quitação feita por ele: não pode desfazer sozinho
+		await markSelfPaid(m.db, fakeStore(), { groupId: GID, eid: EID, uid: "u3", targetUid: "u3" });
+		expect(await recv(m.db, "u3", undefined, "pending")).toEqual({ status: "forbidden" });
+		// outro membro sem relação: nunca
+		await markSelfPaid(m.db, fakeStore(), { groupId: GID, eid: EID, uid: "u3", targetUid: "u3" });
+		expect(await recv(m.db, "u4", undefined, "pending")).toEqual({ status: "forbidden" });
+	});
+	it("\"Recebi só uma parte\": expectedPaidCents divergente (dono com tela velha depois que a pessoa já pagou o mesmo Pix) é recusado", async () => {
+		const m = statefulDb(expense());
+		await markSelfPaid(m.db, fakeStore(), { groupId: GID, eid: EID, uid: "u3", targetUid: "u3", amountCents: 400, expectedPaidCents: 0 });
+		expect(await recv(m.db, "u2", 400, "paid", "u3", 0)).toEqual({ status: "stale" });
+		expect(await setSharePaid(m.db, GID, EID, "u2", "u3", "paid", undefined, undefined, 400)).toEqual({ status: "invalid_amount" }); // sem expectedPaidCents
+		expect(u3(m).paidCents).toBe(400);
+		expect((await recv(m.db, "u2", 400, "paid", "u3", 400)).status).toBe("ok");
+		expect(u3(m).paidCents).toBe(800);
+	});
+	it("o aviso de recebimento parcial é manual e diz o que falta", async () => {
+		const m = statefulDb(expense());
+		const r = await recv(m.db, "u1", 250);
+		if (r.status !== "ok") throw new Error();
+		expect(r.payments).toEqual([expect.objectContaining({ amountCents: 250, manual: true, actorUid: "u1", partial: { shareCents: 1000, remainingCents: 750 } })]);
+	});
+});
+
+describe("comprovantes de parciais nunca se perdem nem sobram", () => {
+	const rcp = (id: string) => ({ id, key: `receipts/${id}`, name: `${id}.png`, contentType: "image/png", size: 4 });
+	const part = (id: string, cents: number, receipt?: ReturnType<typeof rcp>) => ({ id, cents, at: new Date("2026-11-01T10:00:00Z"), markedBy: "u3", method: "self" as const, ...(receipt ? { receipt } : {}) });
+	const withParts = (extra: Partial<Share> = {}) =>
+		expense({ shares: [S("u2", 1000), S("u3", 1000, 600, { parts: [part("a1", 200, rcp("ra")), part("b2", 400, rcp("rb"))], ...extra })] });
+
+	it("desfazer o último parcial apaga só o comprovante dele", async () => {
+		const m = statefulDb(withParts());
+		const st = fakeStore();
+		await setSharePaid(m.db, GID, EID, "u2", "u3", "pending", undefined, st, undefined, await paidNow(m.db, "u3"));
+		expect(st.delete).toHaveBeenCalledWith([rcp("rb").key]);
+		expect(m.doc.shares.find((x) => x.uid === "u3")!.parts).toEqual([expect.objectContaining({ id: "a1" })]);
+	});
+	it("desfazer a quitação apaga só o comprovante dela; os dos parciais ficam", async () => {
+		const m = statefulDb(withParts({ paidCents: 1000, paidAt: new Date(), markedBy: "u3", method: "self", receipt: rcp("rq") }));
+		const st = fakeStore();
+		await setSharePaid(m.db, GID, EID, "u2", "u3", "pending", undefined, st, undefined, await paidNow(m.db, "u3"));
+		expect(st.delete).toHaveBeenCalledWith([rcp("rq").key]);
+		expect(m.doc.shares.find((x) => x.uid === "u3")!.parts).toHaveLength(2);
+	});
+	it("editar a divisão com parciais não solta nenhum comprovante, mesmo virando devolução", async () => {
+		const m = statefulDb(withParts());
+		const st = fakeStore();
+		const r = await editExpense(m.db, st, { groupId: GID, eid: EID, uid: "u2", input: { description: "Mercado", amountCents: 800, date: "2026-11-10", participantUids: ["u2", "u3"] } });
+		expect(r.status).toBe("ok");
+		expect(st.delete).not.toHaveBeenCalled();
+		const u3 = m.doc.shares.find((x) => x.uid === "u3")!;
+		expect(u3).toMatchObject({ amountCents: 400, paidCents: 600 });
+		expect(u3.parts).toHaveLength(2);
+		// e a tela mostra quem pagou por último e o comprovante do último parcial mesmo sem campos de topo
+		if (r.status === "ok") expect(r.expense.shares.find((x) => x.uid === "u3")).toMatchObject({ status: "refund", method: "self", paidAt: "2026-11-01T10:00:00.000Z", receipt: { name: "rb.png" } });
+	});
+	it("apagar a despesa é barrado enquanto houver parcial", async () => {
+		const m = statefulDb(withParts());
+		expect((await deleteExpense(m.db, fakeStore(), GID, EID, "u2")).status).toBe("has_payment");
+	});
+	it("baixar o comprovante de um parcial: membros que agem pela pessoa ou por quem pagou; outro membro, não; id certo", async () => {
+		const m = statefulDb(withParts());
+		const ref = (uid: string, pid: string) => getReceiptRef(m.db, GID, EID, "u3", uid, "payment", pid);
+		expect(await ref("u3", "a1")).toMatchObject({ status: "ok", key: rcp("ra").key });
+		expect(await ref("u2", "b2")).toMatchObject({ status: "ok", key: rcp("rb").key });
+		expect(await ref("u1", "a1")).toMatchObject({ status: "ok" }); // administrador
+		expect((await ref("u4", "a1")).status).toBe("not_found");
+		expect((await ref("u3", "nao-existe")).status).toBe("not_found");
+		expect((await ref("u3", "a1")).status === "ok" && JSON.stringify(await ref("u3", "a1"))).toBeTruthy();
+		// quem não é do grupo
+		expect((await getReceiptRef(m.db, GID, EID, "u3", "intruso", "payment", "a1")).status).toBe("not_found");
+	});
+	it("o comprovante de quem não pode vê-lo não aparece no detalhe (membro comum vê o histórico, sem arquivos)", async () => {
+		const m = statefulDb(withParts());
+		const d = await getExpenseDetail(m.db, GID, EID, "u4");
+		if (d.status !== "ok") throw new Error();
+		const view = d.expense.shares.find((x) => x.uid === "u3")!;
+		expect(view.parts.map((p) => [p.cents, p.receipt])).toEqual([[200, null], [400, null]]);
+	});
+	it("outra despesa (lote) que referencia o mesmo arquivo de um parcial: ao desfazer, o objeto fica", async () => {
+		const m = statefulDb(withParts());
+		// uma segunda cota da mesma despesa usa o arquivo "rb" (como um lote de "Pagar tudo")
+		m.doc.shares.push(S("u1", 1000, 1000, { receipt: rcp("rb"), method: "self", markedBy: "u3", paidAt: new Date() }) as never);
+		const st = fakeStore();
+		await setSharePaid(m.db, GID, EID, "u2", "u3", "pending", undefined, st, undefined, await paidNow(m.db, "u3"));
+		expect(st.delete).not.toHaveBeenCalled();
+	});
+});
+
+describe("pagamentos concorrentes, último pagamento e comprovante de parcial de outra parte/despesa", () => {
+	const png = (n: number) => ({ name: `p${n}.png`, contentType: "image/png" as const, bytes: new Uint8Array([0x89, 0x50, 0x4e, n]) });
+	const rcp = (id: string) => ({ id, key: `receipts/${id}`, name: `${id}.png`, contentType: "image/png", size: 4 });
+	const part = (id: string, cents: number, at: string, receipt?: ReturnType<typeof rcp>, markedBy = "u3", method: "self" | "manual" = "self") => ({ id, cents, at: new Date(at), markedBy, method, ...(receipt ? { receipt } : {}) });
+
+	it("dois pagamentos concorrentes contra a mesma version: um ganha, o outro leva conflito (stale) e não deixa arquivo", async () => {
+		const m = statefulDb(expense());
+		const store = fakeStore();
+		const call = (file: ReturnType<typeof png>) => markSelfPaid(m.db, store, { groupId: GID, eid: EID, uid: "u3", targetUid: "u3", file, amountCents: 400, expectedPaidCents: 0 });
+		const [x, y] = await Promise.all([call(png(1)), call(png(2))]);
+		expect([x.status, y.status].sort()).toEqual(["ok", "stale"]);
+		const doc = m.doc.shares.find((s) => s.uid === "u3")!;
+		expect(doc.paidCents).toBe(400);
+		expect(doc.parts).toHaveLength(1);
+		expect(store.put).toHaveBeenCalledTimes(2); // os dois subiram (a conferência prévia passou nos dois)
+		expect(store.delete).toHaveBeenCalledTimes(1); // o do perdedor foi apagado
+		const kept = doc.parts![0].receipt!.key;
+		expect(store.delete.mock.calls[0][0]).not.toContain(kept);
+	});
+	it("conflito de versão que esgota as tentativas (sem amountCents também): arquivo apagado", async () => {
+		const m = statefulDb(expense(), { failUpdates: 2 });
+		const store = fakeStore();
+		expect((await markSelfPaid(m.db, store, { groupId: GID, eid: EID, uid: "u3", targetUid: "u3", file: png(1), amountCents: 400, expectedPaidCents: 0 })).status).toBe("conflict");
+		expect(store.delete).toHaveBeenCalledTimes(1);
+	});
+	it("devedor e dono marcando o mesmo Pix com telas desatualizadas: só o primeiro vale", async () => {
+		const m = statefulDb(expense());
+		expect((await markSelfPaid(m.db, fakeStore(), { groupId: GID, eid: EID, uid: "u3", targetUid: "u3", amountCents: 400, expectedPaidCents: 0 })).status).toBe("ok");
+		expect(await setSharePaid(m.db, GID, EID, "u2", "u3", "paid", undefined, undefined, 400, 0)).toEqual({ status: "stale" });
+		expect(m.doc.shares.find((s) => s.uid === "u3")!.paidCents).toBe(400);
+	});
+
+	// parte de 100 com parcial de 20 e quitada com 80 (topo); a despesa subiu e a parte voltou a pendente com campos de topo
+	const grown = () =>
+		expense({ shares: [S("u2", 1500), S("u3", 1500, 1000, { parts: [part("p1", 200, "2026-11-01T10:00:00Z", rcp("r20"))], paidAt: new Date("2026-11-05T10:00:00Z"), markedBy: "u3", method: "self", receipt: rcp("r80") })] });
+	it("B: a tela anuncia o pagamento que o servidor desfaz (o de R$ 80,00 e o comprovante dele), e o de R$ 20,00 fica", async () => {
+		const m = statefulDb(grown());
+		const d = await getExpenseDetail(m.db, GID, EID, "u2");
+		if (d.status !== "ok") throw new Error();
+		const view = d.expense.shares.find((x) => x.uid === "u3")!;
+		expect(view).toMatchObject({ status: "pending", last: { cents: 800, method: "self", partial: false }, canUndoOwnPart: false });
+		const st = fakeStore();
+		const r = await setSharePaid(m.db, GID, EID, "u2", "u3", "pending", undefined, st, undefined, await paidNow(m.db, "u3"));
+		expect(r.status).toBe("ok");
+		const u3 = m.doc.shares.find((x) => x.uid === "u3")!;
+		expect(u3).toMatchObject({ paidCents: 200, parts: [expect.objectContaining({ id: "p1", cents: 200 })] });
+		expect(u3).not.toHaveProperty("receipt");
+		expect(st.delete).toHaveBeenCalledWith([rcp("r80").key]);
+	});
+	it("B: a própria pessoa não desfaz quando o último pagamento é a quitação, nem quando o último parcial foi marcado por outro", async () => {
+		const m = statefulDb(grown());
+		expect(await setSharePaid(m.db, GID, EID, "u3", "u3", "pending")).toEqual({ status: "forbidden" });
+		const m2 = statefulDb(expense({ shares: [S("u2", 1500), S("u3", 1500, 300, { parts: [part("p1", 200, "2026-11-01T10:00:00Z"), part("p2", 100, "2026-11-02T10:00:00Z", undefined, "u2", "manual")] })] }));
+		expect(await setSharePaid(m2.db, GID, EID, "u3", "u3", "pending")).toEqual({ status: "forbidden" });
+		expect(m2.expenses.updateOne).not.toHaveBeenCalled();
+		const d = await getExpenseDetail(m2.db, GID, EID, "u3");
+		if (d.status !== "ok") throw new Error();
+		expect(d.expense.shares.find((x) => x.uid === "u3")).toMatchObject({ canUndoOwnPart: false, last: { cents: 100, method: "manual", partial: true } });
+	});
+	it("part-receipt: pid de outra parte, de outra despesa e inexistente dão o mesmo not_found", async () => {
+		const m = statefulDb(expense({ shares: [S("u2", 1000), S("u3", 1000, 200, { parts: [part("pu3", 200, "2026-11-01T10:00:00Z", rcp("r3"))] }), S("u1", 1000, 300, { parts: [part("pu1", 300, "2026-11-01T10:00:00Z", rcp("r1"), "u1")] })] }));
+		const ref = (target: string, pid: string, eid = EID) => getReceiptRef(m.db, GID, eid, target, "u2", "payment", pid);
+		expect(await ref("u3", "pu3")).toMatchObject({ status: "ok" });
+		const notFound = { status: "not_found" };
+		expect(await ref("u3", "pu1")).toEqual(notFound); // parcial de OUTRA parte da mesma despesa
+		expect(await ref("u3", "nao-existe")).toEqual(notFound);
+		// outra despesa (o mock devolve a mesma por id; o pid precisa estar na parte pedida): pid que só existe lá
+		expect(await getReceiptRef(m.db, GID, EID, "u1", "u2", "payment", "pu3")).toEqual(notFound);
+		// parcial SEM comprovante também é not_found
+		const m2 = statefulDb(expense({ shares: [S("u2", 1000), S("u3", 1000, 200, { parts: [part("sem", 200, "2026-11-01T10:00:00Z")] })] }));
+		expect(await getReceiptRef(m2.db, GID, EID, "u3", "u2", "payment", "sem")).toEqual(notFound);
+	});
+});
+
+describe("segunda rodada: ordem de registro, desfazer com conferência, modelo antigo e troca de comprovante", () => {
+	const png = (n: number) => ({ name: `p${n}.png`, contentType: "image/png" as const, bytes: new Uint8Array([0x89, 0x50, 0x4e, n]) });
+	const rcp = (id: string) => ({ id, key: `receipts/${id}`, name: `${id}.png`, contentType: "image/png", size: 4 });
+	const u3 = (m: { doc: { shares: Share[] } }) => m.doc.shares.find((x) => x.uid === "u3")!;
+
+	it("1: o upload demora, o dono registra um parcial depois e a quitação grava com paidAt anterior: o último continua sendo a quitação", async () => {
+		const m = statefulDb(expense());
+		const T0 = new Date("2026-11-11T12:00:00Z");
+		const T1 = new Date("2026-11-11T12:00:30Z");
+		// a pessoa tocou em "Já paguei" em T0 (now fixado antes do upload); o dono registra R$ 4,00 em T1 > T0 enquanto o arquivo sobe
+		let released: () => void = () => {};
+		const gate = new Promise<void>((r) => (released = r));
+		const store = fakeStore();
+		store.put.mockImplementation(async () => {
+			await gate;
+		});
+		const pending = markSelfPaid(m.db, store, { groupId: GID, eid: EID, uid: "u3", targetUid: "u3", file: png(1), now: T0 });
+		await new Promise((r) => setTimeout(r, 5));
+		expect((await setSharePaid(m.db, GID, EID, "u2", "u3", "paid", T1, undefined, 400, 0)).status).toBe("ok");
+		released();
+		const r = await pending;
+		expect(r.status).toBe("ok");
+		expect(u3(m)).toMatchObject({ paidCents: 1000, method: "self", markedBy: "u3", paidAt: T0 });
+		expect(u3(m).parts).toHaveLength(1);
+		const d = await getExpenseDetail(m.db, GID, EID, "u2");
+		if (d.status !== "ok") throw new Error();
+		expect(d.expense.shares.find((x) => x.uid === "u3")!.last).toMatchObject({ cents: 600, method: "self", partial: false });
+		// desfazer tira a quitação (último registrado), não o parcial do dono
+		expect((await setSharePaid(m.db, GID, EID, "u2", "u3", "pending", undefined, fakeStore(), undefined, 1000)).status).toBe("ok");
+		expect(u3(m)).toMatchObject({ paidCents: 400, parts: [expect.objectContaining({ cents: 400, method: "manual" })] });
+	});
+	it("2: desfazer com expectedPaidCents divergente => stale_undo, sem desfazer; sem o campo e com parciais => stale_undo; sem parciais segue", async () => {
+		const part = { id: "p1", cents: 300, at: new Date("2026-11-01T10:00:00Z"), markedBy: "u3", method: "self" as const, receipt: rcp("r1") };
+		const m = statefulDb(expense({ shares: [S("u2", 1000), S("u3", 1000, 300, { parts: [part] })] }));
+		const st = fakeStore();
+		expect(await setSharePaid(m.db, GID, EID, "u2", "u3", "pending", undefined, st, undefined, 0)).toEqual({ status: "stale_undo" });
+		expect(await setSharePaid(m.db, GID, EID, "u2", "u3", "pending", undefined, st)).toEqual({ status: "stale_undo" });
+		expect(await setSharePaid(m.db, GID, EID, "u3", "u3", "pending", undefined, st, undefined, 999)).toEqual({ status: "stale_undo" }); // a própria pessoa também confere
+		expect(m.expenses.updateOne).not.toHaveBeenCalled();
+		expect(st.delete).not.toHaveBeenCalled();
+		expect((await setSharePaid(m.db, GID, EID, "u2", "u3", "pending", undefined, st, undefined, 300)).status).toBe("ok");
+		expect(st.delete).toHaveBeenCalledWith([rcp("r1").key]);
+		// parte sem parciais: o cliente antigo (sem o campo) segue como hoje
+		const m2 = statefulDb(expense({ shares: [S("u2", 1000), S("u3", 1000, 1000, { paidAt: new Date(), markedBy: "u2", method: "manual" })] }));
+		expect((await setSharePaid(m2.db, GID, EID, "u2", "u3", "pending")).status).toBe("ok");
+		expect(u3(m2)).toEqual({ uid: "u3", amountCents: 1000, paidCents: 0 });
+	});
+	it("2: duas telas desfazendo o mesmo pagamento: a segunda leva stale_undo e não desfaz o anterior", async () => {
+		const mk = (id: string, cents: number) => ({ id, cents, at: new Date("2026-11-01T10:00:00Z"), markedBy: "u3", method: "self" as const });
+		const m = statefulDb(expense({ shares: [S("u2", 1000), S("u3", 1000, 300, { parts: [mk("p1", 100), mk("p2", 200)] })] }));
+		expect((await setSharePaid(m.db, GID, EID, "u2", "u3", "pending", undefined, undefined, undefined, 300)).status).toBe("ok");
+		expect(await setSharePaid(m.db, GID, EID, "u2", "u3", "pending", undefined, undefined, undefined, 300)).toEqual({ status: "stale_undo" });
+		expect(u3(m).paidCents).toBe(100);
+	});
+	it("3: parte do modelo antigo (paga sem metadados) aparece como paga, aceita parcial depois de crescer e mantém o valor", async () => {
+		const m = statefulDb(expense({ amountCents: 4500, shares: [S("u2", 1500), S("u3", 1500, 1000)] })); // pagou 10,00 antes de a parte crescer para 15,00
+		const before = await getExpenseDetail(m.db, GID, EID, "u3");
+		if (before.status !== "ok") throw new Error();
+		expect(before.expense.shares.find((x) => x.uid === "u3")).toMatchObject({ status: "pending", paidCents: 1000, dueCents: 500, paidAt: null, parts: [], last: { cents: 1000, method: null, partial: false } });
+		const r = await markSelfPaid(m.db, fakeStore(), { groupId: GID, eid: EID, uid: "u3", targetUid: "u3", amountCents: 200, expectedPaidCents: 1000 });
+		expect(r.status).toBe("ok");
+		expect(u3(m)).toMatchObject({ paidCents: 1200 });
+		expect(u3(m).parts!.map((p) => p.cents)).toEqual([1000, 200]);
+		// desfazer o parcial devolve ao legado
+		expect((await setSharePaid(m.db, GID, EID, "u3", "u3", "pending", undefined, undefined, undefined, 1200)).status).toBe("ok");
+		expect(u3(m)).toMatchObject({ paidCents: 1000, parts: [expect.objectContaining({ cents: 1000 })] }); // o antigo ficou como parcial "sem dono": só o dono desfaz
+	});
+	it("5: a própria pessoa não substitui (nem apaga) o comprovante de um pagamento marcado por outra pessoa; o arquivo enviado é removido", async () => {
+		const mine = { id: "p1", cents: 600, at: new Date("2026-11-01T10:00:00Z"), markedBy: "u3", method: "self" as const, receipt: rcp("meu") };
+		const dono = { id: "p2", cents: 400, at: new Date("2026-11-02T10:00:00Z"), markedBy: "u2", method: "manual" as const, receipt: rcp("dono") };
+		const m = statefulDb(expense({ shares: [S("u2", 1000), S("u3", 1000, 1000, { parts: [mine, dono] })] }));
+		const st = fakeStore();
+		const r = await markSelfPaid(m.db, st, { groupId: GID, eid: EID, uid: "u3", targetUid: "u3", file: png(9) });
+		expect(r.status).toBe("ok");
+		expect(m.expenses.updateOne).not.toHaveBeenCalled();
+		expect(u3(m).parts!.map((p) => p.receipt?.id)).toEqual(["meu", "dono"]);
+		expect(st.put).toHaveBeenCalledTimes(1);
+		expect(st.delete).toHaveBeenCalledTimes(1); // só o arquivo recém-enviado
+		expect(st.delete.mock.calls[0][0]).not.toContain(rcp("dono").key);
+		// mesma regra para o pagamento de topo manual com comprovante
+		const m2 = statefulDb(expense({ shares: [S("u2", 1000), S("u3", 1000, 1000, { paidAt: new Date(), markedBy: "u2", method: "manual", receipt: rcp("dono") })] }));
+		const st2 = fakeStore();
+		await markSelfPaid(m2.db, st2, { groupId: GID, eid: EID, uid: "u3", targetUid: "u3", file: png(8) });
+		expect(u3(m2).receipt).toEqual(rcp("dono"));
+		expect(st2.delete).toHaveBeenCalledTimes(1);
+		// e a tela não oferece "Trocar comprovante" nesse caso
+		const d = await getExpenseDetail(m2.db, GID, EID, "u3");
+		if (d.status !== "ok") throw new Error();
+		expect(d.expense.shares.find((x) => x.uid === "u3")!.canAddReceipt).toBe(false);
+	});
+});
+
+describe("parts malformado no banco", () => {
+	it("a despesa continua abrindo (sem 500) e ignora o que não é parcial válido", async () => {
+		for (const parts of ["x", [null, 7, { id: "p" }], {}]) {
+			const m = statefulDb(expense({ shares: [S("u2", 1000), S("u3", 1000, 0, { parts } as never)] }));
+			const d = await getExpenseDetail(m.db, GID, EID, "u2");
+			if (d.status !== "ok") throw new Error("esperava ok");
+			expect(d.expense.shares.find((x) => x.uid === "u3")).toMatchObject({ parts: [], last: null, status: "pending" });
+		}
+	});
+});
+

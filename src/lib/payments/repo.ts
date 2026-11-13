@@ -130,6 +130,8 @@ export type BatchPayResult =
 	| { status: "forbidden" }
 	| { status: "no_share" }
 	| { status: "invalid"; error: string; field: "items" }
+	/** O total mudou desde que a tela o mostrou (`expectedTotalCents`): nada foi gravado. */
+	| { status: "stale" }
 	/** Nenhuma conta pôde ser paga (mudaram no meio do caminho). */
 	| { status: "all_failed" };
 
@@ -147,7 +149,7 @@ export async function validateBatch(
 	uid: string,
 	items: BatchItemInput[],
 	expectedRecipientId?: string,
-): Promise<{ status: "ok"; totalCents: number } | Exclude<BatchPayResult, { status: "ok" | "all_failed" }>> {
+): Promise<{ status: "ok"; totalCents: number } | Exclude<BatchPayResult, { status: "ok" | "all_failed" | "stale" }>> {
 	if (items.length === 0 || items.length > BATCH_MAX_ITEMS || new Set(items.map(itemId)).size !== items.length) {
 		return { status: "invalid", error: "Escolha de 1 a 50 contas, sem repetir.", field: "items" };
 	}
@@ -228,12 +230,13 @@ export async function validateBatch(
 export async function payBatch(
 	db: Db,
 	store: AttachmentStore,
-	args: { uid: string; items: BatchItemInput[]; file?: SniffedFile; now?: Date; recipientId?: string },
+	args: { uid: string; items: BatchItemInput[]; file?: SniffedFile; now?: Date; recipientId?: string; /** Total que a tela mostrou; se o calculado agora for outro, `stale` (nada gravado, nenhum arquivo). Ausente = como antes. */ expectedTotalCents?: number },
 ): Promise<BatchPayResult> {
 	const { uid, items, file } = args;
 	const now = args.now ?? new Date();
 	const checked = await validateBatch(db, uid, items, args.recipientId);
 	if (checked.status !== "ok") return checked;
+	if (args.expectedTotalCents !== undefined && args.expectedTotalCents !== checked.totalCents) return { status: "stale" };
 
 	const batchId = randomId();
 	const batch: ShareBatch = { id: batchId, totalCents: checked.totalCents, count: items.length };
@@ -291,7 +294,8 @@ export async function payBatch(
 		await releaseReceipts(db, store, receipt ? [receipt.key] : []);
 		return { status: "all_failed" };
 	}
-	if (failed.length > 0) await correctBatchTotals(db, uid, batchId, paidDocs, { id: batchId, totalCents: totalPaidCents, count: paid.length });
+	// `batch.totalCents/count` gravados são sempre o que foi de fato pago: corrige também quando o total mudou entre a validação e a gravação.
+	if (failed.length > 0 || totalPaidCents !== checked.totalCents) await correctBatchTotals(db, uid, batchId, paidDocs, { id: batchId, totalCents: totalPaidCents, count: paid.length });
 	return { status: "ok", batchId, paid, failed, totalPaidCents, hasReceipt: Boolean(receipt), payments: facts };
 }
 

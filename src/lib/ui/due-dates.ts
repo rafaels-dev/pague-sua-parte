@@ -139,15 +139,24 @@ export function installmentShort(i: { number: number; count: number }): string {
 	return `Parcela ${i.number}/${i.count}`;
 }
 
-export type SeriesItemState = "paid" | "overdue" | "open";
+export type SeriesItemState = "paid" | "overdue" | "partial" | "open";
 
-/** Estado de uma parcela da série: paga, vencida (aberta e com data passada) ou em aberto. */
-export function seriesItemState(item: { dueDate: string | null; settled: boolean }, today: string): SeriesItemState {
+/**
+ * Estado de uma parcela da série: paga, vencida (aberta e com data passada), paga em parte (ainda falta, nunca "Paga")
+ * ou em aberto. Vencida vem antes de "paga em parte": a data é o que mais importa; o texto da tela acrescenta o "em parte".
+ */
+export function seriesItemState(item: { dueDate: string | null; settled: boolean; partial?: boolean }, today: string): SeriesItemState {
 	if (item.settled) return "paid";
-	return item.dueDate && isPast(item.dueDate, today) ? "overdue" : "open";
+	if (item.dueDate && isPast(item.dueDate, today)) return "overdue";
+	return item.partial ? "partial" : "open";
 }
 
-export const SERIES_STATE_TEXT: Record<SeriesItemState, string> = { paid: "Paga", overdue: "Vencida", open: "Em aberto" };
+export const SERIES_STATE_TEXT: Record<SeriesItemState, string> = { paid: "Paga", overdue: "Vencida", partial: "Pago em parte", open: "Em aberto" };
+
+/** Texto do selo da parcela; vencida e paga em parte diz as duas coisas. */
+export function seriesItemChipText(item: { partial?: boolean }, state: SeriesItemState): string {
+	return state === "overdue" && item.partial ? "Vencida · pago em parte" : SERIES_STATE_TEXT[state];
+}
 
 /** Próxima vez que o dia `day` (1 a 31) acontece, de hoje em diante (hoje conta); corta no fim do mês curto. */
 export function nextDayOfMonth(today: string, day: number): string {

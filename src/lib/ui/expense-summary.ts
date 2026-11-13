@@ -29,8 +29,8 @@ export function shareStatusLine(s: SummaryShare, overdue: boolean): string {
 	if (s.status === "refund" && !s.participates) return `saiu da divisão (a receber de volta ${formatBRL(s.refundCents)})`;
 	if (s.status === "refund") return `${formatBRL(s.amountCents)} (paga; a receber de volta ${formatBRL(s.refundCents)})`;
 	if (s.status === "pending") {
-		const partial = s.paidCents > 0 ? `; já pagou ${formatBRL(s.paidCents)}, falta ${formatBRL(s.dueCents)}` : "";
-		return `${formatBRL(s.amountCents)} (pendente${overdue ? ", atrasado" : ""}${partial})`;
+		if (s.paidCents > 0) return `${formatBRL(s.amountCents)} (pago parcialmente${overdue ? ", atrasado" : ""}; já pagou ${formatBRL(s.paidCents)}, falta ${formatBRL(s.dueCents)})`;
+		return `${formatBRL(s.amountCents)} (pendente${overdue ? ", atrasado" : ""})`;
 	}
 	if (!s.participates) return s.refund ? `saiu da divisão (devolvido ${formatBRL(s.refund.cents)})` : "saiu da divisão";
 	return `${formatBRL(s.amountCents)} (pago${s.refund ? `; devolvido ${formatBRL(s.refund.cents)}` : ""})`;

@@ -19,6 +19,7 @@ export function ReceiptSheetContent({
 	mode,
 	payeeName,
 	count = 0,
+	partialCents,
 	items,
 	problems,
 	processing,
@@ -38,6 +39,8 @@ export function ReceiptSheetContent({
 	payeeName: string;
 	/** Quantas contas o comprovante cobre ("Já paguei tudo"). */
 	count?: number;
+	/** Pagamento parcial: quanto foi pago (vai no título). */
+	partialCents?: number;
 	items: PickedFile[];
 	problems: string[];
 	processing: boolean;
@@ -55,7 +58,7 @@ export function ReceiptSheetContent({
 	onSkip: () => void;
 	onCancel: () => void;
 }>) {
-	const copy = receiptSheetCopy(mode, payeeName, count);
+	const copy = receiptSheetCopy(mode, payeeName, count, partialCents);
 	return (
 		<div className="space-y-4">
 			<p className="text-body-large text-on-surface-variant">{copy.intro}</p>
@@ -104,6 +107,7 @@ export function ReceiptSheetBody({
 	mode,
 	payeeName,
 	count = 0,
+	partialCents,
 	busy,
 	error,
 	fileError,
@@ -113,6 +117,7 @@ export function ReceiptSheetBody({
 	mode: ReceiptMode;
 	payeeName: string;
 	count?: number;
+	partialCents?: number;
 	busy: boolean;
 	error: string | null;
 	fileError: string | null;
@@ -125,6 +130,7 @@ export function ReceiptSheetBody({
 			mode={mode}
 			payeeName={payeeName}
 			count={count}
+			partialCents={partialCents}
 			items={att.items}
 			problems={att.problems}
 			processing={att.processing}

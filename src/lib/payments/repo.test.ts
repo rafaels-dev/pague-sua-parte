@@ -50,8 +50,10 @@ function fakeDb(docs: ExpenseDoc[], opts: { failOn?: ObjectId; throwOn?: ObjectI
 		}),
 		find: vi.fn((f: Record<string, { $in?: string[] }>) => ({
 			toArray: async () => {
-				const keys = f["shares.receipt.key"]?.$in ?? (f as unknown as { $or: Record<string, { $in: string[] }>[] }).$or?.[0]?.["shares.receipt.key"]?.$in ?? [];
-				return [...state.values()].filter((d) => d.shares.some((s) => s.receipt && keys.includes(s.receipt.key))).map((d) => copy(d));
+				const clauses = (f as unknown as { $or?: Record<string, { $in: string[] }>[] }).$or ?? [];
+				const keys = new Set([...(f["shares.receipt.key"]?.$in ?? []), ...clauses.flatMap((c) => Object.values(c).flatMap((v) => v.$in))]);
+				const used = (s: ExpenseDoc["shares"][number]) => [s.receipt?.key, s.refund?.receipt?.key, ...(s.parts ?? []).map((p) => p.receipt?.key)];
+				return [...state.values()].filter((d) => d.shares.some((s) => used(s).some((k) => k && keys.has(k)))).map((d) => copy(d));
 			},
 		})),
 		updateOne: vi.fn(async (f: { _id: ObjectId; version?: number }, u: { $set: Record<string, unknown> }) => {
@@ -265,6 +267,70 @@ describe("releaseReceipts (objeto compartilhado)", () => {
 		f.state.delete(E2.toHexString());
 		await releaseReceipts(f.db, store, ["receipts/batch/b/r", "receipts/batch/b/r"]);
 		expect(store.delete).toHaveBeenCalledWith(["receipts/batch/b/r"]);
+	});
+});
+
+describe("pagamento parcial e lote", () => {
+	const rcp = { id: "rp", key: "receipts/g/e/rp", name: "p.png", contentType: "image/png", size: 4 };
+	const part = { id: "p1", cents: 400, at: new Date("2026-11-01T10:00:00Z"), markedBy: "me", method: "self" as const, receipt: rcp };
+	const withPartial = () => mk(E1, G1, { shares: [{ uid: "ana", amountCents: 1000, paidCents: 0 }, { uid: "me", amountCents: 1000, paidCents: 400, parts: [part] }] });
+
+	it("a parte com parcial entra com o que FALTA, é quitada pelo lote e os parciais e o comprovante deles ficam", async () => {
+		const { db, get } = fakeDb([withPartial()]);
+		const store = fakeStore();
+		const r = await payBatch(db, store, { uid: "me", items: [it1(G1, E1)], file: PNG });
+		if (r.status !== "ok") throw new Error(r.status);
+		expect(r.paid).toEqual([{ ...it1(G1, E1), amountCents: 600 }]);
+		expect(r.totalPaidCents).toBe(600);
+		const s = get(E1).shares[1];
+		expect(s).toMatchObject({ paidCents: 1000, method: "self", markedBy: "me", batch: { totalCents: 600, count: 1 } });
+		expect(s.parts).toEqual([part]);
+		expect(store.delete).not.toHaveBeenCalled();
+		// os avisos dizem o valor do último pagamento (o do lote), não a parte inteira
+		expect(r.payments).toEqual([expect.objectContaining({ amountCents: 600 })]);
+	});
+	it("expectedTotalCents: a tela gerou o Pix de R$ 10,00 mas entrou um parcial: 409 stale, nada gravado e nenhum arquivo subiu", async () => {
+		const { db, get, expenses } = fakeDb([withPartial()]);
+		const store = fakeStore();
+		expect(await payBatch(db, store, { uid: "me", items: [it1(G1, E1)], file: PNG, expectedTotalCents: 1000 })).toEqual({ status: "stale" });
+		expect(store.put).not.toHaveBeenCalled();
+		expect(expenses.updateOne).not.toHaveBeenCalled();
+		expect(get(E1).shares[1].paidCents).toBe(400);
+		// com o total certo (o que falta) segue; sem o campo (cliente antigo) também
+		const ok = await payBatch(db, store, { uid: "me", items: [it1(G1, E1)], expectedTotalCents: 600 });
+		expect(ok.status).toBe("ok");
+		const again = fakeDb([withPartial()]);
+		expect((await payBatch(again.db, fakeStore(), { uid: "me", items: [it1(G1, E1)] })).status).toBe("ok");
+	});
+	it("o total muda entre a validação e a gravação (entra um parcial no meio): batch.totalCents gravado é o que foi de fato pago", async () => {
+		const f = fakeDb([mk(E1, G1, { shares: [{ uid: "ana", amountCents: 1000, paidCents: 0 }, { uid: "me", amountCents: 1000, paidCents: 0 }] })]);
+		const orig = f.expenses.findOne.getMockImplementation()!;
+		let calls = 0;
+		f.expenses.findOne.mockImplementation(async (flt) => {
+			// 1ª leitura = validação; a 2ª = gravação: antes dela entra um parcial de R$ 4,00
+			if (++calls === 2) {
+				const d = f.state.get(E1.toHexString())!;
+				f.state.set(E1.toHexString(), { ...d, shares: d.shares.map((x) => (x.uid === "me" ? { ...x, paidCents: 400, parts: [part] } : x)) } as ExpenseDoc);
+			}
+			return orig(flt);
+		});
+		const r = await payBatch(f.db, fakeStore(), { uid: "me", items: [it1(G1, E1)] });
+		if (r.status !== "ok") throw new Error(r.status);
+		expect(r.totalPaidCents).toBe(600);
+		expect(f.get(E1).shares[1]).toMatchObject({ paidCents: 1000, batch: { id: r.batchId, totalCents: 600, count: 1 } });
+	});
+	it("o total validado também usa só o que falta", async () => {
+		const { db } = fakeDb([withPartial()]);
+		expect(await validateBatch(db, "me", [it1(G1, E1)])).toEqual({ status: "ok", totalCents: 600 });
+	});
+	it("releaseReceipts: arquivo referenciado só por um parcial (em outra despesa) não é apagado", async () => {
+		const f = fakeDb([withPartial()]);
+		const store = fakeStore();
+		await releaseReceipts(f.db, store, [rcp.key]);
+		expect(store.delete).not.toHaveBeenCalled();
+		f.state.delete(E1.toHexString());
+		await releaseReceipts(f.db, store, [rcp.key]);
+		expect(store.delete).toHaveBeenCalledWith([rcp.key]);
 	});
 });
 

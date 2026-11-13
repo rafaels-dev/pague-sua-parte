@@ -20,6 +20,7 @@ import {
 	removePaid,
 	selectedItems,
 	selectedTotal,
+	batchExpectedTotal,
 	shareFieldsFor,
 	toggleUnchecked,
 	type PayableItem,
@@ -94,7 +95,9 @@ export function PayAllPage() {
 		setFileError(null);
 		try {
 			const body = new FormData();
-			body.append("data", JSON.stringify({ items: batchRequestItems(chosen), recipientId: r.id }));
+			// O total que a tela mostra agora (o das contas marcadas; um Pix de outro total já não vale): se um pagamento parcial entrou antes do envio, o servidor recusa.
+			const expectedTotalCents = batchExpectedTotal(r.items, card(r.id).unchecked);
+			body.append("data", JSON.stringify({ items: batchRequestItems(chosen), recipientId: r.id, expectedTotalCents }));
 			if (file) body.append("file", file);
 			const res = normalizeBatchResult(await apiFetch<unknown>("/api/me/payments", { method: "POST", body }));
 			const paidKeys = new Set(res.paid.map(itemKey));

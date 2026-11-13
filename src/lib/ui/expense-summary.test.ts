@@ -43,7 +43,7 @@ describe("buildExpenseStatusText", () => {
 		);
 	});
 	it("atrasado, parcial, parcela, devolvido e quem saiu da divisão", () => {
-		expect(shareStatusLine(s("A", "pending", 1000, { paidCents: 400, dueCents: 600 }), true)).toBe("R$ 10,00 (pendente, atrasado; já pagou R$ 4,00, falta R$ 6,00)");
+		expect(shareStatusLine(s("A", "pending", 1000, { paidCents: 400, dueCents: 600 }), true)).toBe("R$ 10,00 (pago parcialmente, atrasado; já pagou R$ 4,00, falta R$ 6,00)");
 		expect(shareStatusLine(s("A", "paid", 1000, { refund: { cents: 250 } }), false)).toBe("R$ 10,00 (pago; devolvido R$ 2,50)");
 		expect(shareStatusLine(s("A", "paid", 0, { participates: false, refund: { cents: 1000 } }), false)).toBe("saiu da divisão (devolvido R$ 10,00)");
 		expect(buildExpenseStatusText({ ...expense, installment: { number: 2, count: 6 } }, LINK)).toContain("*Mercado do mês* (parcela 2 de 6)");

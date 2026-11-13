@@ -38,6 +38,20 @@ const exp = (over: Record<string, unknown>): ExpenseDoc =>
 const TODAY = "2026-11-15";
 const run = (expenses: ExpenseDoc[], max?: number) => buildReceivables({ uid: "me", today: TODAY, groups, expenses, people, max });
 
+describe("buildReceivables: pagamento parcial", () => {
+	it("o devedor aparece com o que FALTA e quanto já pagou; o total e o 'agora' somam só o que falta", () => {
+		const r = run([exp({ shares: [{ uid: "me", amountCents: 1000, paidCents: 0 }, { uid: "ana", amountCents: 1000, paidCents: 400 }] })]);
+		expect(r.debtors[0].items[0]).toMatchObject({ dueCents: 600, paidCents: 400 });
+		expect(r.totalCents).toBe(600);
+		expect(r.nowCents).toBe(600);
+		expect(r.debtors[0].totalCents).toBe(600);
+	});
+	it("parte quitada só por parciais some da lista", () => {
+		const r = run([exp({ shares: [{ uid: "me", amountCents: 1000, paidCents: 0 }, { uid: "ana", amountCents: 1000, paidCents: 1000, parts: [{ id: "p", cents: 1000, at: new Date(), markedBy: "ana", method: "self" }] }] })]);
+		expect(r.debtors).toEqual([]);
+	});
+});
+
 describe("buildReceivables", () => {
 	it("agrupa por devedor entre grupos e ordena por total decrescente", () => {
 		const r = run([

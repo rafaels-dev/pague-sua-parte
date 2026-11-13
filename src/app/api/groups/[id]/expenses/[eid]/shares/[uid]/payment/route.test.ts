@@ -84,4 +84,84 @@ describe("tamanho do corpo", () => {
 		expect(res.status).toBe(422);
 		expect(markSelfPaid).not.toHaveBeenCalled();
 	});
+	it("pagamento parcial: amountCents por campo do formulário ou por JSON; ausente = undefined", async () => {
+		const form = new FormData();
+		form.append("file", new File([new Uint8Array(PNG)], "pix.png"));
+		form.append("amountCents", "4700");
+		form.append("expectedPaidCents", "0");
+		expect((await POST(new Request("http://x", { method: "POST", body: form, headers: { "content-length": "1000" } }), ctx)).status).toBe(200);
+		expect(markSelfPaid.mock.calls.at(-1)?.[2]).toMatchObject({ amountCents: 4700, expectedPaidCents: 0, file: { name: "pix.png" } });
+		const json = await POST(new Request("http://x", { method: "POST", body: JSON.stringify({ amountCents: 1200, expectedPaidCents: 300 }), headers: { "content-type": "application/json", "content-length": "30" } }), ctx);
+		expect(json.status).toBe(200);
+		expect(markSelfPaid.mock.calls.at(-1)?.[2]).toMatchObject({ amountCents: 1200, expectedPaidCents: 300 });
+		expect(markSelfPaid.mock.calls.at(-1)?.[2].file).toBeUndefined();
+		await upload(PNG);
+		expect(markSelfPaid.mock.calls.at(-1)?.[2].amountCents).toBeUndefined();
+	});
+	it("422 em amountCents inválido (decimal, zero, negativo, texto), sem chamar o repo", async () => {
+		for (const bad of ["12.5", "0", "-3", "abc", "99999999999"]) {
+			const form = new FormData();
+			form.append("amountCents", bad);
+			form.append("expectedPaidCents", "0");
+			const res = await POST(new Request("http://x", { method: "POST", body: form, headers: { "content-length": "100" } }), ctx);
+			expect([res.status, (await res.json()).field]).toEqual([422, "amountCents"]);
+		}
+		const res = await POST(new Request("http://x", { method: "POST", body: JSON.stringify({ amountCents: 1.5, expectedPaidCents: 0 }), headers: { "content-type": "application/json", "content-length": "30" } }), ctx);
+		expect(res.status).toBe(422);
+		expect(markSelfPaid).not.toHaveBeenCalled();
+	});
+	it("valor maior que o que falta (repo): 409 com a mensagem simples", async () => {
+		markSelfPaid.mockResolvedValue({ status: "too_much" });
+		const form = new FormData();
+		form.append("amountCents", "999999");
+		form.append("expectedPaidCents", "0");
+		const res = await POST(new Request("http://x", { method: "POST", body: form, headers: { "content-length": "100" } }), ctx);
+		expect([res.status, await res.json()]).toEqual([409, { error: "Esse valor é maior do que falta pagar. Atualize e tente de novo.", field: "amountCents" }]);
+	});
+	it("expectedPaidCents: obrigatório com amountCents e validado como inteiro >= 0; sem amountCents pode faltar", async () => {
+		for (const bad of [undefined, "-1", "1.5", "x", "99999999999"]) {
+			const form = new FormData();
+			form.append("amountCents", "100");
+			if (bad !== undefined) form.append("expectedPaidCents", bad);
+			const res = await POST(new Request("http://x", { method: "POST", body: form, headers: { "content-length": "100" } }), ctx);
+			expect([res.status, (await res.json()).field]).toEqual([422, "amountCents"]);
+		}
+		expect(markSelfPaid).not.toHaveBeenCalled();
+		// expectedPaidCents sozinho (sem amountCents) também é 422: nunca vira "quitar o que falta"
+		const alone = new FormData();
+		alone.append("expectedPaidCents", "0");
+		const res = await POST(new Request("http://x", { method: "POST", body: alone, headers: { "content-length": "100" } }), ctx);
+		expect(res.status).toBe(422);
+		expect(markSelfPaid).not.toHaveBeenCalled();
+	});
+	it("chave amountCents presente mas vazia/nula/inválida => 422 (nunca quitação total); só a ausência real dos dois é o pedido antigo", async () => {
+		for (const v of ["", " ", "abc", "0"]) {
+			const form = new FormData();
+			form.append("amountCents", v);
+			form.append("expectedPaidCents", "0");
+			expect((await POST(new Request("http://x", { method: "POST", body: form, headers: { "content-length": "100" } }), ctx)).status).toBe(422);
+		}
+		const json = (body: unknown) => POST(new Request("http://x", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", "content-length": "60" } }), ctx);
+		for (const body of [{ amountCents: null, expectedPaidCents: 0 }, { amountCents: "", expectedPaidCents: 0 }, { amountCents: 100, expectedPaidCents: null }, { amountCents: 100 }, { expectedPaidCents: 0 }]) expect((await json(body)).status).toBe(422);
+		expect(markSelfPaid).not.toHaveBeenCalled();
+		// ausência real dos dois: pedido antigo
+		expect((await json({})).status).toBe(200);
+		expect(markSelfPaid.mock.calls.at(-1)?.[2].amountCents).toBeUndefined();
+		expect((await upload(PNG)).status).toBe(200);
+	});
+	it("corpo JSON grande demais ou sem Content-Length: 'Pedido inválido.' sem apontar campo", async () => {
+		const big = await POST(new Request("http://x", { method: "POST", body: "{}", headers: { "content-type": "application/json", "content-length": "99999" } }), ctx);
+		expect([big.status, await big.json()]).toEqual([422, { error: "Pedido inválido." }]);
+		const noLen = await POST(new Request("http://x", { method: "POST", body: "{}", headers: { "content-type": "application/json" } }), ctx);
+		expect([noLen.status, await noLen.json()]).toEqual([422, { error: "Pedido inválido." }]);
+		expect(markSelfPaid).not.toHaveBeenCalled();
+	});
+	it("conta mudou (stale): 409 com a mensagem simples", async () => {
+		markSelfPaid.mockResolvedValue({ status: "stale" });
+		const form = new FormData();
+		form.append("amountCents", "100");
+		form.append("expectedPaidCents", "0");
+		const res = await POST(new Request("http://x", { method: "POST", body: form, headers: { "content-length": "100" } }), ctx);
+		expect([res.status, await res.json()]).toEqual([409, { error: "Esta conta mudou. Atualize e confira antes de pagar de novo.", field: "amountCents" }]);
+	});
 });

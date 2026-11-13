@@ -3,7 +3,9 @@
 import { useState } from "react";
 import { AppShellView } from "@/components/app-shell";
 import { AttachmentPicker } from "@/components/expenses/attachment-picker";
+import { OtherAmountContent } from "@/components/expenses/other-amount";
 import { ReceiptSheetContent } from "@/components/expenses/receipt-sheet";
+import { undoPartCentsOf } from "@/lib/ui/partial-pay";
 import type { ReceiptMode } from "@/lib/ui/receipts";
 import type { PickedFile } from "@/components/expenses/use-attachments";
 import { ExpenseDetailView, SharePaidContent, sharePaidTitle } from "@/components/expenses/expense-detail";
@@ -86,13 +88,15 @@ const daysAgo = (n: number) => {
 	d.setUTCDate(d.getUTCDate() - n);
 	return d.toISOString().slice(0, 10);
 };
-type SumInput = Omit<ExpenseSummary, "canHelp" | "ownerAlone" | "helpShareCents" | "yourDueCents" | "yourRefundCents" | "refundCount" | "managed" | "ownerView" | "paidBy" | "dueDate" | "installment" | "recurrence" | "overdue" | "settled" | "attachmentCount"> &
-	Partial<Pick<ExpenseSummary, "canHelp" | "ownerAlone" | "helpShareCents" | "attachmentCount" | "yourDueCents" | "yourRefundCents" | "refundCount" | "managed" | "ownerView" | "dueDate" | "installment" | "recurrence" | "overdue" | "settled">> & {
+type SumInput = Omit<ExpenseSummary, "canHelp" | "ownerAlone" | "helpShareCents" | "yourDueCents" | "yourRefundCents" | "yourPaidCents" | "partialCount" | "refundCount" | "managed" | "ownerView" | "paidBy" | "dueDate" | "installment" | "recurrence" | "overdue" | "settled" | "attachmentCount"> &
+	Partial<Pick<ExpenseSummary, "canHelp" | "ownerAlone" | "helpShareCents" | "attachmentCount" | "yourDueCents" | "yourRefundCents" | "yourPaidCents" | "partialCount" | "refundCount" | "managed" | "ownerView" | "dueDate" | "installment" | "recurrence" | "overdue" | "settled">> & {
 		paidBy: { uid: string; name: string; isYou: boolean; youManage?: boolean };
 	};
 const sum = (o: SumInput): ExpenseSummary => ({
 	yourDueCents: o.yourStatus === "pending" ? o.yourShareCents : 0,
 	yourRefundCents: 0,
+	yourPaidCents: 0,
+	partialCount: 0,
 	refundCount: 0,
 	managed: [],
 	ownerView: null,
@@ -127,7 +131,8 @@ const EXPENSES: ExpenseSummary[] = [
 	sum({ id: "e1", description: "Remédios da farmácia", amountCents: 28990, date: daysAgo(0), paidBy: { uid: "b", name: "Maria das Dores Silva", isYou: false }, yourShareCents: 7248, yourStatus: "pending", pendingCount: 3, attachmentCount: 2 }),
 	sum({ id: "e2", description: "Consulta com a cardiologista", amountCents: 45000, date: daysAgo(1), paidBy: { uid: "a", name: "Rafael Schettino", isYou: true }, yourShareCents: 11250, yourStatus: "payer", pendingCount: 2, refundCount: 1, attachmentCount: 1 }),
 	sum({ id: "e6", description: "Ração e areia da gata", amountCents: 18000, date: daysAgo(2), paidBy: { uid: "b", name: "Maria das Dores Silva", isYou: false }, yourShareCents: 4500, yourStatus: "refund", yourRefundCents: 1500, pendingCount: 1, attachmentCount: 0 }),
-	sum({ id: "e7", description: "Mercado do mês", amountCents: 62000, date: daysAgo(3), paidBy: { uid: "c", name: "José", isYou: false }, yourShareCents: 15500, yourDueCents: 5500, yourStatus: "pending", pendingCount: 1, attachmentCount: 1 }),
+	sum({ id: "e7", description: "Mercado do mês", amountCents: 62000, date: daysAgo(3), paidBy: { uid: "c", name: "José", isYou: false }, yourShareCents: 15500, yourDueCents: 5500, yourPaidCents: 10000, yourStatus: "pending", pendingCount: 1, attachmentCount: 1 }),
+	sum({ id: "e8p", description: "Luz de novembro", amountCents: 24000, date: daysAgo(5), paidBy: { uid: "a", name: "Rafael Schettino", isYou: true }, yourShareCents: 6000, yourStatus: "payer", pendingCount: 3, partialCount: 2, attachmentCount: 0 }),
 	sum({ id: "e8", description: "Fisioterapia", amountCents: 24000, date: daysAgo(5), paidBy: { uid: "a", name: "Rafael Schettino", isYou: true }, yourShareCents: 24000, yourStatus: "payer", pendingCount: 0, refundCount: 2, attachmentCount: 0 }),
 	sum({ id: "e3", description: "Fraldas geriátricas", amountCents: 12000, date: daysAgo(9), paidBy: { uid: "c", name: "José", isYou: false }, yourShareCents: 3000, yourStatus: "paid", pendingCount: 1, attachmentCount: 0 }),
 	sum({ id: "e4", description: "Exame de sangue e raio-x do tornozelo na clínica", amountCents: 31050, date: daysAgo(40), paidBy: { uid: "a", name: "Rafael Schettino", isYou: true }, yourShareCents: 7762, yourStatus: "payer", pendingCount: 0, attachmentCount: 3 }),
@@ -600,7 +605,7 @@ const ATTACHMENTS: AttachmentView[] = [
 ];
 
 type RawDetail = Omit<ExpenseDetailData, "canHelp" | "helpAsUids" | "helpShareCents" | "ownerAlone" | "canEdit" | "adminOnly" | "launchedBy">;
-export type MockMode = "help-alone" | "help-split" | "helped" | "help-care" | "installment" | "overdue" | "owner-installment" | "monthly" | "cashback" | "cashback-installment" | "batch" | "debtor" | "payer" | "partial" | "refund" | "owner-return" | "recalc" | "two-parts" | "care-paid" | "self-owner" | "self-debtor" | "admin-view" | "admin-launched" | "refund-pay" | "refund-nopix" | "refund-done";
+export type MockMode = "help-alone" | "help-split" | "helped" | "help-care" | "installment" | "overdue" | "owner-installment" | "monthly" | "cashback" | "cashback-installment" | "batch" | "debtor" | "payer" | "partial" | "refund" | "owner-return" | "recalc" | "two-parts" | "care-paid" | "self-owner" | "self-debtor" | "admin-view" | "admin-launched" | "refund-pay" | "refund-nopix" | "refund-done" | "partial-owner" | "partial-installment";
 const isCare = (mode: MockMode) => mode === "two-parts" || mode === "care-paid" || mode === "help-care";
 
 type MS = Partial<ExpenseShare> & Pick<ExpenseShare, "uid" | "name" | "amountCents" | "status">;
@@ -617,6 +622,9 @@ const share = (s: MS): ExpenseShare => ({
 	paidAt: null,
 	method: null,
 	receipt: null,
+	parts: [],
+	canUndoOwnPart: false,
+	last: s.last ?? null,
 	canPay: s.status === "pending" && !!(s.isYou || s.youManage),
 	canAddReceipt: false,
 	paidCents: s.status === "paid" || s.status === "payer" ? s.amountCents : 0,
@@ -693,16 +701,26 @@ function careDetail(mode: "two-parts" | "care-paid"): RawDetail {
 	};
 }
 
+const PART_RECEIPT = { name: "comprovante-pix.png", contentType: "image/png", size: 210_000 };
+const PART_SELF: ExpenseShare["parts"][number] = { id: "p1", cents: 1000, at: PAID_AT, method: "self", byAdmin: false, markedByName: null, receipt: PART_RECEIPT, batch: null };
+
 /** Parcela de uma compra parcelada, vista por quem deve (o dono é a Maria). */
-function installmentDetail(mode: "installment" | "overdue"): RawDetail {
+function installmentDetail(mode: "installment" | "overdue" | "partial-installment"): RawDetail {
 	const overdue = mode === "overdue";
+	const partialMode = mode === "partial-installment";
 	// "Em dia": parcela 2 de 6, a primeira venceu no dia 10 e já foi paga. "Vencida": parcela 2 de 4, venceu há 8 dias.
 	const count = overdue ? 4 : 6;
 	const due2 = overdue ? daysAgo(8) : DUE_NEXT;
 	const series = seriesMock(count, addMonthsClamped(due2, -1), 1);
+	// Parcela 2 com pagamento parcial do Rafael (e a 3 só de alguém, em aberto).
+	if (partialMode) series.items[1] = { ...series.items[1], partial: true };
 	const shares = [
 		share({ ...B, amountCents: 3000, status: "payer" }),
-		share({ ...A, amountCents: 3000, status: "pending", isYou: true }),
+		share(
+			partialMode
+				? { ...A, amountCents: 3000, status: "pending", isYou: true, paidCents: 1000, dueCents: 2000, parts: [PART_SELF], canUndoOwnPart: true, last: { cents: 1000, method: "self", partial: true } }
+				: { ...A, amountCents: 3000, status: "pending", isYou: true },
+		),
 		share({ uid: "c", name: "José", amountCents: 3000, status: "paid", paidAt: PAID_AT, method: "manual" }),
 		share({ uid: "d", name: "Ana Paula", amountCents: 3000, status: "pending" }),
 	];
@@ -893,12 +911,12 @@ function detail(mode: MockMode): ExpenseDetailData {
 }
 
 function rawDetail(mode: MockMode): RawDetail {
-	if (mode === "installment" || mode === "overdue") return installmentDetail(mode);
+	if (mode === "installment" || mode === "overdue" || mode === "partial-installment") return installmentDetail(mode);
 	if (mode === "owner-installment") return ownerInstallmentDetail();
 	if (mode === "monthly") return monthlyDetail();
 	if (mode === "cashback" || mode === "cashback-installment") return cashbackDetail(mode === "cashback-installment");
 	if (isCare(mode)) return careDetail(mode as "two-parts" | "care-paid");
-	const youOwner = mode === "payer" || mode === "owner-return" || mode === "recalc" || mode === "self-owner" || mode === "refund-pay" || mode === "refund-nopix" || mode === "refund-done";
+	const youOwner = mode === "payer" || mode === "owner-return" || mode === "recalc" || mode === "self-owner" || mode === "refund-pay" || mode === "refund-nopix" || mode === "refund-done" || mode === "partial-owner";
 	const owner = youOwner ? { ...A, picture: null, isYou: true, kind: "user" as const, youManage: false } : { ...B, picture: null, isYou: false, kind: "user" as const, youManage: false };
 	const base = {
 		id: "e1",
@@ -976,11 +994,34 @@ function rawDetail(mode: MockMode): RawDetail {
 				share({ uid: "c", name: "José", amountCents: 7248, status: "paid", paidAt: PAID_AT, method: "manual" }),
 				share({ uid: "d", name: "Ana Paula", amountCents: 7247, status: "pending" }),
 			]);
+		case "partial-owner":
+			// Rafael pagou 300,00 dividido entre 4: Maria pagou 47,00 (avisou, com comprovante), José deu 50,00 em dinheiro (Rafael) e
+			// mais 25,00 (marcado pelo administrador), Ana pagou 40,00 e depois o resto.
+			return out("Mercado do mês", 40000, 3, [
+				share({ ...A, amountCents: 10000, status: "payer", isYou: true }),
+				share({ ...B, amountCents: 10000, status: "pending", paidCents: 4700, dueCents: 5300, parts: [{ ...PART_SELF, cents: 4700 }], last: { cents: 4700, method: "self", partial: true } }),
+				share({
+					uid: "c",
+					name: "José",
+					amountCents: 10000,
+					status: "pending",
+					paidCents: 7500,
+					dueCents: 2500,
+					last: { cents: 2500, method: "manual", partial: true },
+					parts: [
+						{ id: "p2", cents: 5000, at: PAID_AT, method: "manual", byAdmin: false, markedByName: null, receipt: null, batch: null },
+						{ id: "p3", cents: 2500, at: PAID_AT, method: "manual", byAdmin: true, markedByName: "Ana Paula", receipt: null, batch: null },
+					],
+				}),
+				// Lia: R$ 20,00 em parcial e R$ 80,00 na quitação; a despesa subiu e a parte voltou a ficar em aberto (o último pagamento é o de R$ 80,00).
+				share({ uid: "e", name: "Lia Souza", amountCents: 15000, status: "pending", paidCents: 10000, dueCents: 5000, paidAt: PAID_AT, method: "self", receipt: RECEIPT, parts: [{ ...PART_SELF, id: "p5", cents: 2000, receipt: null }], last: { cents: 8000, method: "self", partial: false } }),
+				share({ uid: "d", name: "Ana Paula", amountCents: 10000, status: "paid", paidAt: PAID_AT, method: "self", receipt: RECEIPT, parts: [{ ...PART_SELF, id: "p4", cents: 4000, receipt: null }], last: { cents: 6000, method: "self", partial: false } }),
+			]);
 		case "partial":
 			// 300,00 entre Maria, Rafael e José; Rafael já tinha pago 40,00; Ana saiu depois de pagar 75,00
 			return out("Mercado do mês", 30000, 3, [
 				share({ ...B, amountCents: 10000, status: "payer" }),
-				share({ ...A, amountCents: 10000, status: "pending", isYou: true, paidCents: 4000, dueCents: 6000 }),
+				share({ ...A, amountCents: 10000, status: "pending", isYou: true, paidCents: 4000, dueCents: 6000, parts: [{ ...PART_SELF, cents: 4000 }], canUndoOwnPart: true, last: { cents: 4000, method: "self", partial: true } }),
 				share({ uid: "c", name: "José", amountCents: 10000, status: "paid", paidAt: PAID_AT, method: "manual" }),
 				share({ uid: "d", name: "Ana Paula", amountCents: 0, status: "refund", paidCents: 7500, refundCents: 7500, participates: false }),
 			]);
@@ -1027,8 +1068,14 @@ export function MockExpense({
 	helpSheet = false,
 	receiptSheet,
 	summarySheet = false,
+	otherAmount,
+	receivePartial = false,
 }: Readonly<{
 	mode: MockMode;
+	/** Abre "Pagar outro valor" (da parte do Rafael) com este valor já digitado (0 = vazio). */
+	otherAmount?: number;
+	/** Com `confirm`: abre "Recebi só uma parte" já aberto. */
+	receivePartial?: boolean;
 	/** Abre o sheet "Compartilhar resumo" desta despesa. */
 	summarySheet?: boolean;
 	/** Abre o sheet "Já paguei" (pay) ou "Anexar comprovante" (attach), vazio ou com um arquivo escolhido. */
@@ -1063,6 +1110,7 @@ export function MockExpense({
 			: [],
 	);
 	const [receiptView, setReceiptView] = useState(false);
+	const [other, setOther] = useState<number | null>(otherAmount ?? null);
 	const expense = detail(mode);
 	const members = (isCare(mode) ? CARE_GROUP : MOCK_GROUP).members.map(({ uid, name, picture, isYou, kind }) => ({ uid, name, picture, isYou, kind }));
 	const who = useWhoSplits(members.map((m) => m.uid), resplit ?? expense.participantUids);
@@ -1088,6 +1136,8 @@ export function MockExpense({
 				onShare={() => setShareOpen(true)}
 				onHelp={() => setHelpOpen(true)}
 				onPaid={() => setReceiptOpen("pay")}
+				onOtherAmount={() => setOther(0)}
+				onViewPartReceipt={() => setReceiptView(true)}
 				onViewReceipt={() => setReceiptView(true)}
 				onAttachReceipt={() => setReceiptOpen("attach")}
 				onTellPaid={() => {}}
@@ -1107,6 +1157,24 @@ export function MockExpense({
 					onShare={noop}
 					onClose={() => setSummaryOpen(false)}
 				/>
+			</Sheet>
+			<Sheet open={other !== null} onClose={() => setOther(null)} title="Pagar outro valor">
+				{other !== null && (
+					<OtherAmountContent
+						dueCents={expense.shares.find((s) => s.isYou)?.dueCents ?? 0}
+						payeeName={expense.pix?.payeeName ?? ""}
+						cents={other}
+						hasPix={!!expense.pix}
+						canCopy
+						onCents={setOther}
+						onCopy={noop}
+						onPaid={() => {
+							setOther(null);
+							setReceiptOpen("pay");
+						}}
+						onCancel={() => setOther(null)}
+					/>
+				)}
 			</Sheet>
 			<Sheet open={receiptOpen !== null} onClose={() => setReceiptOpen(null)} title={receiptOpen === "attach" ? "Anexar comprovante" : receiptOpen === "refund" ? "Devolvi" : "Já paguei"}>
 				{receiptOpen && (
@@ -1149,8 +1217,19 @@ export function MockExpense({
 					onCancel={() => setHelpOpen(false)}
 				/>
 			</Sheet>
-			<Sheet open={!!(action && target)} onClose={() => setAction(null)} title={action && target ? sharePaidTitle(action.mode, target) : ""}>
-				{action && <SharePaidContent mode={action.mode} busy={false} error={null} onConfirm={() => setAction(null)} onCancel={() => setAction(null)} />}
+			<Sheet open={!!(action && target)} onClose={() => setAction(null)} title={action && target ? sharePaidTitle(action.mode, { ...target, undoPartCents: undoPartCentsOf(target), partial: receivePartial, own: !expense.canMarkPaid && target.canUndoOwnPart }) : ""}>
+				{action && target && (
+					<SharePaidContent
+						mode={action.mode}
+						dueCents={target.dueCents}
+						undoPartCents={action.mode === "pending" ? undoPartCentsOf(target) : undefined}
+						initialPartial={receivePartial}
+						busy={false}
+						error={null}
+						onConfirm={() => setAction(null)}
+						onCancel={() => setAction(null)}
+					/>
+				)}
 			</Sheet>
 			<Sheet open={scopeStep === "resplit"} onClose={() => setScopeStep(null)} title="Mudar quem divide">
 				{expense.installment && (

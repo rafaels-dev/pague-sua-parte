@@ -119,6 +119,19 @@ describe("buildPayables", () => {
 	});
 });
 
+describe("buildPayables: pagamento parcial", () => {
+	it("o item mostra o que FALTA em dueCents e quanto já foi pago em paidCents; o total do destinatário soma o que falta", () => {
+		const r = run([exp({ shares: [{ uid: "ana", amountCents: 1000, paidCents: 0 }, { uid: "me", amountCents: 1000, paidCents: 400 }] })]);
+		expect(r.recipients[0].items[0]).toMatchObject({ dueCents: 600, paidCents: 400 });
+		expect(r.recipients[0].totalCents).toBe(600);
+	});
+	it("sem pagamento não ganha paidCents; parte quitada por parciais não entra", () => {
+		const r = run([exp({}), exp({ shares: [{ uid: "ana", amountCents: 1000, paidCents: 0 }, { uid: "me", amountCents: 1000, paidCents: 1000 }] })]);
+		expect(r.recipients[0].items).toHaveLength(1);
+		expect(r.recipients[0].items[0]).not.toHaveProperty("paidCents");
+	});
+});
+
 describe("buildPayables: devoluções", () => {
 	// "me" pagou a despesa e Ana pagou a mais (1500 por uma cota de 1000): me devolve 500 para Ana, no Pix de Ana.
 	const refundExp = (over: Record<string, unknown> = {}) =>

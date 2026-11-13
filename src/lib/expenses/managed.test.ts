@@ -306,7 +306,7 @@ describe("modelo antigo (status 'paid', sem paidCents)", () => {
 		const race = mockDb({ expense: benExpense({ paidBy: "u2", shares: [S("u2", 1000), S("u1", 1000)] }) });
 		race.expenses.deleteOne.mockResolvedValue({ deletedCount: 0 });
 		expect((await deleteExpense(race.db, store, GID, EID, "u2")).status).toBe("has_payment");
-		expect(race.expenses.deleteOne.mock.calls[0][0].shares).toEqual({ $not: { $elemMatch: { $or: [{ paidCents: { $gt: 0 } }, { status: "paid" }, { refund: { $exists: true } }, { receipt: { $exists: true } }] } } });
+		expect(race.expenses.deleteOne.mock.calls[0][0].shares).toEqual({ $not: { $elemMatch: { $or: [{ paidCents: { $gt: 0 } }, { status: "paid" }, { refund: { $exists: true } }, { receipt: { $exists: true } }, { "parts.0": { $exists: true } }] } } });
 	});
 	it("status deriva como paid e hasPayments enxerga", async () => {
 		expect(hasPayments(legacy() as never)).toBe(true);

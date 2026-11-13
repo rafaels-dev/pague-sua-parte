@@ -34,11 +34,18 @@ export function shareIntro(kind: "launched" | "manual", installmentCount?: numbe
  * `forName`: nome da pessoa sem celular, quando o responsável pagou por ela.
  */
 export function buildPaidShareText(
-	p: { amountCents: number; description: string; forName?: string | null; hasReceipt: boolean },
+	p: { amountCents: number; description: string; forName?: string | null; hasReceipt: boolean; /** Pagamento parcial: o que ainda falta da parte. */ remainingCents?: number; /** Quitou o que faltava depois de parciais: `amountCents` é só esse último pagamento. */ afterParts?: boolean },
 	link: string,
 ): string {
 	const description = p.description.trim().replace(/[\s.]+$/, "");
 	const whose = p.forName ? `a parte de ${p.forName}` : "minha parte";
 	const see = p.hasReceipt ? "Veja o comprovante:" : "Confira aqui:";
+	if (p.afterParts) {
+		return `Paguei o que faltava d${p.forName ? `a parte de ${p.forName}` : "a minha parte"}, ${formatBRL(p.amountCents)}, da despesa ${description}. ${see} ${link}`;
+	}
+	if (p.remainingCents && p.remainingCents > 0) {
+		const ofWhose = p.forName ? `da parte de ${p.forName}` : "da minha parte";
+		return `Paguei ${formatBRL(p.amountCents)} ${ofWhose} (faltam ${formatBRL(p.remainingCents)}), da despesa ${description}. ${see} ${link}`;
+	}
 	return `Paguei ${whose}, ${formatBRL(p.amountCents)}, da despesa ${description}. ${see} ${link}`;
 }

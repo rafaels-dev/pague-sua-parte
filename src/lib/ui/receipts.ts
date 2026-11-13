@@ -1,5 +1,6 @@
 /** Textos e decisões puras sobre "Já paguei" e comprovantes (sem React). */
 
+import { formatBRL } from "@/lib/money";
 import { batchCaption } from "./pay-all";
 
 /** "pay" = já paguei uma parte; "attach" = anexar comprovante; "batch" = já paguei várias contas de uma vez; "refund" = devolvi o que a pessoa pagou a mais. */
@@ -19,7 +20,7 @@ export type ReceiptShareLike = {
 };
 
 /** Textos do sheet de comprovante: "Já paguei" (avisa e, se quiser, envia) ou só "Anexar comprovante". */
-export function receiptSheetCopy(mode: ReceiptMode, payeeName: string, count = 0): { title: string; intro: string; send: string; skip: string | null } {
+export function receiptSheetCopy(mode: ReceiptMode, payeeName: string, count = 0, partialCents?: number): { title: string; intro: string; send: string; skip: string | null } {
 	if (mode === "batch") {
 		return {
 			title: "Já paguei tudo",
@@ -34,6 +35,14 @@ export function receiptSheetCopy(mode: ReceiptMode, payeeName: string, count = 0
 			intro: `Se você enviar o comprovante, ${payeeName} consegue confirmar que recebeu de volta.`,
 			send: "Enviar comprovante",
 			skip: "Marcar sem comprovante",
+		};
+	}
+	if (mode === "pay" && partialCents && partialCents > 0) {
+		return {
+			title: `Já paguei ${formatBRL(partialCents)}`,
+			intro: `Se você enviar o comprovante, ${payeeName} consegue confirmar que recebeu.`,
+			send: "Enviar comprovante",
+			skip: "Avisar sem comprovante",
 		};
 	}
 	return mode === "pay"
@@ -71,8 +80,12 @@ export function refundCaption(r: { cents: number; byAdmin: boolean; markedByName
 }
 
 /** Texto da ação de desfazer do dono: quando a pessoa avisou que pagou, vira "Não recebi". */
-export function undoLabel(s: Pick<ReceiptShareLike, "method">): string {
-	return s.method === "self" ? "Não recebi" : "Desfazer";
+export function undoLabel(s: { status?: string; last?: { method: "manual" | "self" | null; partial: boolean } | null }, viewer: "owner" | "debtor" = "owner"): string {
+	// A própria pessoa desfazendo o seu aviso nunca "não recebeu": é o pagamento dela.
+	if (viewer === "debtor") return "Desfazer meu último pagamento";
+	// Quem recebe: parte em aberto desfaz só o último pagamento; paga, "Não recebi" quando o último foi um aviso da pessoa.
+	if (s.status === "pending") return "Desfazer último pagamento";
+	return s.last?.method === "self" ? "Não recebi" : "Desfazer";
 }
 
 /** Qual ação de comprovante aparece na linha de uma parte (no máximo uma "principal" e uma discreta). */

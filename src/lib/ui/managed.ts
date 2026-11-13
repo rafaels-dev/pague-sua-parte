@@ -1,5 +1,6 @@
 import { formatBRL } from "@/lib/money";
 import type { Tone } from "./expense-status";
+import { partialLine } from "./partial-pay";
 
 /** Quem aparece com "Sem celular": só o necessário para montar a legenda. */
 export type ManagedLike = { kind?: "user" | "managed"; youManage?: boolean; managedByName?: string | null };
@@ -11,6 +12,8 @@ export type ManagedShareSummary = {
 	status: "payer" | "pending" | "paid" | "refund";
 	dueCents: number;
 	refundCents: number;
+	/** Quanto já pagou da parte (pagamento parcial). */
+	paidCents?: number;
 };
 
 /** Quando a pessoa logada age por quem pagou a despesa (pessoa sem celular). */
@@ -44,7 +47,7 @@ function plural(n: number, one: string, many: string): string {
 export function managedLines(managed: ManagedShareSummary[]): { text: string; tone: Tone }[] {
 	const out: { text: string; tone: Tone }[] = [];
 	for (const m of managed) {
-		if (m.status === "pending") out.push({ text: `${m.name} deve ${formatBRL(m.dueCents)}`, tone: "owe" });
+		if (m.status === "pending") out.push({ text: (m.paidCents ?? 0) > 0 ? `${m.name}: ${partialLine(m.paidCents ?? 0, m.dueCents)}` : `${m.name} deve ${formatBRL(m.dueCents)}`, tone: "owe" });
 		else if (m.status === "refund") out.push({ text: `${m.name}: a receber de volta ${formatBRL(m.refundCents)}`, tone: "ok" });
 	}
 	return out;

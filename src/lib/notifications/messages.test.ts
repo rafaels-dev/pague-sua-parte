@@ -34,6 +34,28 @@ describe("entrou no grupo", () => {
 	});
 });
 
+describe("pagamento parcial", () => {
+	const part = { shareCents: 10000, remainingCents: 5300 };
+	it("avisa quem recebe com o valor pago, a parte inteira e o que falta; sem chave Pix", () => {
+		const [n, ...rest] = buildPaymentNotices([pay({ amountCents: 4700, partial: part })], ctx);
+		expect(rest).toEqual([]);
+		expect(n).toMatchObject({ uid: "bia", title: "Pagamento parcial", body: 'Ana pagou R$ 47,00 de R$ 100,00 em "Mercado" (Família). Faltam R$ 53,00.', url: `/app/grupos/${G}/despesas/${E}` });
+		expect(JSON.stringify(n)).not.toMatch(/pix|chave/i);
+	});
+	it("recebido por outra pessoa: avisa quem recebe (se não foi ela) e o devedor, nunca quem agiu", () => {
+		const notices = buildPaymentNotices([pay({ amountCents: 4700, partial: part, manual: true, actorUid: "adm", debtorUid: "ana" })], ctx);
+		expect(notices.map((n) => [n.uid, n.title])).toEqual([["bia", "Pagamento parcial"], ["ana", "Pagamento parcial"]]);
+		expect(notices[0].body).toBe('Admin registrou R$ 47,00 de R$ 100,00 da parte de Ana em "Mercado" (Família). Faltam R$ 53,00.');
+		expect(notices[1].body).toBe('Admin registrou R$ 47,00 de R$ 100,00 da sua parte em "Mercado" (Família). Faltam R$ 53,00.');
+		// quem recebeu marcando o próprio parcial não é avisado
+		expect(buildPaymentNotices([pay({ amountCents: 4700, partial: part, manual: true, actorUid: "bia", paidBy: "bia" })], ctx).map((n) => n.uid)).toEqual(["ana"]);
+	});
+	it("a quitação depois de parciais avisa só o último valor, no texto de pagamento de sempre", () => {
+		const [n] = buildPaymentNotices([pay({ amountCents: 5300 })], ctx);
+		expect(n).toMatchObject({ title: "Pagamento recebido", body: 'Ana pagou R$ 53,00 em "Mercado" (Família).' });
+	});
+});
+
 describe("pagamentos", () => {
 	it("Já paguei: avisa quem recebeu, com link da despesa", () => {
 		const [n, ...rest] = buildPaymentNotices([pay()], ctx);

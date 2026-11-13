@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/auth/server";
 import { afterPayments } from "@/lib/notifications/events";
 import { getDb } from "@/lib/db/client";
 import { MAX_FILE_BYTES, type SniffedFile } from "@/lib/expenses/validation";
+import { STALE_BATCH } from "@/lib/payments/amount-input";
 import { payBatch } from "@/lib/payments/repo";
 import { RECEIPT_TOO_BIG, readReceiptFile } from "@/lib/payments/receipt-upload";
 import { getAttachmentStore } from "@/lib/storage/attachments";
@@ -22,6 +23,8 @@ const bodySchema = z.object({
 		.max(50),
 	/** Id do destinatário como a tela o recebeu em "contas a pagar"; recusa o lote se a chave Pix mudou depois. */
 	recipientId: z.string().regex(/^r_[0-9a-f]{24}$/).optional(),
+	/** Total que a tela mostrou (e do Pix gerado); recusa o lote se mudou (ex.: entrou um pagamento parcial). Ausente = cliente antigo. */
+	expectedTotalCents: z.number().int().min(0).max(1_000_000_000).optional(),
 });
 
 /** "Pagar tudo de uma vez": quita várias cotas do mesmo destinatário com um comprovante opcional (`file`). */
@@ -59,7 +62,7 @@ export async function POST(request: Request) {
 		if (!parsed.success) return jsonError(BAD_ITEMS, 422, "items");
 		const items = parsed.data.items;
 
-		const res = await payBatch(await getDb(), getAttachmentStore(), { uid: user.uid, items, file, recipientId: parsed.data.recipientId });
+		const res = await payBatch(await getDb(), getAttachmentStore(), { uid: user.uid, items, file, recipientId: parsed.data.recipientId, expectedTotalCents: parsed.data.expectedTotalCents });
 		switch (res.status) {
 			case "no_group":
 				return jsonError("Grupo não encontrado.", 404);
@@ -71,6 +74,8 @@ export async function POST(request: Request) {
 				return jsonError("Essa pessoa não participa desta despesa.", 404);
 			case "invalid":
 				return jsonError(res.error, 422, res.field);
+			case "stale":
+				return jsonError(STALE_BATCH, 409);
 			case "all_failed":
 				return jsonError("Essas contas acabaram de mudar. Atualize e tente de novo.", 409);
 			case "ok": {

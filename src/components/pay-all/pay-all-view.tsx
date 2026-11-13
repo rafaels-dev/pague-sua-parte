@@ -23,6 +23,7 @@ import {
 	type PayableRecipient,
 } from "@/lib/ui/pay-all";
 import { payAllUrl } from "@/lib/ui/group-scope";
+import { PARTIAL_CHIP, partialLine } from "@/lib/ui/partial-pay";
 import { RECURRING_CHIP } from "@/lib/ui/recurrences";
 
 /** O que cada cartão guarda: o que foi desmarcado e, se já gerou, o Pix (para qual valor, QR aberto, cópia que falhou). */
@@ -62,6 +63,7 @@ function ItemRow({
 		item.kind !== "refund" && !item.isYou && { tone: "wait" as const, text: `Parte de ${item.shareName}` },
 		item.kind === "refund" && !item.isYou && { tone: "wait" as const, text: `Devolução de ${item.shareName}` },
 		item.installment && { tone: "neutral" as const, text: installmentLabel(item.installment) },
+		item.kind === "share" && (item.paidCents ?? 0) > 0 && { tone: "wait" as const, text: PARTIAL_CHIP },
 		item.recurrence && { tone: "neutral" as const, text: RECURRING_CHIP },
 	].filter((c): c is { tone: "wait" | "neutral" | "ok"; text: string } => !!c);
 	return (
@@ -74,6 +76,7 @@ function ItemRow({
 					{due && (
 						<span className={`block text-sm ${due.overdue ? "font-medium text-error" : "text-on-surface-variant"}`}>{due.text}</span>
 					)}
+					{item.kind === "share" && (item.paidCents ?? 0) > 0 && <span className="block text-sm text-on-surface-variant">{partialLine(item.paidCents ?? 0, item.dueCents)}</span>}
 					{chips.length > 0 && (
 						<span className="mt-1.5 flex flex-wrap gap-1.5">
 							{chips.map((c) => (

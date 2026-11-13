@@ -74,7 +74,8 @@ const PAY_TITLES: Record<PayType, string> = {
 export function buildPaymentNotices(facts: PaymentFact[], ctx: NoticeContext): Notice[] {
 	const buckets = new Map<string, { uid: string; type: PayType; actor: string; facts: PaymentFact[] }>();
 	const add = (uid: string, type: PayType, f: PaymentFact) => {
-		const key = `${uid}|${type}|${f.actorUid}`;
+		// Pagamento parcial tem texto próprio (quanto entrou e quanto falta) e sempre vem sozinho (uma parte por vez): não se mistura com lotes.
+		const key = `${uid}|${type}|${f.actorUid}${f.partial ? `|p|${f.expenseId}|${f.debtorUid}` : ""}`;
 		const b = buckets.get(key) ?? { uid, type, actor: f.actorUid, facts: [] };
 		b.facts.push(f);
 		buckets.set(key, b);
@@ -108,16 +109,27 @@ export function buildPaymentNotices(facts: PaymentFact[], ctx: NoticeContext): N
 			const where = `"${clip(f.description)}" (${clip(ctx.group(f.groupId)?.name ?? "", 40)})`;
 			const debtor = ctx.name(f.groupId, f.debtorUid);
 			const m = formatBRL(f.amountCents);
+			const part = f.partial;
+			const rest = part ? ` Faltam ${formatBRL(part.remainingCents)}.` : "";
+			const ofTotal = part ? ` de ${formatBRL(part.shareCents)}` : "";
 			const forPayer = b.uid !== f.paidBy && b.type !== "refund" && b.type !== "debtor" ? ` Para ${ctx.name(f.groupId, f.paidBy)}.` : "";
 			switch (b.type) {
 				case "paid":
-					body = `${actor} pagou ${m}${f.debtorUid === b.actor ? "" : ` da parte de ${debtor}`} em ${where}.${forPayer}`;
+					body = `${actor} pagou ${m}${ofTotal}${f.debtorUid === b.actor ? "" : ` da parte de ${debtor}`} em ${where}.${rest}${forPayer}`;
 					break;
 				case "marked":
-					body = `${actor} marcou como paga a parte de ${debtor} em ${where}: ${m}.${forPayer}`;
+					body = part
+						? `${actor} registrou ${m}${ofTotal} da parte de ${debtor} em ${where}.${rest}${forPayer}`
+						: `${actor} marcou como paga a parte de ${debtor} em ${where}: ${m}.${forPayer}`;
 					break;
 				case "debtor":
-					body = b.uid === f.debtorUid ? `${actor} marcou sua parte de ${where} como paga.` : `${actor} marcou a parte de ${debtor} em ${where} como paga.`;
+					body = part
+						? b.uid === f.debtorUid
+							? `${actor} registrou ${m}${ofTotal} da sua parte em ${where}.${rest}`
+							: `${actor} registrou ${m}${ofTotal} da parte de ${debtor} em ${where}.${rest}`
+						: b.uid === f.debtorUid
+							? `${actor} marcou sua parte de ${where} como paga.`
+							: `${actor} marcou a parte de ${debtor} em ${where} como paga.`;
 					break;
 				case "refund":
 					body = b.uid === f.debtorUid ? `${actor} devolveu ${m} de ${where}.` : `${actor} devolveu ${m} para ${debtor} em ${where}.`;
@@ -134,7 +146,8 @@ export function buildPaymentNotices(facts: PaymentFact[], ctx: NoticeContext): N
 			}[b.type];
 			url = b.type === "debtor" ? "/app/pagar" : "/app/receber";
 		}
-		out.push({ uid: b.uid, title: PAY_TITLES[b.type], body, url });
+		const partial = fs.length === 1 && fs[0].partial && b.type !== "refund";
+		out.push({ uid: b.uid, title: partial ? "Pagamento parcial" : PAY_TITLES[b.type], body, url });
 	}
 	return dedupe(out);
 }

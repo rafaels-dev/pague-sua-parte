@@ -17,6 +17,8 @@ export type PayableItem = {
 	/** A parte é sua (false = pessoa sem celular que você cuida). */
 	isYou: boolean;
 	dueCents: number;
+	/** Pagamento parcial: quanto já foi pago desta parte (`dueCents` é o que falta). */
+	paidCents?: number;
 	dueDate: string | null;
 	overdue: boolean;
 	installment: { number: number; count: number } | null;
@@ -67,6 +69,7 @@ function normalizeItem(raw: unknown): PayableItem | null {
 		shareName: str(r.shareName),
 		isYou: !!r.isYou,
 		dueCents: Math.max(0, num(r.dueCents)),
+		...(num(r.paidCents) > 0 ? { paidCents: num(r.paidCents) } : {}),
 		dueDate: typeof r.dueDate === "string" && /^\d{4}-\d{2}-\d{2}/.test(r.dueDate) ? r.dueDate.slice(0, 10) : null,
 		overdue: !!r.overdue,
 		installment: number >= 1 && count >= 1 ? { number, count } : null,
@@ -151,6 +154,14 @@ export function payAllPayload(r: Pick<PayableRecipient, "pix">, amountCents: num
 /** O código gerado vale só para o valor em que foi gerado: mudou a seleção, ele some. */
 export function pixIsCurrent(generatedCents: number | null, currentCents: number): boolean {
 	return generatedCents !== null && generatedCents === currentCents && currentCents > 0;
+}
+
+/**
+ * Total que o pedido de "Já paguei tudo" confere no servidor: SEMPRE o da seleção atual (o valor grande do cartão), nunca o de um
+ * Pix gerado antes de marcar ou desmarcar uma conta. Assim a tela só registra o valor que mostra.
+ */
+export function batchExpectedTotal(items: PayableItem[], unchecked: string[]): number {
+	return selectedTotal(items, unchecked);
 }
 
 /** Motivo de uma conta não ter sido marcada, em palavras simples. */

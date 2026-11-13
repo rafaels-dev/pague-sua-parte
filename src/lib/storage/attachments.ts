@@ -1,3 +1,4 @@
+import { randomId } from "@/lib/random-id";
 import { createFsStore } from "./fs-store";
 import { createR2Store } from "./r2-s3-store";
 
@@ -33,12 +34,7 @@ export function getAttachmentStore(): AttachmentStore {
 	return resolveAttachmentStore();
 }
 
-/** 128 bits aleatórios (Web Crypto) em hexadecimal. */
-export function randomId(): string {
-	const bytes = new Uint8Array(16);
-	crypto.getRandomValues(bytes);
-	return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
+export { randomId };
 
 /** A chave nunca contém o nome do arquivo enviado pelo usuário. */
 export function attachmentKey(groupId: string, expenseId: string, attachmentId: string): string {

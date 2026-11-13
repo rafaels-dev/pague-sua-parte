@@ -15,6 +15,8 @@ export type ReceivableItem = {
 	expenseId: string;
 	description: string;
 	dueCents: number;
+	/** Pagamento parcial: quanto já foi pago desta parte (só quando há; o `dueCents` já é o que falta). */
+	paidCents?: number;
 	dueDate: string | null;
 	overdue: boolean;
 	installment: { number: number; count: number } | null;
@@ -91,6 +93,7 @@ export function buildReceivables(args: {
 					expenseId: e._id.toHexString(),
 					description: e.description,
 					dueCents: due,
+					...(s.paidCents > 0 ? { paidCents: s.paidCents } : {}),
 					dueDate: e.dueDate ?? null,
 					overdue: isPastDue(e.dueDate, today),
 					installment: e.installment ? { number: e.installment.number, count: e.installment.count } : null,

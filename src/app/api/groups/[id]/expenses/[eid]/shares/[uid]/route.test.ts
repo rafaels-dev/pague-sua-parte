@@ -23,9 +23,9 @@ describe("PATCH /expenses/:eid/shares/:uid", () => {
 	it("200 com o detalhe e repassa os argumentos", async () => {
 		setSharePaid.mockResolvedValue({ status: "ok", expense: { id: "e", canMarkPaid: true } });
 		expect(await out(await patch({ status: "paid" }))).toEqual([200, { id: "e", canMarkPaid: true }]);
-		expect(setSharePaid).toHaveBeenCalledWith({ fake: true }, "g", "e", "u1", "u3", "paid", undefined, { fakeStore: true });
+		expect(setSharePaid).toHaveBeenCalledWith({ fake: true }, "g", "e", "u1", "u3", "paid", undefined, { fakeStore: true }, undefined, undefined);
 		await patch({ status: "pending" });
-		expect(setSharePaid).toHaveBeenLastCalledWith({ fake: true }, "g", "e", "u1", "u3", "pending", undefined, { fakeStore: true });
+		expect(setSharePaid).toHaveBeenLastCalledWith({ fake: true }, "g", "e", "u1", "u3", "pending", undefined, { fakeStore: true }, undefined, undefined);
 	});
 	it("404, 403 e 404 com as mensagens do contrato", async () => {
 		setSharePaid.mockResolvedValue({ status: "no_group" });
@@ -46,6 +46,53 @@ describe("PATCH /expenses/:eid/shares/:uid", () => {
 			expect((await patch(body)).status).toBe(422);
 		}
 		expect(setSharePaid).not.toHaveBeenCalled();
+	});
+	it("\"Recebi só uma parte\": amountCents inteiro e positivo vai para o repo, só com status paid", async () => {
+		setSharePaid.mockResolvedValue({ status: "ok", expense: { id: "e" } });
+		expect((await patch({ status: "paid", amountCents: 34700, expectedPaidCents: 0 })).status).toBe(200);
+		expect(setSharePaid).toHaveBeenLastCalledWith({ fake: true }, "g", "e", "u1", "u3", "paid", undefined, { fakeStore: true }, 34700, 0);
+		setSharePaid.mockClear();
+		for (const bad of [0, -5, 1.5, "12,50", "abc", 1e12, true, {}]) {
+			const [status, body] = await out(await patch({ status: "paid", amountCents: bad, expectedPaidCents: 0 }));
+			expect([status, (body as { field?: string }).field]).toEqual([422, "amountCents"]);
+		}
+		// todo pedido COM amountCents exige expectedPaidCents (inteiro >= 0, mesmo rigor)
+		for (const bad of [undefined, null, "", -1, 1.5, "x", "1.5", true, 1e12]) expect((await patch({ status: "paid", amountCents: 100, expectedPaidCents: bad })).status).toBe(422);
+		// valor junto de "pending" não faz sentido
+		expect((await patch({ status: "pending", amountCents: 100, expectedPaidCents: 0 })).status).toBe(422);
+		expect(setSharePaid).not.toHaveBeenCalled();
+	});
+	it("valor recusado pelo repo: maior que o que falta = 409 com a mensagem simples; demais = 422", async () => {
+		setSharePaid.mockResolvedValue({ status: "too_much" });
+		expect(await out(await patch({ status: "paid", amountCents: 999999, expectedPaidCents: 0 }))).toEqual([409, { error: "Esse valor é maior do que falta pagar. Atualize e tente de novo.", field: "amountCents" }]);
+		setSharePaid.mockResolvedValue({ status: "invalid_amount" });
+		expect((await patch({ status: "paid", amountCents: 5, expectedPaidCents: 0 })).status).toBe(422);
+		setSharePaid.mockResolvedValue({ status: "too_many_parts" });
+		expect((await patch({ status: "paid", amountCents: 5, expectedPaidCents: 0 })).status).toBe(422);
+	});
+	it("desfazer: expectedPaidCents é repassado (a tela nova sempre manda), opcional para cliente antigo e validado se veio", async () => {
+		setSharePaid.mockResolvedValue({ status: "ok", expense: { id: "e" } });
+		expect((await patch({ status: "pending", expectedPaidCents: 700 })).status).toBe(200);
+		expect(setSharePaid).toHaveBeenLastCalledWith({ fake: true }, "g", "e", "u1", "u3", "pending", undefined, { fakeStore: true }, undefined, 700);
+		expect((await patch({ status: "pending" })).status).toBe(200);
+		expect(setSharePaid).toHaveBeenLastCalledWith({ fake: true }, "g", "e", "u1", "u3", "pending", undefined, { fakeStore: true }, undefined, undefined);
+		setSharePaid.mockClear();
+		for (const bad of [null, "", -1, 1.5, "x", true]) expect((await patch({ status: "pending", expectedPaidCents: bad })).status).toBe(422);
+		expect(setSharePaid).not.toHaveBeenCalled();
+	});
+	it("desfazer com a parte mudada: 409 com a mensagem de desfazer", async () => {
+		setSharePaid.mockResolvedValue({ status: "stale_undo" });
+		expect(await out(await patch({ status: "pending", expectedPaidCents: 0 }))).toEqual([409, { error: "Esta conta mudou. Atualize e confira antes de desfazer." }]);
+	});
+	it("\"Recebi\": chave amountCents presente mas vazia/nula, ou expectedPaidCents sem amountCents => 422; paid sem nenhuma das duas segue como sempre", async () => {
+		for (const body of [{ status: "paid", amountCents: null, expectedPaidCents: 0 }, { status: "paid", amountCents: "", expectedPaidCents: 0 }, { status: "paid", expectedPaidCents: 0 }, { status: "paid", amountCents: 100 }]) expect((await patch(body)).status).toBe(422);
+		expect(setSharePaid).not.toHaveBeenCalled();
+		setSharePaid.mockResolvedValue({ status: "ok", expense: { id: "e" } });
+		expect((await patch({ status: "paid" })).status).toBe(200);
+	});
+	it("conta mudou (expectedPaidCents divergente no repo): 409 com a mensagem simples", async () => {
+		setSharePaid.mockResolvedValue({ status: "stale" });
+		expect(await out(await patch({ status: "paid", amountCents: 5, expectedPaidCents: 0 }))).toEqual([409, { error: "Esta conta mudou. Atualize e confira antes de pagar de novo.", field: "amountCents" }]);
 	});
 	it("401 sem autenticação", async () => {
 		requireUser.mockRejectedValue(new UnauthorizedError("x"));

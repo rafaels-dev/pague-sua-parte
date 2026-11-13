@@ -73,7 +73,7 @@ const dataOf = (debtors: Debtor[]): Receivables => ({
 	truncated: false,
 });
 
-export type ReceivablesScene = "devolucao" | "grupo" | "grupo-vazio" | "lista" | "whatsapp" | "whatsapp-cuidado" | "vazio" | "carregando" | "erro" | "indisponivel";
+export type ReceivablesScene = "devolucao" | "grupo" | "grupo-vazio" | "lista" | "parte-paga" | "whatsapp" | "whatsapp-cuidado" | "vazio" | "carregando" | "erro" | "indisponivel";
 
 const SCOPE = { id: SCOPE_GROUP_ID, name: "Despesas da vó" };
 const SCOPED_DEBTORS: Debtor[] = DEBTORS.flatMap((d) => {
@@ -93,8 +93,22 @@ const REFUND_DEBTORS: Debtor[] = [
 	}),
 ];
 
+/** A Maria já pagou R$ 47,00 dos remédios (faltam R$ 25,48); a cobrança fala só do que falta. */
+const PARTIAL_DEBTORS: Debtor[] = [
+	debtor({
+		uid: "b",
+		name: "Maria das Dores Silva",
+		items: [
+			item({ expenseId: "e1", description: "Remédios da farmácia", dueCents: 2548, paidCents: 4700 }),
+			item({ expenseId: "e2", description: "Mercado do mês", dueCents: 10000, dueDate: daysAgo(6), overdue: true }),
+		],
+	}),
+];
+
 const sceneState = (scene: ReceivablesScene): ReceivablesPageState => {
 	switch (scene) {
+		case "parte-paga":
+			return { kind: "ready", data: dataOf(PARTIAL_DEBTORS) };
 		case "devolucao":
 			return { kind: "ready", data: dataOf(REFUND_DEBTORS) };
 		case "grupo":

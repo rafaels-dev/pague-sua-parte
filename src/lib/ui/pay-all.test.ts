@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	batchCaption,
+	batchExpectedTotal,
 	buildPayAllShareText,
 	describeItems,
 	failReasonText,
@@ -208,5 +209,20 @@ describe("batchCaption", () => {
 		expect(normalizeBatch(undefined)).toBeNull();
 		expect(normalizeBatch({ totalCents: "1", count: 2 })).toBeNull();
 		expect(normalizeBatch({ totalCents: 1, count: 0 })).toBeNull();
+	});
+});
+
+describe("batchExpectedTotal: o total enviado é sempre o que a tela mostra", () => {
+	const items = [item({ expenseId: "e1", dueCents: 7000 }), item({ expenseId: "e2", dueCents: 3000 })];
+	it("com tudo marcado é o total; ao desmarcar um item o total enviado acompanha a seleção, mesmo que um Pix de R$ 100 já tenha sido gerado", () => {
+		expect(batchExpectedTotal(items, [])).toBe(10000);
+		const pixGerado = 10000;
+		const unchecked = toggleUnchecked([], itemKey(items[1]));
+		expect(batchExpectedTotal(items, unchecked)).toBe(7000);
+		expect(batchExpectedTotal(items, unchecked)).toBe(selectedTotal(items, unchecked)); // o valor grande do cartão
+		expect(pixIsCurrent(pixGerado, selectedTotal(items, unchecked))).toBe(false); // o Pix antigo deixa de valer na tela
+	});
+	it("nada marcado: zero", () => {
+		expect(batchExpectedTotal(items, items.map(itemKey))).toBe(0);
 	});
 });

@@ -358,7 +358,7 @@ describe.skipIf(!ENABLED)("integração: despesas no MongoDB real", () => {
 		expect(docs.map((d) => d.installment!.number)).toEqual([1]);
 		expect(objects.has(key)).toBe(true);
 		const d1 = ok(await repo.getExpenseDetail(db, g, docs[0]._id.toHexString(), A) as never) as unknown as { expense: import("./repo").ExpenseDetail };
-		expect(d1.expense.series).toEqual({ count: 3, items: [{ id: docs[0]._id.toHexString(), number: 1, dueDate: eom, settled: true }] });
+		expect(d1.expense.series).toEqual({ count: 3, items: [{ id: docs[0]._id.toHexString(), number: 1, dueDate: eom, settled: true, amountCents: docs[0].amountCents }] });
 		// a parcela 1 tem pagamento: não apaga, e o objeto fica
 		expect((await repo.deleteExpense(db, fake, g, docs[0]._id.toHexString(), OWNER, "following")).status).toBe("has_payment");
 		expect(objects.has(key)).toBe(true);
@@ -939,5 +939,98 @@ describe.skipIf(!ENABLED)("integração: despesas no MongoDB real", () => {
 		// o próprio D sem chave (quem paga por si) continua sem poder lançar
 		await db.collection("users").updateOne({ _id: D } as never, { $unset: { pixKey: "" } });
 		expect(await repo.createExpense(db, store, { groupId: g, uid: D, input: { description: "x", amountCents: 100, date: "2026-11-10", participantUids: [D, B] }, files: [] })).toEqual({ status: "no_pix" });
+	});
+	it("pagamento parcial: aberto com 'pago parcialmente', saldos e agregações iguais à referência, comprovantes, desfazer em pilha, lote e apagar bloqueado", async () => {
+		const payments = await import("@/lib/payments/repo");
+		const balances = await import("./balances");
+		const objects = new Map<string, Uint8Array>();
+		const mem = {
+			put: async (k: string, b: Uint8Array) => void objects.set(k, b),
+			get: async () => null,
+			delete: async (ks: string[]) => void ks.forEach((k) => objects.delete(k)),
+		} as never;
+		const png = (n: number) => ({ name: `p${n}.png`, contentType: "image/png" as const, bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, n]) });
+		const g = await newGroup("parcial", [OWNER, A, B]);
+		const e = ok(await repo.createExpense(db, mem, { groupId: g, uid: OWNER, input: { description: "Mercado parcial", amountCents: 30000, date: "2026-11-10", participantUids: [OWNER, A, B] }, files: [] })).expense;
+		const today = new Date("2026-11-12T12:00:00Z");
+		const rawA = async () => (await rawDocs(g))[0].shares.find((x) => x.uid === A)!;
+		// saldo SÓ deste grupo (os mesmos usuários participam de outros grupos nesta bateria)
+		const mine = async (u: string) => (await balances.getBalancesByGroup(db, u, [new ObjectId(g)])).get(g) ?? balances.ZERO_BALANCE;
+		const check = async () => {
+			// as agregações do MongoDB e a referência em JS continuam iguais com valores parciais
+			const docs = await rawDocs(g);
+			for (const u of [OWNER, A, B]) expect(await mine(u)).toMatchObject(shares.balanceOf(docs, u));
+		};
+
+		// A paga R$ 47,00 de R$ 100,00 com comprovante: continua em aberto
+		const d1 = ok(await repo.markSelfPaid(db, mem, { groupId: g, eid: e.id, uid: A, targetUid: A, file: png(1), amountCents: 4700, expectedPaidCents: 0 })).expense;
+		expect(d1.shares.find((x) => x.uid === A)).toMatchObject({ status: "pending", paidCents: 4700, dueCents: 5300, canPay: true });
+		expect(objects.size).toBe(1);
+		await check();
+		expect(await mine(A)).toMatchObject({ toPayCents: 5300 });
+		expect(await mine(OWNER)).toMatchObject({ toReceiveCents: 5300 + 10000 });
+		// 'pagar' e 'quem me deve' mostram o que falta
+		const payable = (await payments.getPayables(db, A, today, g))!.recipients[0].items[0];
+		expect(payable).toMatchObject({ dueCents: 5300, paidCents: 4700 });
+		const receivable = (await payments.getReceivables(db, OWNER, today, g))!.debtors.find((x) => x.uid === A)!.items[0];
+		expect(receivable).toMatchObject({ dueCents: 5300, paidCents: 4700 });
+		// recusas: maior que o que falta, zero, decimal e valor de quem não é parte
+		expect(await repo.markSelfPaid(db, mem, { groupId: g, eid: e.id, uid: A, targetUid: A, amountCents: 5301, expectedPaidCents: 4700 })).toEqual({ status: "too_much" });
+		expect(await repo.markSelfPaid(db, mem, { groupId: g, eid: e.id, uid: A, targetUid: A, amountCents: 0, expectedPaidCents: 4700 })).toEqual({ status: "invalid_amount" });
+		expect(await repo.markSelfPaid(db, mem, { groupId: g, eid: e.id, uid: A, targetUid: A, amountCents: 1.5, expectedPaidCents: 4700 })).toEqual({ status: "invalid_amount" });
+		// o dono registra "recebi R$ 20,00 em dinheiro"; o membro comum B não pode
+		ok(await repo.setSharePaid(db, g, e.id, OWNER, A, "paid", undefined, mem, 2000, 4700));
+		expect((await repo.setSharePaid(db, g, e.id, B, A, "paid", undefined, mem, 100, 6700)).status).toBe("forbidden");
+		// tela velha do dono (ainda via 4700 como já pago): recusado
+		expect(await repo.setSharePaid(db, g, e.id, OWNER, A, "paid", undefined, mem, 100, 4700)).toEqual({ status: "stale" });
+		expect(await rawA()).toMatchObject({ paidCents: 6700 });
+		expect((await rawA()).parts).toHaveLength(2);
+		await check();
+		// comprovante do parcial: quem age vê (pela API, sem chave); outro membro não
+		const partId = (await rawA()).parts![0].id;
+		expect(await repo.getReceiptRef(db, g, e.id, A, OWNER, "payment", partId)).toMatchObject({ status: "ok" });
+		expect((await repo.getReceiptRef(db, g, e.id, A, B, "payment", partId)).status).toBe("not_found");
+		const viewB = ok((await repo.getExpenseDetail(db, g, e.id, B)) as never) as unknown as { expense: import("./repo").ExpenseDetail };
+		expect(JSON.stringify(viewB)).not.toContain("receipts/");
+		expect(viewB.expense.shares.find((x) => x.uid === A)!.parts.map((p) => p.receipt)).toEqual([null, null]);
+		// apagar a despesa é bloqueado por causa do parcial
+		expect((await repo.deleteExpense(db, mem, g, e.id, OWNER)).status).toBe("has_payment");
+		// A quita o que falta (R$ 33,00) com outro comprovante: os dois ficam
+		ok(await repo.markSelfPaid(db, mem, { groupId: g, eid: e.id, uid: A, targetUid: A, file: png(2) }));
+		expect(await rawA()).toMatchObject({ paidCents: 10000, method: "self" });
+		expect(objects.size).toBe(2);
+		await check();
+		// desfazer em pilha: quitação (some só o comprovante dela), depois o parcial do dono, depois o parcial de A
+		// desfazer sempre confere quanto a tela mostrava como já pago
+		expect(await repo.setSharePaid(db, g, e.id, OWNER, A, "pending", undefined, mem, undefined, 6700)).toEqual({ status: "stale_undo" });
+		ok(await repo.setSharePaid(db, g, e.id, OWNER, A, "pending", undefined, mem, undefined, 10000));
+		expect(await rawA()).toMatchObject({ paidCents: 6700 });
+		expect(objects.size).toBe(1);
+		ok(await repo.setSharePaid(db, g, e.id, OWNER, A, "pending", undefined, mem, undefined, 6700));
+		expect(await rawA()).toMatchObject({ paidCents: 4700 });
+		// A desfaz o próprio parcial (o último é dele)
+		ok(await repo.setSharePaid(db, g, e.id, A, A, "pending", undefined, mem, undefined, 4700));
+		expect(await rawA()).toEqual(expect.objectContaining({ paidCents: 0 }));
+		expect((await rawA()).parts).toBeUndefined();
+		expect(objects.size).toBe(0);
+		await check();
+		// lote: parcial + "Pagar tudo" quita o que falta; os parciais e o comprovante deles ficam
+		ok(await repo.markSelfPaid(db, mem, { groupId: g, eid: e.id, uid: A, targetUid: A, file: png(3), amountCents: 3000, expectedPaidCents: 0 }));
+		// o Pix da tela era de outro total (entrou um parcial depois): recusado, sem arquivo e sem gravar
+		const objectsBefore = objects.size;
+		expect(await payments.payBatch(db, mem, { uid: A, items: [{ groupId: g, expenseId: e.id, shareUid: A }], file: png(4), expectedTotalCents: 10000 })).toEqual({ status: "stale" });
+		expect(objects.size).toBe(objectsBefore);
+		const batch = await payments.payBatch(db, mem, { uid: A, items: [{ groupId: g, expenseId: e.id, shareUid: A }], file: png(4), expectedTotalCents: 7000 });
+		if (batch.status !== "ok") throw new Error("payBatch: " + batch.status);
+		expect(batch.paid).toEqual([{ groupId: g, expenseId: e.id, shareUid: A, amountCents: 7000 }]);
+		expect(await rawA()).toMatchObject({ paidCents: 10000, method: "self", batch: { id: batch.batchId } });
+		expect((await rawA()).parts).toHaveLength(1);
+		expect(objects.size).toBe(2);
+		await check();
+		// editar a divisão com parciais (B sai): nada se perde; A passa a dever menos e vira "pago"
+		ok(await repo.editExpense(db, mem, { groupId: g, eid: e.id, uid: OWNER, input: { description: "Mercado parcial", amountCents: 20000, date: "2026-11-10", participantUids: [OWNER, A] } }));
+		expect(await rawA()).toMatchObject({ amountCents: 10000, paidCents: 10000 });
+		expect(objects.size).toBe(2);
+		await check();
 	});
 });

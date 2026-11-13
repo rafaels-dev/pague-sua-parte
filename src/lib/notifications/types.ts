@@ -25,6 +25,8 @@ export type PaymentFact = {
 	actorUid: string;
 	/** Marcada por outra pessoa (dono ou administrador), e não pela própria pessoa. */
 	manual: boolean;
+	/** Pagamento parcial: a parte continua em aberto. `amountCents` é o que foi pago agora; aqui, a parte inteira e o que falta. */
+	partial?: { shareCents: number; remainingCents: number };
 };
 
 /** Uma despesa nova (ou pessoas que entraram numa despesa existente). */

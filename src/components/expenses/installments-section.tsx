@@ -3,10 +3,10 @@
 import { useState } from "react";
 import { Button, List, ListItem, StatusChip } from "@/components/ui";
 import { formatDateShort } from "@/lib/ui/dates";
-import { SERIES_STATE_TEXT, seriesItemState, type SeriesItemState } from "@/lib/ui/due-dates";
+import { seriesItemChipText, seriesItemState, type SeriesItemState } from "@/lib/ui/due-dates";
 import type { ExpenseSeries } from "./types";
 
-const CHIP_TONE: Record<SeriesItemState, "ok" | "owe" | "wait"> = { paid: "ok", overdue: "owe", open: "wait" };
+const CHIP_TONE: Record<SeriesItemState, "ok" | "owe" | "wait"> = { paid: "ok", overdue: "owe", partial: "wait", open: "wait" };
 
 /** Acima disto a lista começa resumida: a parcela atual e as vizinhas. */
 const COLLAPSE_ABOVE = 8;
@@ -54,7 +54,7 @@ export function InstallmentsSection({
 									{[i.dueDate ? formatDateShort(i.dueDate, today) : "", current ? "esta parcela" : ""].filter(Boolean).join(" · ")}
 								</span>
 							}
-							trailing={<StatusChip tone={CHIP_TONE[state]}>{SERIES_STATE_TEXT[state]}</StatusChip>}
+							trailing={<StatusChip tone={CHIP_TONE[state]}>{seriesItemChipText(i, state)}</StatusChip>}
 						/>
 					);
 				})}

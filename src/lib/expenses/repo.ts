@@ -25,22 +25,27 @@ import { buildOpenLists, UPCOMING_DAYS, type OpenExpense, type OpenSource, type 
 import { addDays, installmentDueDates, isPastDue, todayInSaoPaulo } from "./dates";
 import {
 	addHelper,
+	addPayment,
+	canUndoOwnPart,
 	droppedReceiptKeys,
+	hasTopPayment,
+	latestPayment,
 	dueCents,
 	hasPayments,
 	isHelper,
 	normalizeShares,
 	orderShares,
 	participantUidsOf,
-	payShare,
+	selfPayChange,
 	receiptKeysOfShare,
 	recalcShares,
 	refundCents,
 	settleShare,
 	shareStatus,
-	undoShare,
+	undoShareIfCurrent,
 	type Balance,
 	type ExpenseShare,
+	type PartError,
 	type ShareMethod,
 	type ShareStatus,
 } from "./shares";
@@ -195,6 +200,21 @@ export type ExpenseDetail = {
 		managedByName: string | null;
 		paidAt: string | null;
 		method: ShareMethod | null;
+		/** Pagamentos parciais ainda não quitados (do mais antigo ao mais novo); `receipt` só para quem pode ver. */
+		parts: {
+			id: string;
+			cents: number;
+			at: string;
+			method: ShareMethod;
+			byAdmin: boolean;
+			markedByName: string | null;
+			receipt: { name: string; contentType: string; size: number } | null;
+			batch: { totalCents: number; count: number } | null;
+		}[];
+		/** Você pode desfazer o último pagamento parcial que você mesmo avisou nesta parte. */
+		canUndoOwnPart: boolean;
+		/** O ÚLTIMO pagamento (o que "Desfazer" tira): valor, como foi marcado e se é parcial. null sem pagamento ou com devolução registrada. */
+		last: { cents: number; method: ShareMethod | null; partial: boolean } | null;
 		/** Marcada como paga pelo administrador do grupo (e não por quem pagou); `markedByName` = quem marcou. */
 		markedByAdmin: boolean;
 		markedByName: string | null;
@@ -226,7 +246,7 @@ export type ExpenseDetail = {
 	/** Venceu (antes de hoje, em São Paulo) e ainda há cota de outra pessoa com valor em aberto. */
 	overdue: boolean;
 	/** Todas as parcelas da série que ainda existem, em ordem. */
-	series: { count: number; items: { id: string; number: number; dueDate: string | null; settled: boolean; /** Valor que se divide nesta parcela (com cashback as parcelas podem diferir). */ amountCents: number }[] } | null;
+	series: { count: number; items: { id: string; number: number; dueDate: string | null; settled: boolean; /** Alguém já pagou parte do que deve, mas ainda falta (só presente quando verdadeiro). */ partial?: boolean; /** Valor que se divide nesta parcela (com cashback as parcelas podem diferir). */ amountCents: number }[] } | null;
 };
 
 /** Nenhuma cota de outra pessoa com valor em aberto. */
@@ -283,13 +303,17 @@ async function seriesOf(db: Db, e: ExpenseDoc, known?: ExpenseDoc[]) {
 			.toArray());
 	const items = docs
 		.filter((d) => d.installment)
-		.map((d) => ({
-			id: d._id.toHexString(),
-			number: d.installment!.number,
-			dueDate: d.dueDate ?? null,
-			settled: noDue({ paidBy: d.paidBy, shares: normalizeShares(d.shares) }),
-			amountCents: d.amountCents,
-		}))
+		.map((d) => {
+			const shares = normalizeShares(d.shares); // uma só vez por parcela
+			return {
+				id: d._id.toHexString(),
+				number: d.installment!.number,
+				dueDate: d.dueDate ?? null,
+				settled: noDue({ paidBy: d.paidBy, shares }),
+				...(shares.some((s) => dueCents(s, d.paidBy) > 0 && s.paidCents > 0) ? { partial: true } : {}),
+				amountCents: d.amountCents,
+			};
+		})
 		.sort((a, b) => a.number - b.number);
 	return { count: e.installment.count, items };
 }
@@ -369,7 +393,11 @@ export async function visiblePlanId(db: Db, planId: string | undefined, uid: str
 }
 
 async function toDetail(db: Db, e: ExpenseDoc, group: GroupDoc, uid: string, now: Date, known?: ExpenseDoc[]): Promise<ExpenseDetail> {
-	const markers = e.shares.flatMap((s) => [...(s.markedByAdmin && s.markedBy ? [s.markedBy] : []), ...(s.refund?.byAdmin ? [s.refund.markedBy] : [])]);
+	const markers = e.shares.flatMap((s) => [
+		...(s.markedByAdmin && s.markedBy ? [s.markedBy] : []),
+		...(s.refund?.byAdmin ? [s.refund.markedBy] : []),
+		...(s.parts ?? []).flatMap((p) => (p.byAdmin ? [p.markedBy] : [])),
+	]);
 	const people = await loadPeople(db, uidsToLoad(group, [...new Set([e.paidBy, e.createdBy, ...e.shares.map((s) => s.uid), ...markers].filter(Boolean))]));
 	const dir = directory(group, people, uid);
 	const view = (u: string) => ({ uid: u, name: dir.name(u), picture: dir.picture(u), isYou: u === uid });
@@ -404,6 +432,11 @@ async function toDetail(db: Db, e: ExpenseDoc, group: GroupDoc, uid: string, now
 		shares: orderShares(e.shares, e.paidBy, dir.name).map((s) => {
 			const actsForShare = actsFor(group.members, uid, s.uid);
 			const status = shareStatus(s, e.paidBy);
+			// Pagamento que vale como "o último": o que quitou ou, quitada só por parciais (a parte mudou), o último parcial.
+			// Em aberto, os parciais aparecem só no histórico (`parts`).
+			const latest = latestPayment(s); // uma vez por parte
+			const last = hasTopPayment(s) || s.paidCents >= s.amountCents ? latest : undefined;
+			const canSee = actsForShare || owns;
 			return {
 				...view(s.uid),
 				kind: dir.kind(s.uid),
@@ -416,10 +449,22 @@ async function toDetail(db: Db, e: ExpenseDoc, group: GroupDoc, uid: string, now
 				participates: s.amountCents > 0,
 				helped: isHelper(s),
 				status,
-				paidAt: s.paidCents > 0 && s.paidAt ? new Date(s.paidAt).toISOString() : null,
-				method: s.paidCents > 0 ? (s.method ?? null) : null,
-				markedByAdmin: s.paidCents > 0 && s.method === "manual" && s.markedByAdmin === true,
-				markedByName: s.paidCents > 0 && s.method === "manual" && s.markedByAdmin === true && s.markedBy ? dir.name(s.markedBy) : null,
+				paidAt: s.paidCents > 0 && last?.at ? new Date(last.at).toISOString() : null,
+				method: s.paidCents > 0 ? (last?.method ?? null) : null,
+				parts: (s.parts ?? []).map((p) => ({
+					id: p.id,
+					cents: p.cents,
+					at: new Date(p.at).toISOString(),
+					method: p.method,
+					byAdmin: p.byAdmin === true,
+					markedByName: p.byAdmin ? dir.name(p.markedBy) : null,
+					receipt: p.receipt && canSee ? { name: p.receipt.name, contentType: p.receipt.contentType, size: p.receipt.size } : null,
+					batch: p.batch && canSee ? { totalCents: p.batch.totalCents, count: p.batch.count } : null,
+				})),
+				canUndoOwnPart: actsForShare && canUndoOwnPart(s, uid),
+				last: !s.refund && latest ? { cents: latest.cents, method: latest.method ?? null, partial: latest.kind === "part" } : null,
+				markedByAdmin: s.paidCents > 0 && last?.method === "manual" && last.byAdmin,
+				markedByName: s.paidCents > 0 && last?.method === "manual" && last.byAdmin && last.markedBy ? dir.name(last.markedBy) : null,
 				refund: s.refund
 					? {
 							cents: s.refund.cents,
@@ -433,11 +478,10 @@ async function toDetail(db: Db, e: ExpenseDoc, group: GroupDoc, uid: string, now
 				canRefund: owns && status === "refund",
 				canUndoRefund: owns && s.refund !== undefined,
 				...(refundPixes && status === "refund" ? { refundPix: refundPixes.get(`${gid}:${s.uid}`) ?? null } : {}),
-				receipt:
-					s.receipt && (actsForShare || owns) ? { name: s.receipt.name, contentType: s.receipt.contentType, size: s.receipt.size } : null,
-				batch: s.batch && (actsForShare || owns) ? { totalCents: s.batch.totalCents, count: s.batch.count } : null,
+				receipt: last?.receipt && canSee ? { name: last.receipt.name, contentType: last.receipt.contentType, size: last.receipt.size } : null,
+				batch: last?.batch && canSee ? { totalCents: last.batch.totalCents, count: last.batch.count } : null,
 				canPay: actsForShare && status === "pending",
-				canAddReceipt: actsForShare && s.uid !== e.paidBy && s.amountCents > 0 && s.paidCents === s.amountCents,
+				canAddReceipt: actsForShare && s.uid !== e.paidBy && s.amountCents > 0 && s.paidCents === s.amountCents && (last?.method === "self" || !last?.receipt),
 			};
 		}),
 		attachments: e.attachments.map((a) => ({ id: a.id, name: a.name, contentType: a.contentType, size: a.size })),
@@ -604,11 +648,15 @@ export type ExpenseListItem = {
 	yourStatus: ShareStatus | "none";
 	yourDueCents: number;
 	yourRefundCents: number;
+	/** Quanto você já pagou da sua parte (para "Faltam R$ X · já pagou R$ Y"). */
+	yourPaidCents: number;
 	pendingCount: number;
 	refundCount: number;
+	/** Quantas partes em aberto já têm pagamento parcial. */
+	partialCount: number;
 	attachmentCount: number;
 	/** Cotas (que não são do dono) das pessoas sem login que o usuário cuida. */
-	managed: { uid: string; name: string; status: ShareStatus; dueCents: number; refundCents: number }[];
+	managed: { uid: string; name: string; status: ShareStatus; dueCents: number; refundCents: number; paidCents?: number }[];
 	/** Só quando o usuário age pelo dono (dono sem login): situação de quem cobra. */
 	ownerView: { pendingCount: number; refundCount: number } | null;
 	dueDate: string | null;
@@ -667,6 +715,7 @@ export async function listExpenses(db: Db, groupId: string, uid: string, now: Da
 		const mine = d.shares.find((s) => s.uid === uid);
 		const pendingCount = d.shares.filter((s) => dueCents(s, d.paidBy) > 0).length;
 		const refundCount = d.shares.filter((s) => refundCents(s, d.paidBy) > 0).length;
+		const partialCount = d.shares.filter((s) => dueCents(s, d.paidBy) > 0 && s.paidCents > 0).length;
 		return {
 			id: d._id.toHexString(),
 			description: d.description,
@@ -677,8 +726,10 @@ export async function listExpenses(db: Db, groupId: string, uid: string, now: Da
 			yourStatus: mine ? shareStatus(mine, d.paidBy) : d.paidBy === uid ? "payer" : "none",
 			yourDueCents: mine ? dueCents(mine, d.paidBy) : 0,
 			yourRefundCents: mine ? refundCents(mine, d.paidBy) : 0,
+			yourPaidCents: mine && mine.uid !== d.paidBy ? mine.paidCents : 0,
 			pendingCount,
 			refundCount,
+			partialCount,
 			attachmentCount: d.attachments.length,
 			managed: d.shares
 				.filter((s) => s.uid !== d.paidBy && dir.youManage(s.uid) && (s.amountCents > 0 || refundCents(s, d.paidBy) > 0))
@@ -688,6 +739,7 @@ export async function listExpenses(db: Db, groupId: string, uid: string, now: Da
 					status: shareStatus(s, d.paidBy),
 					dueCents: dueCents(s, d.paidBy),
 					refundCents: refundCents(s, d.paidBy),
+					...(s.paidCents > 0 && dueCents(s, d.paidBy) > 0 ? { paidCents: s.paidCents } : {}),
 				})),
 			ownerView: dir.youManage(d.paidBy) ? { pendingCount, refundCount } : null,
 			dueDate: d.dueDate ?? null,
@@ -719,12 +771,28 @@ export async function getAttachmentRef(db: Db, groupId: string, eid: string, aid
 export type ReceiptRef = { status: "ok"; key: string; name: string; contentType: string } | { status: "not_found" };
 
 /** Comprovante da cota de `targetUid`: só para quem age por ela, por quem pagou a despesa, ou administra o grupo. */
-export async function getReceiptRef(db: Db, groupId: string, eid: string, targetUid: string, uid: string, kind: "payment" | "refund" = "payment"): Promise<ReceiptRef> {
+export async function getReceiptRef(
+	db: Db,
+	groupId: string,
+	eid: string,
+	targetUid: string,
+	uid: string,
+	kind: "payment" | "refund" = "payment",
+	/** Comprovante de um pagamento parcial (identificado pelo `id` do parcial). Ausente: o do pagamento que quitou (ou o último parcial). */
+	partId?: string,
+): Promise<ReceiptRef> {
 	const group = await findMemberGroup(db, groupId, uid);
 	if (!group) return { status: "not_found" };
 	const e = await findExpense(db, groupId, eid);
 	const share = e?.shares.find((s) => s.uid === targetUid);
-	const r = kind === "refund" ? share?.refund?.receipt : share?.receipt;
+	const r =
+		kind === "refund"
+			? share?.refund?.receipt
+			: partId !== undefined
+				? share?.parts?.find((p) => p.id === partId)?.receipt
+				: share
+					? latestPayment(share)?.receipt
+					: undefined;
 	if (!e || !r) return { status: "not_found" };
 	// Vê o comprovante: a própria pessoa (ou quem age por ela), quem pagou a despesa e o administrador do grupo.
 	if (!actsFor(group.members, uid, targetUid) && expenseRole(group.members, uid, e.paidBy) === null) return { status: "not_found" };
@@ -742,7 +810,7 @@ export type DeleteResult =
 
 /** Filtro atômico: nenhuma cota com pagamento (quem pagou tem sempre paidCents 0; o modelo antigo `status: 'paid'` também conta). */
 const NO_PAYMENTS = {
-	shares: { $not: { $elemMatch: { $or: [{ paidCents: { $gt: 0 } }, { status: "paid" }, { refund: { $exists: true } }, { receipt: { $exists: true } }] } } },
+	shares: { $not: { $elemMatch: { $or: [{ paidCents: { $gt: 0 } }, { status: "paid" }, { refund: { $exists: true } }, { receipt: { $exists: true } }, { "parts.0": { $exists: true } }] } } },
 };
 
 /**
@@ -772,8 +840,8 @@ export async function releaseReceipts(db: Db, store: AttachmentStore, keys: stri
 	if (unique.length === 0) return;
 	const still = await expensesCollection(db)
 		.find(
-			{ $or: [{ "shares.receipt.key": { $in: unique } }, { "shares.refund.receipt.key": { $in: unique } }] },
-			{ projection: { "shares.receipt.key": 1, "shares.refund.receipt.key": 1 } },
+			{ $or: [{ "shares.receipt.key": { $in: unique } }, { "shares.refund.receipt.key": { $in: unique } }, { "shares.parts.receipt.key": { $in: unique } }] },
+			{ projection: { "shares.receipt.key": 1, "shares.refund.receipt.key": 1, "shares.parts.receipt.key": 1 } },
 		)
 		.toArray();
 	const referenced = new Set(still.flatMap((d) => d.shares.flatMap(receiptKeysOfShare)));
@@ -887,6 +955,12 @@ export async function mutateShares(db: Db, groupId: string, eid: string, mutate:
 
 // ---------- quitar / desfazer ----------
 
+/** Valor de pagamento parcial recusado: não é inteiro/positivo, passa do que falta, ou a parte já tem parciais demais. */
+export type AmountRejection = { status: "invalid_amount" } | { status: "too_much" } | { status: "too_many_parts" } | { status: "stale" } | { status: "stale_undo" };
+const amountRejection = (e: PartError): AmountRejection =>
+	e === "invalid" ? { status: "invalid_amount" } : e === "too_much" ? { status: "too_much" } : e === "stale" ? { status: "stale" } : { status: "too_many_parts" };
+const isPartError = (e: unknown): e is PartError => e === "invalid" || e === "too_much" || e === "limit" || e === "stale";
+
 export type MarkShareResult =
 	| { status: "ok"; expense: ExpenseDetail; /** O que mudou de fato nesta gravação (para avisar as pessoas). */ payments?: PaymentFact[] }
 	| { status: "no_group" }
@@ -908,18 +982,38 @@ export async function setSharePaid(
 	status: "paid" | "pending",
 	now: Date = new Date(),
 	store?: AttachmentStore,
-): Promise<MarkShareResult> {
+	/** "Recebi só uma parte": quanto foi recebido (centavos inteiros, até o que falta). Ausente = o que falta. Só vale com `status: "paid"`. */
+	amountCents?: number,
+	/** Quanto a tela mostrava como já pago nesta parte. Obrigatório com `amountCents` (se mudou, "stale"); ao desfazer, a tela sempre manda e, se mudou, "stale_undo" (sem o campo, só vale em parte sem parciais). */
+	expectedPaidCents?: number,
+): Promise<MarkShareResult | AmountRejection> {
 	const group = await findMemberGroup(db, groupId, uid);
 	if (!group) return { status: "no_group" };
 	const r = await mutateShares(db, groupId, eid, (e) => {
 		const role = expenseRole(group.members, uid, e.paidBy);
+		if (status === "pending") {
+			// Quem pagou a despesa e o administrador desfazem como sempre; quem avisou um parcial na própria parte desfaz o seu.
+			const mine = e.shares.find((s) => s.uid === targetUid);
+			const ownPart = !!mine && actsFor(group.members, uid, targetUid) && canUndoOwnPart(mine, uid);
+			if (!role && !ownPart) return { error: "forbidden" };
+			// Com conferência: a tela sempre manda quanto mostrava como já pago; se mudou (ou, sem o campo, a parte tem parciais), não desfaz.
+			const undone = undoShareIfCurrent(e.shares, e.paidBy, targetUid, expectedPaidCents);
+			return undone ? ("error" in undone ? { error: "stale_undo" } : undone) : { error: "no_share" };
+		}
 		if (!role) return { error: "forbidden" };
-		const change = status === "paid" ? settleShare(e.shares, e.paidBy, targetUid, new Date(), uid, role === "admin") : undoShare(e.shares, e.paidBy, targetUid);
-		return change ?? { error: "no_share" };
+		if (amountCents !== undefined) {
+			if (expectedPaidCents === undefined) return { error: "invalid" };
+			const change = addPayment(e.shares, e.paidBy, targetUid, amountCents, new Date(), uid, { method: "manual", asAdmin: role === "admin", partId: randomId(), expectedPaidCents });
+			return change ?? { error: "no_share" };
+		}
+		return settleShare(e.shares, e.paidBy, targetUid, new Date(), uid, role === "admin") ?? { error: "no_share" };
 	});
 	if (r.kind === "no_expense") return { status: "no_expense" };
 	if (r.kind === "conflict") return { status: "conflict" };
-	if (r.kind === "rejected") return { status: r.error === "forbidden" ? "forbidden" : "no_share" };
+	if (r.kind === "rejected") {
+		if (r.error === "stale_undo") return { status: "stale_undo" };
+		return isPartError(r.error) ? amountRejection(r.error) : { status: r.error === "forbidden" ? "forbidden" : "no_share" };
+	}
 	if (store && r.wrote) await releaseReceipts(db, store, droppedReceiptKeys(r.before.shares, r.doc.shares));
 	const payments = r.wrote && status === "paid" ? paymentFacts(r.doc, r.before.shares, r.doc.shares, uid, true) : [];
 	return { status: "ok", expense: await toDetail(db, r.doc, group, uid, now), payments };
@@ -984,6 +1078,7 @@ export async function refundShare(
 
 export type SelfPayResult =
 	| { status: "ok"; expense: ExpenseDetail; payments?: PaymentFact[] }
+	| AmountRejection
 	| { status: "no_group" }
 	| { status: "no_expense" }
 	| { status: "forbidden" }
@@ -998,23 +1093,26 @@ export type SelfPayResult =
 export async function markSelfPaid(
 	db: Db,
 	store: AttachmentStore,
-	args: { groupId: string; eid: string; uid: string; targetUid: string; file?: SniffedFile; now?: Date },
+	args: { groupId: string; eid: string; uid: string; targetUid: string; file?: SniffedFile; now?: Date; /** Pagamento parcial: quanto foi pago (centavos inteiros, até o que falta). Ausente = o que falta. */ amountCents?: number; /** Obrigatório com `amountCents`: quanto a tela mostrava como já pago (se mudou, "stale"). */ expectedPaidCents?: number },
 ): Promise<SelfPayResult> {
-	const { groupId, eid, uid, targetUid, file } = args;
+	const { groupId, eid, uid, targetUid, file, amountCents, expectedPaidCents } = args;
 	const now = args.now ?? new Date();
 	const group = await findMemberGroup(db, groupId, uid);
 	if (!group) return { status: "no_group" };
 	const current = await findExpense(db, groupId, eid);
 	if (!current) return { status: "no_expense" };
 	if (!actsFor(group.members, uid, targetUid)) return { status: "forbidden" };
-	if (payShare(current.shares, current.paidBy, targetUid, now, uid) === null) return { status: "no_share" };
+	// Confere antes de subir o arquivo; a conferência que vale é a de dentro de `mutateShares`.
+	const probe = selfPayChange(current.shares, current.paidBy, targetUid, now, uid, { amountCents, expectedPaidCents, partId: randomId() });
+	if (probe === null) return { status: "no_share" };
+	if ("error" in probe) return amountRejection(probe.error);
 
 	const receipt = file
 		? await putReceipt(store, { groupId, expenseId: current._id.toHexString(), bytes: file.bytes, name: file.name, contentType: file.contentType })
 		: undefined;
 	let r: Mutated;
 	try {
-		r = await mutateShares(db, groupId, eid, (e) => payShare(e.shares, e.paidBy, targetUid, now, uid, receipt) ?? { error: "no_share" });
+		r = await mutateShares(db, groupId, eid, (e) => selfPayChange(e.shares, e.paidBy, targetUid, now, uid, { amountCents, expectedPaidCents, receipt, partId: randomId() }) ?? { error: "no_share" });
 	} catch (err) {
 		if (receipt) await deleteAttachments(store, [receipt.key]);
 		throw err;
@@ -1022,7 +1120,7 @@ export async function markSelfPaid(
 	if (receipt && !(r.kind === "ok" && r.wrote)) await deleteAttachments(store, [receipt.key]);
 	if (r.kind === "no_expense") return { status: "no_expense" };
 	if (r.kind === "conflict") return { status: "conflict" };
-	if (r.kind === "rejected") return { status: "no_share" };
+	if (r.kind === "rejected") return isPartError(r.error) ? amountRejection(r.error) : { status: "no_share" };
 	if (r.wrote) await releaseReceipts(db, store, droppedReceiptKeys(r.before.shares, r.doc.shares));
 	const payments = r.wrote ? paymentFacts(r.doc, r.before.shares, r.doc.shares, uid, false) : [];
 	return { status: "ok", expense: await toDetail(db, r.doc, group, uid, now), payments };

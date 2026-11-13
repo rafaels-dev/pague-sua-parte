@@ -11,6 +11,8 @@ export type ReceivableItem = {
 	expenseId: string;
 	description: string;
 	dueCents: number;
+	/** Pagamento parcial: quanto já foi pago desta parte (`dueCents` é o que falta). */
+	paidCents?: number;
 	dueDate: string | null;
 	overdue: boolean;
 	installment: { number: number; count: number } | null;
@@ -59,6 +61,7 @@ function normalizeItem(raw: unknown): ReceivableItem | null {
 		expenseId: r.expenseId,
 		description: str(r.description),
 		dueCents: Math.max(0, num(r.dueCents)),
+		...(num(r.paidCents) > 0 ? { paidCents: num(r.paidCents) } : {}),
 		dueDate: typeof r.dueDate === "string" && /^\d{4}-\d{2}-\d{2}/.test(r.dueDate) ? r.dueDate.slice(0, 10) : null,
 		overdue: !!r.overdue,
 		installment: number >= 1 && count >= 1 ? { number, count } : null,

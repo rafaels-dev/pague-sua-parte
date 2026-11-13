@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { Avatar, Banner, Button, Card, Icon, QrCode } from "@/components/ui";
+import { Avatar, Banner, Button, Card, Icon, QrCode, StatusChip } from "@/components/ui";
 import { copyText } from "@/lib/ui/clipboard";
 import { formatBRL } from "@/lib/money";
 import { PIX_KEY_LABELS, type PixKeyType } from "@/lib/pix/key";
+import { PARTIAL_CHIP, partialLine } from "@/lib/ui/partial-pay";
 
 const STEPS = ["Toque em “Copiar Pix Copia e Cola”.", "Abra o app do seu banco e vá em Pix.", "Escolha “Pix Copia e Cola” e cole o código."];
 
@@ -80,9 +81,12 @@ export function PixCodeBlock({
 	onCopyCode,
 	onCopyKey,
 	helpOpen = false,
+	onOtherAmount,
 }: Readonly<{
 	/** Só para as telas de exemplo: ajuda "O banco recusou o código?" já aberta. */
 	helpOpen?: boolean;
+	/** Mostra o link discreto "Pagar outro valor" logo abaixo do botão de copiar (pagamento parcial). */
+	onOtherAmount?: () => void;
 	amountCents: number;
 	payeeName: string;
 	pix: { type: PixKeyType; key: string };
@@ -100,9 +104,18 @@ export function PixCodeBlock({
 		<div className="space-y-5">
 				{payload ? (
 					<>
-						<Button icon="content_copy" fullWidth onClick={onCopyCode}>
-							Copiar Pix Copia e Cola
-						</Button>
+						<div>
+							<Button icon="content_copy" fullWidth onClick={onCopyCode}>
+								Copiar Pix Copia e Cola
+							</Button>
+							{onOtherAmount && (
+								<div className="mt-1 text-center">
+									<Button variant="text" size="md" onClick={onOtherAmount}>
+										Pagar outro valor
+									</Button>
+								</div>
+							)}
+						</div>
 
 						<ol className="space-y-2">
 							{STEPS.map((s, i) => (
@@ -212,8 +225,11 @@ export function PixPayCard({
 	due,
 	canPay = false,
 	onPaid,
+	onOtherAmount,
 	helpOpen,
 }: Readonly<{
+	/** Abre "Pagar outro valor" (paga só um pedaço da parte). Sem chave Pix o link não aparece no código; o botão "Já paguei" segue valendo. */
+	onOtherAmount?: () => void;
 	helpOpen?: boolean;
 	/** "Vence em 10 de dezembro" (em vermelho quando venceu e está em aberto). */
 	due?: { text: string; overdue: boolean } | null;
@@ -264,9 +280,10 @@ export function PixPayCard({
 					</p>
 				)}
 				{paidSoFarCents > 0 && (
-					<p className="mt-1 text-body-large text-on-surface">
-						{managed ? `${accountName} já pagou` : "Você já pagou"} {formatBRL(paidSoFarCents)}; falta {formatBRL(shareCents)}.
-					</p>
+					<div className="mt-2 space-y-1">
+						<StatusChip tone="wait">{PARTIAL_CHIP}</StatusChip>
+						<p className="text-body-large text-on-surface">{partialLine(paidSoFarCents, shareCents)}</p>
+					</div>
 				)}
 			</div>
 
@@ -282,9 +299,19 @@ export function PixPayCard({
 					onCopyCode={onCopyCode}
 					onCopyKey={onCopyKey}
 					helpOpen={helpOpen}
+					onOtherAmount={canPay ? onOtherAmount : undefined}
 				/>
 			) : (
 				<p className="text-body-large text-on-surface-variant">Ainda não há chave Pix de {payeeName} no app.</p>
+			)}
+
+			{/* Sem chave Pix, ou com a chave mas sem o código copia-e-cola (não deu para gerar): o link continua aqui, fora do bloco do código. */}
+			{canPay && onOtherAmount && (!pix || !payload) && (
+				<div className="text-center">
+					<Button variant="text" size="md" onClick={onOtherAmount}>
+						Pagar outro valor
+					</Button>
+				</div>
 			)}
 
 			{canPay && onPaid && (

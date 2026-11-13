@@ -42,9 +42,15 @@ describe("shareStatusChip", () => {
 		expect(shareStatusChip("pending")).toEqual({ text: "Falta pagar", tone: "wait" });
 		expect(shareStatusChip("paid").text).toBe("Pago");
 	});
-	it("dívida parcial mostra o valor; dívida inteira não", () => {
-		expect(shareStatusChip("pending", { amountCents: 2000, dueCents: 500 }).text).toBe("Falta pagar R$ 5,00");
+	it("parte que já recebeu pagamento é \"Pago parcialmente\" (tom de pendente, nunca \"Pago\"); sem pagamento, \"Falta pagar\"", () => {
+		expect(shareStatusChip("pending", { amountCents: 2000, dueCents: 500, paidCents: 1500 })).toEqual({ text: "Pago parcialmente", tone: "wait" });
+		expect(shareStatusChip("pending", { amountCents: 2000, dueCents: 2000, paidCents: 0 }).text).toBe("Falta pagar");
 		expect(shareStatusChip("pending", { amountCents: 2000, dueCents: 2000 }).text).toBe("Falta pagar");
+	});
+	it("lista: sua parte parcial e donos com partes parciais", () => {
+		expect(listStatus({ yourStatus: "pending", yourShareCents: 10000, yourDueCents: 5300, yourPaidCents: 4700, pendingCount: 1 })).toEqual({ text: "Faltam R$ 53,00 · já pagou R$ 47,00", tone: "owe" });
+		expect(listStatus({ yourStatus: "payer", yourShareCents: 0, pendingCount: 2, partialCount: 1 })?.text).toBe("Faltam 2 pagamentos · 1 pago parcialmente");
+		expect(listStatus({ yourStatus: "payer", yourShareCents: 0, pendingCount: 1, partialCount: 1 })?.text).toBe("Falta 1 pagamento · 1 pago parcialmente");
 	});
 	it("a receber de volta", () => {
 		expect(shareStatusChip("refund", { refundCents: 2500 }).text).toBe("A receber de volta R$ 25,00");

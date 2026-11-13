@@ -19,8 +19,12 @@ export type ExpenseSummary = {
 	yourDueCents: number;
 	/** Quanto a pessoa tem a receber de volta do dono. */
 	yourRefundCents: number;
+	/** Quanto você já pagou da sua parte (pagamento parcial). */
+	yourPaidCents: number;
 	pendingCount: number;
 	refundCount: number;
+	/** Quantas partes em aberto já têm pagamento parcial. */
+	partialCount: number;
 	attachmentCount: number;
 	/** Partes das pessoas sem celular que você cuida (só as que participam). */
 	managed: ManagedShareSummary[];
@@ -46,11 +50,23 @@ export type ExpenseSummary = {
 
 export type InstallmentRef = { seriesId: string; number: number; count: number };
 
-export type SeriesItem = { id: string; number: number; dueDate: string | null; settled: boolean; amountCents?: number };
+export type SeriesItem = { id: string; number: number; dueDate: string | null; settled: boolean; /** Já recebeu pagamento parcial, mas ainda falta (nunca conta como quitada). */ partial?: boolean; amountCents?: number };
 
 export type ExpenseSeries = { count: number; items: SeriesItem[] };
 
 export type ShareReceipt = { name: string; contentType: string; size: number };
+
+/** Um pagamento parcial já feito na parte (histórico); `receipt` só vem se você pode vê-lo. */
+export type SharePartInfo = {
+	id: string;
+	cents: number;
+	at: string;
+	method: "manual" | "self";
+	byAdmin: boolean;
+	markedByName: string | null;
+	receipt: ShareReceipt | null;
+	batch: { totalCents: number; count: number } | null;
+};
 
 export type ExpenseShare = {
 	uid: string;
@@ -78,6 +94,12 @@ export type ExpenseShare = {
 	method: "manual" | "self" | null;
 	/** Comprovante de pagamento; só vem preenchido se você pode vê-lo. */
 	receipt: ShareReceipt | null;
+	/** Pagamentos parciais ainda não quitados (do mais antigo ao mais novo). */
+	parts: SharePartInfo[];
+	/** Você pode desfazer o último pagamento parcial que avisou nesta parte. */
+	canUndoOwnPart: boolean;
+	/** O ÚLTIMO pagamento (o que "Desfazer" tira); null = nenhum. */
+	last: { cents: number; method: "manual" | "self" | null; partial: boolean } | null;
 	/** Você pode tocar em "Já paguei" nesta parte. */
 	canPay: boolean;
 	/** A parte está paga e você ainda pode anexar ou trocar o comprovante. */
@@ -168,7 +190,7 @@ function normalizeSeries(raw: unknown): ExpenseSeries | null {
 	if (!Array.isArray(r.items)) return null;
 	const items: SeriesItem[] = (r.items as Record<string, unknown>[])
 		.filter((i) => i && typeof i.id === "string" && typeof i.number === "number")
-		.map((i) => ({ id: i.id as string, number: i.number as number, dueDate: typeof i.dueDate === "string" ? i.dueDate : null, settled: !!i.settled, ...(typeof i.amountCents === "number" ? { amountCents: i.amountCents } : {}) }))
+		.map((i) => ({ id: i.id as string, number: i.number as number, dueDate: typeof i.dueDate === "string" ? i.dueDate : null, settled: !!i.settled, ...(i.partial === true ? { partial: true } : {}), ...(typeof i.amountCents === "number" ? { amountCents: i.amountCents } : {}) }))
 		.sort((a, b) => a.number - b.number);
 	if (items.length === 0) return null;
 	return { count: typeof r.count === "number" ? r.count : items.length, items };
@@ -180,6 +202,22 @@ export function normalizeReceipt(raw: unknown): ShareReceipt | null {
 	const r = raw as Record<string, unknown>;
 	if (typeof r.name !== "string" || !r.name) return null;
 	return { name: r.name, contentType: typeof r.contentType === "string" ? r.contentType : "", size: typeof r.size === "number" ? r.size : 0 };
+}
+
+function normalizePart(raw: unknown): SharePartInfo | null {
+	if (!raw || typeof raw !== "object") return null;
+	const r = raw as Record<string, unknown>;
+	if (typeof r.id !== "string" || !r.id || typeof r.cents !== "number" || r.cents <= 0) return null;
+	return {
+		id: r.id,
+		cents: r.cents,
+		at: typeof r.at === "string" ? r.at : "",
+		method: r.method === "self" ? "self" : "manual",
+		byAdmin: r.byAdmin === true,
+		markedByName: typeof r.markedByName === "string" ? r.markedByName : null,
+		receipt: normalizeReceipt(r.receipt),
+		batch: normalizeBatch(r.batch),
+	};
 }
 
 function normalizeRefund(raw: unknown): ShareRefundInfo | null {
@@ -225,6 +263,9 @@ export function normalizeExpense(raw: Loose<Omit<ExpenseDetailData, "shares">> &
 			paidAt: s.paidAt ?? null,
 			method: s.method === "self" || s.method === "manual" ? s.method : null,
 			receipt: normalizeReceipt(s.receipt),
+			parts: Array.isArray(s.parts) ? (s.parts as unknown[]).map(normalizePart).filter((p): p is SharePartInfo => p !== null) : [],
+			canUndoOwnPart: !!s.canUndoOwnPart,
+			last: s.last && typeof s.last.cents === "number" && s.last.cents > 0 ? { cents: s.last.cents, method: s.last.method === "self" ? "self" : s.last.method === "manual" ? "manual" : null, partial: !!s.last.partial } : null,
 			canPay: !!s.canPay,
 			canAddReceipt: !!s.canAddReceipt,
 			helped: !!s.helped,
@@ -305,6 +346,8 @@ export function normalizeSummary(raw: Loose<ExpenseSummary> & Record<string, unk
 		yourShareCents: raw.yourShareCents ?? 0,
 		yourDueCents: raw.yourDueCents ?? (raw.yourStatus === "pending" ? (raw.yourShareCents ?? 0) : 0),
 		yourRefundCents: raw.yourRefundCents ?? 0,
+		yourPaidCents: raw.yourPaidCents ?? 0,
+		partialCount: raw.partialCount ?? 0,
 		pendingCount,
 		refundCount,
 		attachmentCount: raw.attachmentCount ?? 0,
