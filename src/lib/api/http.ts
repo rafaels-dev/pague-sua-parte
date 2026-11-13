@@ -1,7 +1,7 @@
 import { UnauthorizedError } from "@/lib/auth/server";
 
 /** Códigos de erro que o cliente usa para decidir a tela (`code` na resposta). */
-export type ErrorCode = "no_group" | "no_expense";
+export type ErrorCode = "no_group" | "no_expense" | "advance_uncertain";
 
 /**
  * Resposta de erro padrão: `{ error, field?, code? }` com mensagem em pt-BR.

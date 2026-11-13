@@ -82,7 +82,10 @@ export function PixCodeBlock({
 	onCopyKey,
 	helpOpen = false,
 	onOtherAmount,
+	otherLabel = "Pagar outro valor",
 }: Readonly<{
+	/** Texto do link de pagar outro valor (numa compra parcelada: adiantar parcelas). */
+	otherLabel?: string;
 	/** Só para as telas de exemplo: ajuda "O banco recusou o código?" já aberta. */
 	helpOpen?: boolean;
 	/** Mostra o link discreto "Pagar outro valor" logo abaixo do botão de copiar (pagamento parcial). */
@@ -111,7 +114,7 @@ export function PixCodeBlock({
 							{onOtherAmount && (
 								<div className="mt-1 text-center">
 									<Button variant="text" size="md" onClick={onOtherAmount}>
-										Pagar outro valor
+										{otherLabel}
 									</Button>
 								</div>
 							)}
@@ -226,8 +229,11 @@ export function PixPayCard({
 	canPay = false,
 	onPaid,
 	onOtherAmount,
+	otherLabel,
 	helpOpen,
 }: Readonly<{
+	/** Texto do link de pagar outro valor; padrão "Pagar outro valor". */
+	otherLabel?: string;
 	/** Abre "Pagar outro valor" (paga só um pedaço da parte). Sem chave Pix o link não aparece no código; o botão "Já paguei" segue valendo. */
 	onOtherAmount?: () => void;
 	helpOpen?: boolean;
@@ -300,6 +306,7 @@ export function PixPayCard({
 					onCopyKey={onCopyKey}
 					helpOpen={helpOpen}
 					onOtherAmount={canPay ? onOtherAmount : undefined}
+					otherLabel={otherLabel}
 				/>
 			) : (
 				<p className="text-body-large text-on-surface-variant">Ainda não há chave Pix de {payeeName} no app.</p>
@@ -309,7 +316,7 @@ export function PixPayCard({
 			{canPay && onOtherAmount && (!pix || !payload) && (
 				<div className="text-center">
 					<Button variant="text" size="md" onClick={onOtherAmount}>
-						Pagar outro valor
+						{otherLabel ?? "Pagar outro valor"}
 					</Button>
 				</div>
 			)}

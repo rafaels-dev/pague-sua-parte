@@ -3,11 +3,11 @@ import { getDb } from "@/lib/db/client";
 import { isManagedUid } from "@/lib/groups/helpers";
 import type { GroupDoc } from "@/lib/groups/repo";
 import { usersCollection } from "@/lib/users/repo";
-import { buildMemberJoinedNotices, buildNewExpenseNotices, buildPaymentNotices } from "./messages";
+import { buildAdvanceNotices, buildMemberJoinedNotices, buildNewExpenseNotices, buildPaymentNotices } from "./messages";
 import { buildPlanCancelledNotices, buildPlanChangeNotices, buildPlanClosedNotices, buildPlanConfirmedNotices } from "./plan-messages";
 import { notify } from "./notify";
 import { runAfterResponse } from "./schedule";
-import type { GroupInfo, NewExpenseFact, NewExpenseMode, NoticeContext, PaymentFact, PlanCancelFact, PlanChangeFact, PlanClosedFact, PlanConfirmedFact } from "./types";
+import type { AdvanceFact, GroupInfo, NewExpenseFact, NewExpenseMode, NoticeContext, PaymentFact, PlanCancelFact, PlanChangeFact, PlanClosedFact, PlanConfirmedFact } from "./types";
 
 type GroupRow = Pick<GroupDoc, "_id" | "name" | "members">;
 
@@ -56,6 +56,11 @@ export async function notifyPayments(db: Db, facts: PaymentFact[]): Promise<void
 	await notify(db, buildPaymentNotices(facts, ctx));
 }
 
+export async function notifyAdvance(db: Db, fact: AdvanceFact): Promise<void> {
+	const ctx = await loadContext(db, [fact.groupId], [fact.actorUid, fact.paidBy, fact.debtorUid]);
+	await notify(db, buildAdvanceNotices(fact, ctx));
+}
+
 export async function notifyNewExpenses(db: Db, facts: NewExpenseFact[], mode: NewExpenseMode): Promise<void> {
 	if (facts.length === 0) return;
 	const ctx = await loadContext(db, facts.map((f) => f.groupId), facts.flatMap((f) => [f.paidBy, ...(f.actorUid ? [f.actorUid] : []), ...f.shares.map((s) => s.uid)]));
@@ -67,6 +72,9 @@ export async function notifyNewExpenses(db: Db, facts: NewExpenseFact[], mode: N
 export const afterMemberJoined = (groupId: string, joinerUid: string) => runAfterResponse(async () => notifyMemberJoined(await getDb(), groupId, joinerUid));
 export const afterPayments = (facts: PaymentFact[] | undefined) => {
 	if (facts?.length) runAfterResponse(async () => notifyPayments(await getDb(), facts));
+};
+export const afterAdvance = (fact: AdvanceFact | undefined) => {
+	if (fact) runAfterResponse(async () => notifyAdvance(await getDb(), fact));
 };
 export const afterNewExpenses = (facts: NewExpenseFact[] | undefined, mode: NewExpenseMode) => {
 	if (facts?.length) runAfterResponse(async () => notifyNewExpenses(await getDb(), facts, mode));

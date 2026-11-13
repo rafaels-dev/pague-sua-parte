@@ -1,6 +1,7 @@
 import { actsFor, isManagedUid, type MemberLike } from "@/lib/groups/helpers";
 import { formatBRL } from "@/lib/money";
-import type { NewExpenseFact, NewExpenseMode, Notice, NoticeContext, PaymentFact } from "./types";
+import { advanceDoneClause } from "@/lib/payments/advance";
+import type { AdvanceFact, NewExpenseFact, NewExpenseMode, Notice, NoticeContext, PaymentFact } from "./types";
 
 /** Aviso em lote ao devedor: "suas" só quando todas são dele; quem só cuida lê "de quem você cuida". */
 function debtorBatch(fs: PaymentFact[], recipient: string, n: number, actor: string): string {
@@ -160,6 +161,40 @@ export function buildPaymentNotices(facts: PaymentFact[], ctx: NoticeContext): N
 		const sameGroup = fs.every((f) => f.groupId === fs[0].groupId);
 		const scope = sameGroup ? { kind: "group" as const, name: ctx.group(fs[0].groupId)?.name ?? "" } : undefined;
 		out.push({ uid: b.uid, title: partial ? "Pagamento parcial" : PAY_TITLES[b.type], body, url, ...(scope?.name ? { scope } : {}), amountCents: fs.reduce((t, f) => t + f.amountCents, 0), amountLabel: payLabel(b.type, fs.length > 1, Boolean(partial)) });
+	}
+	return dedupe(out);
+}
+
+/**
+ * Aviso de um adiantamento de parcelas: UM por adiantamento e por destinatário (nunca um por parcela). Mesmos destinatários do
+ * aviso de pagamento (quem recebe, ou quem cuida dele; e o devedor quando outra pessoa registrou), nunca quem agiu. Sem chave Pix.
+ */
+export function buildAdvanceNotices(f: AdvanceFact, ctx: NoticeContext): Notice[] {
+	const g = ctx.group(f.groupId);
+	if (!g || f.items.length === 0) return [];
+	const where = `"${clip(f.description)}" (${clip(g.name ?? "", 40)})`;
+	const actor = ctx.name(f.groupId, f.actorUid);
+	const debtor = ctx.name(f.groupId, f.debtorUid);
+	const money = formatBRL(f.totalCents);
+	const done = advanceDoneClause(f.items);
+	const url = expenseUrl(f.groupId, f.expenseId);
+	const out: Notice[] = [];
+	// Para o e-mail: de onde vem o aviso e o valor adiantado (soma das parcelas que o adiantamento quitou ou reduziu).
+	const mail = { scope: { kind: "group" as const, name: g.name ?? "" }, amountCents: f.totalCents, amountLabel: "Valor adiantado" };
+	const payee = loginOf(g.members, f.paidBy);
+	if (payee && payee !== f.actorUid) {
+		const forPayer = payee !== f.paidBy ? ` Para ${ctx.name(f.groupId, f.paidBy)}.` : "";
+		const body =
+			f.manual && f.debtorUid !== f.actorUid
+				? `${actor} registrou ${money} adiantados da parte de ${debtor} em ${where}: ${done}.${forPayer}`
+				: `${actor} adiantou ${money}${f.debtorUid === f.actorUid ? "" : ` da parte de ${debtor}`} em ${where}: ${done}.${forPayer}`;
+		out.push({ uid: payee, title: f.manual && f.debtorUid !== f.actorUid ? "Adiantamento registrado" : "Adiantamento recebido", body, url, ...mail });
+	}
+	if (f.manual && !actsFor(g.members, f.actorUid, f.debtorUid)) {
+		const d = loginOf(g.members, f.debtorUid);
+		if (d && d !== f.actorUid && d !== payee) {
+			out.push({ uid: d, title: "Adiantamento registrado", body: `${actor} registrou ${money} adiantados ${d === f.debtorUid ? "da sua parte" : `da parte de ${debtor}`} em ${where}: ${done}.`, url, ...mail });
+		}
 	}
 	return dedupe(out);
 }

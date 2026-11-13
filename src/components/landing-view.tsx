@@ -194,7 +194,7 @@ export function LandingView({ children, footer }: Readonly<{ children: React.Rea
 							</li>
 							<li className="border-t-2 border-lp-rule pt-4 md:col-span-2">
 								<strong className="block font-display text-[1.25rem] font-semibold text-lp-ink">Pague aos poucos</strong>
-								Só tem uma parte do dinheiro agora? Pague o que der e o app mostra quanto falta.
+								Só tem uma parte do dinheiro agora? Pague o que der e o app mostra quanto falta. Em compra parcelada, dá para adiantar parcelas.
 							</li>
 						</ul>
 					</div>

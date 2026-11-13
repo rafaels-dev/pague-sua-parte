@@ -358,7 +358,7 @@ describe.skipIf(!ENABLED)("integração: despesas no MongoDB real", () => {
 		expect(docs.map((d) => d.installment!.number)).toEqual([1]);
 		expect(objects.has(key)).toBe(true);
 		const d1 = ok(await repo.getExpenseDetail(db, g, docs[0]._id.toHexString(), A) as never) as unknown as { expense: import("./repo").ExpenseDetail };
-		expect(d1.expense.series).toEqual({ count: 3, items: [{ id: docs[0]._id.toHexString(), number: 1, dueDate: eom, settled: true, amountCents: docs[0].amountCents }] });
+		expect(d1.expense.series).toEqual({ count: 3, items: [{ id: docs[0]._id.toHexString(), number: 1, dueDate: eom, settled: true, amountCents: docs[0].amountCents, openUids: [] }] });
 		// a parcela 1 tem pagamento: não apaga, e o objeto fica
 		expect((await repo.deleteExpense(db, fake, g, docs[0]._id.toHexString(), OWNER, "following")).status).toBe("has_payment");
 		expect(objects.has(key)).toBe(true);
@@ -1033,4 +1033,86 @@ describe.skipIf(!ENABLED)("integração: despesas no MongoDB real", () => {
 		expect(objects.size).toBe(2);
 		await check();
 	});
+	it("adiantar parcelas: R$ 347,00 em 10x de R$ 100,00 abatem na ordem, um lote e um comprovante, saldos iguais à referência, tudo ou nada e desfazer por parcela", async () => {
+		const advance = await import("@/lib/payments/advance-repo");
+		const balances = await import("./balances");
+		const objects = new Map<string, Uint8Array>();
+		const mem = {
+			put: async (k: string, b: Uint8Array) => void objects.set(k, b),
+			get: async () => null,
+			delete: async (ks: string[]) => void ks.forEach((k) => objects.delete(k)),
+		} as never;
+		const png = { name: "pix.png", contentType: "image/png" as const, bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 9]) };
+		const g = await newGroup("adiantar", [OWNER, A, B]);
+		const created = ok(await repo.createExpense(db, mem, { groupId: g, uid: OWNER, input: { description: "Sofá", amountCents: 20000, date: "2026-11-10", participantUids: [OWNER, A], dueDate: "2026-12-10", installments: { count: 10 } }, files: [] })).expense;
+		const docs = async () => (await rawDocs(g)).sort((x, y) => x.installment!.number - y.installment!.number);
+		const aOf = async () => (await docs()).map((d) => d.shares.find((s) => s.uid === A)!);
+		const first = (await docs())[0];
+		const mine = async (u: string) => (await balances.getBalancesByGroup(db, u, [new ObjectId(g)])).get(g) ?? balances.ZERO_BALANCE;
+		const check = async () => {
+			const all = await docs();
+			for (const u of [OWNER, A, B]) expect(await mine(u)).toMatchObject(shares.balanceOf(all, u));
+			for (const d of all) for (const sh of d.shares) expect(shares.checkShareInvariant(sh)).toEqual([]);
+		};
+		const { recipientIdFromKey, recipientKey } = await import("@/lib/payments/payables");
+		const rid = recipientIdFromKey(recipientKey({ paidBy: OWNER, pix: { type: "email", key: `${OWNER}@example.invalid` } })!);
+		const args = { groupId: g, eid: created.id, uid: A, shareUid: A, mode: "self" as const, amountCents: 34700, expectedDueCents: 100000, recipientId: rid };
+
+		// a tela vê as 10 parcelas em aberto (e, abrindo a parcela 5, o dinheiro ainda começa na mais antiga: a 1)
+		const fifth = (await docs())[4];
+		const planFrom5 = await advance.getAdvancePlan(db, g, fifth._id.toHexString(), A, A);
+		if (planFrom5.status !== "ok") throw new Error("plano: " + planFrom5.status);
+		expect(planFrom5.plan).toMatchObject({ currentNumber: 5, totalDueCents: 100000 });
+		expect(planFrom5.plan.items[0].number).toBe(1);
+		expect(planFrom5.plan.recipient).toMatchObject({ id: rid, pix: { key: `${OWNER}@example.invalid` } });
+		const plan = await advance.getAdvancePlan(db, g, created.id, A, A);
+		if (plan.status !== "ok") throw new Error("plano: " + plan.status);
+		expect(plan.plan).toMatchObject({ currentNumber: first.installment!.number, totalDueCents: 100000, thisDueCents: 10000 });
+		// permissão, total desatualizado e valor demais: nada gravado, nenhum arquivo
+		expect((await advance.advanceInstallments(db, mem, { ...args, uid: B, file: png })).status).toBe("forbidden");
+		expect((await advance.advanceInstallments(db, mem, { ...args, expectedDueCents: 99900, file: png })).status).toBe("stale");
+		expect((await advance.advanceInstallments(db, mem, { ...args, amountCents: 100001, file: png })).status).toBe("too_much");
+		expect(objects.size).toBe(0);
+		expect((await aOf()).every((x) => x.paidCents === 0)).toBe(true);
+
+		// A adianta R$ 347,00 com comprovante
+		const r = ok(await advance.advanceInstallments(db, mem, { ...args, file: png }));
+		expect(r.advance.items.map((i) => [i.number, i.cents, i.settled])).toEqual([[1, 10000, true], [2, 10000, true], [3, 10000, true], [4, 4700, false]]);
+		expect((await aOf()).map((x) => x.paidCents)).toEqual([10000, 10000, 10000, 4700, 0, 0, 0, 0, 0, 0]);
+		expect(objects.size).toBe(1);
+		await check();
+		expect(await mine(A)).toMatchObject({ toPayCents: 100000 - 34700 });
+		expect(await mine(OWNER)).toMatchObject({ toReceiveCents: 100000 - 34700 });
+		// o detalhe da parcela 4 mostra "pago em parte" na série
+		const fourth = (await docs())[3];
+		const d4 = ok((await repo.getExpenseDetail(db, g, fourth._id.toHexString(), A)) as never) as unknown as { expense: import("./repo").ExpenseDetail };
+		expect(d4.expense.series!.items.slice(0, 5).map((i) => [i.settled, i.partial ?? false])).toEqual([[true, false], [true, false], [true, false], [false, true], [false, false]]);
+		// repetir o mesmo pedido (resposta perdida) é recusado: o total mudou
+		expect((await advance.advanceInstallments(db, mem, { ...args, file: png })).status).toBe("stale");
+		expect(objects.size).toBe(1);
+
+		// quem pagou recebe R$ 80,00 de A a partir da parcela 4: completa a 4 (R$ 53,00) e põe R$ 27,00 na 5
+		const rec = ok(await advance.advanceInstallments(db, mem, { groupId: g, eid: fourth._id.toHexString(), uid: OWNER, shareUid: A, mode: "manual", amountCents: 8000, expectedDueCents: 100000 - 34700, recipientId: recipientIdFromKey(OWNER) }));
+		expect(rec.advance.items.map((i) => [i.number, i.cents, i.settled])).toEqual([[4, 5300, true], [5, 2700, false]]);
+		expect((await aOf()).map((x) => x.paidCents)).toEqual([10000, 10000, 10000, 10000, 2700, 0, 0, 0, 0, 0]);
+		expect((await aOf())[3]).toMatchObject({ method: "manual", markedBy: OWNER });
+		await check();
+
+		// desfazer continua por parcela; o comprovante só some quando nenhuma parcela o referencia
+		const ids = (await docs()).map((d) => d._id.toHexString());
+		const undo = (i: number, expected: number) => repo.setSharePaid(db, g, ids[i], OWNER, A, "pending", undefined, mem, undefined, expected);
+		ok(await undo(0, 10000));
+		expect(objects.size).toBe(1); // as parcelas 2 e 3 ainda o referenciam
+		ok(await undo(1, 10000));
+		expect(objects.size).toBe(1);
+		ok(await undo(2, 10000));
+		expect(objects.size).toBe(1); // a parcela 4 ainda guarda o pagamento parcial (R$ 47,00) com o mesmo comprovante
+		expect((await aOf()).map((x) => x.paidCents)).toEqual([0, 0, 0, 10000, 2700, 0, 0, 0, 0, 0]);
+		ok(await undo(3, 10000)); // tira o que quitou (R$ 53,00 recebidos)
+		expect(objects.size).toBe(1);
+		ok(await undo(3, 4700)); // tira o parcial: agora ninguém referencia o comprovante
+		expect(objects.size).toBe(0);
+		expect((await aOf()).map((x) => x.paidCents)).toEqual([0, 0, 0, 0, 2700, 0, 0, 0, 0, 0]);
+		await check();
+	}, 120_000);
 });

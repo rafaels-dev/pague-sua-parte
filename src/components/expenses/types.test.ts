@@ -154,3 +154,12 @@ describe("keyToCopy", () => {
 		expect(keyToCopy({ pix: null, shares: [] })).toBeNull();
 	});
 });
+
+describe("normalizeExpense: série", () => {
+	it("mantém quem ainda deve em cada parcela (openUids), só textos", () => {
+		const raw: unknown = { id: "e", shares: [], series: { count: 2, items: [{ id: "a", number: 1, settled: false, openUids: ["u1", 5, "u2"] }, { id: "b", number: 2, settled: true }] } };
+		const e = normalizeExpense(raw as Parameters<typeof normalizeExpense>[0]);
+		expect(e.series?.items[0].openUids).toEqual(["u1", "u2"]);
+		expect(e.series?.items[1].openUids).toBeUndefined();
+	});
+});

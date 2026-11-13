@@ -213,7 +213,7 @@ describe("createExpense: parcelas", () => {
 			expect(r.expense).toMatchObject({ dueDate: "2026-12-10", installment: { number: 1, count: 3 } });
 			expect(r.expense.series).toEqual({
 				count: 3,
-				items: docs.map((d, i) => ({ id: id(d), number: i + 1, dueDate: d.dueDate, settled: false, amountCents: d.amountCents })),
+				items: docs.map((d, i) => ({ id: id(d), number: i + 1, dueDate: d.dueDate, settled: false, amountCents: d.amountCents, openUids: ["u2", "u3"] })),
 			});
 		}
 	});

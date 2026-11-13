@@ -486,3 +486,46 @@ describe("linha de quem saiu e já teve tudo devolvido (cota 0, nada pago, com h
 		expect(droppedReceiptKeys(settled, back).sort()).toEqual([PAY.key, R.key].sort());
 	});
 });
+
+describe("pagamento rebaixado de cota do modelo antigo, sem data", () => {
+	it("o parcial rebaixado fica SEM data (nunca 1970), e a leitura e a invariante aguentam", async () => {
+		const { addPayment: add, checkShareInvariant: check, normalizeShare: norm } = await import("./shares");
+		// modelo antigo: quitada (sem paidAt); a parte cresceu e recebe novo pagamento parcial
+		const legacy = { uid: "a", amountCents: 20000, paidCents: 10000, method: "manual" as const } as import("./shares").ExpenseShare;
+		const r = add([legacy], "o", "a", 1000, new Date("2026-11-13T12:00:00Z"), "a", { method: "self", partId: "novo" });
+		if (!r || "error" in r) throw new Error("erro");
+		const s = r.shares[0];
+		expect(s.parts).toHaveLength(2);
+		expect(s.parts![0].at).toBeUndefined();
+		expect(s.parts![1].at).toBeInstanceOf(Date);
+		expect(check(s)).toEqual([]);
+		// normalizar (ler do banco) mantém o parcial sem data e sem inventar uma
+		const again = norm(JSON.parse(JSON.stringify(s)));
+		expect(again.parts![0].at).toBeUndefined();
+		expect(JSON.stringify(again.parts)).not.toContain("1970");
+	});
+});
+
+describe("parcial já gravado com data de 1970", () => {
+	it("é lido como sem data (sem gravar nada); data verdadeira continua", async () => {
+		const { normalizeShare: norm, checkShareInvariant: check } = await import("./shares");
+		const s = {
+			uid: "a",
+			amountCents: 20000,
+			paidCents: 3000,
+			parts: [
+				{ id: "p1", cents: 1000, at: new Date(0), markedBy: "a", method: "self" as const },
+				{ id: "p2", cents: 2000, at: new Date("2026-11-10T12:00:00Z"), markedBy: "a", method: "manual" as const },
+			],
+		};
+		const before = JSON.stringify(s);
+		const n = norm(s);
+		expect(n.parts![0].at).toBeUndefined();
+		expect(n.parts![1].at).toEqual(new Date("2026-11-10T12:00:00Z"));
+		expect(check(n)).toEqual([]);
+		expect(JSON.stringify(s)).toBe(before); // o original não é alterado
+		// vindo do banco como texto
+		const fromJson = norm(JSON.parse(JSON.stringify(s)));
+		expect(fromJson.parts![0].at).toBeUndefined();
+	});
+});

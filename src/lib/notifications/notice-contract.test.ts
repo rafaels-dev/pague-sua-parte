@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMemberJoinedNotices, buildNewExpenseNotices, buildPaymentNotices } from "./messages";
+import { buildAdvanceNotices, buildMemberJoinedNotices, buildNewExpenseNotices, buildPaymentNotices } from "./messages";
 import { buildPlanCancelledNotices, buildPlanChangeNotices, buildPlanClosedNotices, buildPlanConfirmedNotices } from "./plan-messages";
 import { buildWelcomeNotice } from "./welcome";
 import type { NewExpenseFact, Notice, NoticeContext, PaymentFact, PlanNoticeBase, PlanSnapshot } from "./types";
@@ -26,6 +26,8 @@ const scenarios: [string, Notice[]][] = [
 	["devedor", buildPaymentNotices([pay({ manual: true, actorUid: "adm" })], ctx)],
 	["devolução", buildPaymentNotices([pay({ kind: "refund", paidBy: "ana", debtorUid: "bia", actorUid: "ana" })], ctx)],
 	["lote", buildPaymentNotices([pay(), pay({ expenseId: "e2" })], ctx)],
+	["adiantamento (quem recebe)", buildAdvanceNotices({ groupId: G, expenseId: "e", description: "Sofá", paidBy: "bia", debtorUid: "ana", actorUid: "ana", manual: false, totalCents: 34700, items: [{ number: 1, cents: 34700, settled: true, remainingCents: 0 }] }, ctx)],
+	["adiantamento (registrado pelo administrador)", buildAdvanceNotices({ groupId: G, expenseId: "e", description: "Sofá", paidBy: "bia", debtorUid: "ana", actorUid: "adm", manual: true, totalCents: 34700, items: [{ number: 1, cents: 34700, settled: true, remainingCents: 0 }] }, ctx)],
 	["nova", buildNewExpenseNotices(exp(), "created", ctx)],
 	["parcelada", buildNewExpenseNotices(exp({ installments: 10 }), "created", ctx)],
 	["parcelas diferentes", buildNewExpenseNotices(exp({ installments: 10, installmentsDiffer: true }), "created", ctx)],
@@ -56,6 +58,8 @@ describe("contrato dos avisos para o e-mail", () => {
 		const by = (k: string) => scenarios.find(([n]) => n === k)![1];
 		expect(by("pagou")[0].amountLabel).toBe("Valor recebido");
 		expect(by("parcial")[0].amountLabel).toBe("Valor pago agora");
+		expect(by("adiantamento (quem recebe)")[0]).toMatchObject({ amountLabel: "Valor adiantado", amountCents: 34700 });
+		expect(by("adiantamento (registrado pelo administrador)").map((n) => n.amountLabel)).toEqual(["Valor adiantado", "Valor adiantado"]);
 		expect(by("devolução")[0].amountLabel).toBe("Valor devolvido");
 		expect(by("lote")[0].amountLabel).toBe("Total recebido");
 		expect(by("parcelada")[0]).toMatchObject({ amountLabel: "Sua parte em cada parcela", amountCents: 5000 });
