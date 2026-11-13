@@ -83,4 +83,10 @@ describe("plano confirmado (grupo criado)", () => {
 		});
 	});
 	it("grupo desconhecido: nenhum aviso", () => expect(buildPlanConfirmedNotices({ ...fact, groupId: "outro" }, ctx)).toEqual([]));
+	it("serve aos dois modos: não afirma que uma despesa foi lançada (o plano pode virar só o grupo)", () => {
+		for (const n of buildPlanConfirmedNotices(fact, ctx)) expect(`${n.title} ${n.subject} ${n.body}`).not.toMatch(/despesa|dividi|R\$/i);
+		const closed = buildPlanClosedNotices({ ...base, actorUid: "cri", leftOutIds: ["ana"] });
+		expect(closed).toHaveLength(1);
+		expect(`${closed[0].title} ${closed[0].subject} ${closed[0].body}`).not.toMatch(/despesa|dividi|R\$/i);
+	});
 });

@@ -108,17 +108,20 @@ export function parseGuestName(raw: unknown): { ok: true; value: string } | Inva
 
 export type CloseInput = {
 	groupName: string;
-	/** Quem divide (ids de pessoas do plano). */
+	/** Quem divide (ids de pessoas do plano); no modo só-grupo, quem entra no grupo. */
 	participantIds: string[];
-	/** Quem pagou (id de uma das pessoas escolhidas). */
-	paidBy: string;
-	date: string;
+	/** Lançar a despesa inicial com o valor do plano? `false`: só o grupo. */
+	createExpense: boolean;
+	/** Quem pagou (id de uma das pessoas escolhidas). Só com `createExpense`. */
+	paidBy?: string;
+	date?: string;
 	dueDate?: string;
 };
 
 /**
- * Corpo de "Criar grupo e despesa". O que é da despesa (data, vencimento, divisão) passa pela mesma validação do lançamento;
- * o valor e a descrição vêm do plano (`totalCents`, `name`), nunca do cliente.
+ * Corpo de "Criar grupo e despesa" (ou só o grupo). `createExpense` ausente = `true` (cliente antigo); outro valor que não seja
+ * booleano = 422. O que é da despesa (data, vencimento, divisão) passa pela mesma validação do lançamento; o valor e a descrição vêm
+ * do plano (`totalCents`, `name`), nunca do cliente. Só-grupo: `paidBy`, `date` e `dueDate` são ignorados (não há despesa).
  */
 export function parseCloseInput(raw: unknown, plan: { name: string; totalCents: number }, now: Date = new Date()): { ok: true; value: CloseInput } | Invalid {
 	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return fail("groupName", "Dados inválidos.");
@@ -126,6 +129,13 @@ export function parseCloseInput(raw: unknown, plan: { name: string; totalCents: 
 	const groupName = typeof b.groupName === "string" ? b.groupName.replace(/\s+/g, " ").trim() : "";
 	if (!groupName) return fail("groupName", "Dê um nome ao grupo.");
 	if (Array.from(groupName).length > MAX_NAME_LENGTH) return fail("groupName", `O nome do grupo pode ter no máximo ${MAX_NAME_LENGTH} letras.`);
+	if (b.createExpense !== undefined && typeof b.createExpense !== "boolean") return fail("createExpense", "Escolha se a despesa será lançada.");
+	const createExpense = b.createExpense !== false;
+	if (!createExpense) {
+		const only = parseExpenseInput({ description: plan.name, amountCents: plan.totalCents, participantUids: b.participantIds }, now);
+		if (!only.ok) return only.field === "participantUids" ? { ...only, field: "participantIds" } : only;
+		return { ok: true, value: { groupName, participantIds: only.value.participantUids, createExpense: false } };
+	}
 	if (typeof b.paidBy !== "string" || !b.paidBy || b.paidBy.length > 128) return fail("paidBy", "Escolha quem pagou.");
 	const expense = parseExpenseInput(
 		{ description: plan.name, amountCents: plan.totalCents, date: b.date, participantUids: b.participantIds, dueDate: b.dueDate },
@@ -138,6 +148,7 @@ export function parseCloseInput(raw: unknown, plan: { name: string; totalCents: 
 		value: {
 			groupName,
 			participantIds: expense.value.participantUids,
+			createExpense: true,
 			paidBy: b.paidBy,
 			date: expense.value.date,
 			...(expense.value.dueDate ? { dueDate: expense.value.dueDate } : {}),

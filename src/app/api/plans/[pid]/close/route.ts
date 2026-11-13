@@ -9,7 +9,7 @@ import { getAttachmentStore } from "@/lib/storage/attachments";
 
 export const dynamic = "force-dynamic";
 
-/** "Criar grupo e despesa": só quem criou o plano. Devolve `{ groupId, expenseId }`. */
+/** "Criar grupo e despesa" (ou só o grupo, `createExpense: false`): só quem criou o plano. Devolve `{ groupId, expenseId? }` (sem `expenseId` no modo só-grupo). */
 export async function POST(request: Request, { params }: { params: Promise<{ pid: string }> }) {
 	try {
 		const user = await requireUser(request);
@@ -41,7 +41,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ pid
 			case "ok":
 				afterPlanConfirmed({ planName: r.doc.name, groupName: r.doc.groupName ?? r.doc.name, groupId: r.groupId, actorUid: user.uid }, r.newExpense);
 				afterPlanClosed({ ...noticeBase(r.doc, user.uid), leftOutIds: r.notChosenGoing });
-				return Response.json({ groupId: r.groupId, expenseId: r.expenseId }, { status: 201 });
+				return Response.json({ groupId: r.groupId, ...(r.expenseId ? { expenseId: r.expenseId } : {}) }, { status: 201 });
 		}
 	} catch (err) {
 		return handleError(err, "api/plans/[pid]/close POST");

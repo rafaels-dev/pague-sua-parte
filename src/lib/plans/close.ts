@@ -12,7 +12,7 @@ import { findPlanFor } from "./repo";
 import { parseCloseInput } from "./validation";
 
 export type CloseResult =
-	| { status: "ok"; groupId: string; expenseId: string; doc: PlanDoc; newExpense?: NewExpenseFact; notChosenGoing: string[] }
+	| { status: "ok"; groupId: string; expenseId?: string; doc: PlanDoc; newExpense?: NewExpenseFact; notChosenGoing: string[] }
 	| { status: "no_plan" | "forbidden" | "not_open" | "conflict" }
 	| { status: "invalid"; field: string; error: string }
 	| { status: "no_pix"; name?: string };
@@ -35,12 +35,13 @@ export function goingSet(plan: Pick<PlanDoc, "participants" | "guests" | "respon
 }
 
 /**
- * "Criar grupo e despesa": só o criador, com o plano aberto. Uma operação com compensação explícita (o projeto não usa
+ * "Criar grupo e despesa" (ou só o grupo, com `createExpense: false`): só o criador, com o plano aberto. Uma operação com compensação explícita (o projeto não usa
  * transação):
  * - valida TUDO antes de reservar (quem divide e quem paga disseram "Vou"; quem paga tem login e, sendo o criador, Pix);
  * - reserva `open -> closing` (filtro por status e versão: impede o duplo clique) gravando um `attemptId` e os códigos que
  *   serão do grupo e da despesa; só essa tentativa conclui (`closing -> done`) ou desfaz (por códigos, não por `planId` solto);
- * - cria o grupo (criador = administrador) e a despesa pela função do lançamento. Qualquer falha apaga o que a própria
+ * - cria o grupo (criador = administrador) e, se pedido, a despesa pela função do lançamento (só-grupo: sem despesa, sem pagador,
+ *   sem exigir Pix, sem código de despesa na reserva). Qualquer falha apaga o que a própria
  *   tentativa criou e devolve o plano para `open`. Uma tentativa lenta que perdeu o plano para a recuperação apaga só o que
  *   ela criou e responde `conflict`.
  * Centavos: a parte do plano é o teto da divisão; na despesa, quem pagou fica com a sobra (`splitEqually`).
@@ -66,15 +67,18 @@ export async function closePlan(
 	if (!input.participantIds.every((p) => going.has(p))) {
 		return { status: "invalid", field: "participantIds", error: "Só entra na divisão quem disse que vai." };
 	}
-	if (isGuestId(input.paidBy) || !plan.participants.some((p) => p.uid === input.paidBy)) {
-		return { status: "invalid", field: "paidBy", error: "Quem pagou precisa ser alguém que usa o app e disse que vai." };
+	const paidBy = input.createExpense ? input.paidBy : undefined;
+	if (input.createExpense) {
+		if (!paidBy || isGuestId(paidBy) || !plan.participants.some((p) => p.uid === paidBy)) {
+			return { status: "invalid", field: "paidBy", error: "Quem pagou precisa ser alguém que usa o app e disse que vai." };
+		}
+		if (paidBy === uid && !(await deps.hasPix(db, uid))) return { status: "no_pix" };
 	}
-	if (input.paidBy === uid && !(await deps.hasPix(db, uid))) return { status: "no_pix" };
 
 	const attemptId = randomId();
 	const groupObjectId = new ObjectId();
-	const expenseObjectId = new ObjectId();
-	const closing = { at: now, attemptId, groupId: groupObjectId.toHexString(), expenseId: expenseObjectId.toHexString() };
+	const expenseObjectId = input.createExpense ? new ObjectId() : null;
+	const closing = { at: now, attemptId, groupId: groupObjectId.toHexString(), ...(expenseObjectId ? { expenseId: expenseObjectId.toHexString() } : {}) };
 	const reserved = await plansCollection(db).updateOne(
 		{ _id: plan._id, createdBy: uid, status: "open", version: plan.version },
 		{ $set: { status: "closing", closing, updatedAt: now }, $inc: { version: 1 } },
@@ -108,41 +112,42 @@ export async function closePlan(
 		const group: GroupDoc = { _id: groupObjectId, name: input.groupName, createdBy: uid, members, invite: null, createdAt: now, updatedAt: now };
 		await groupsCollection(db).insertOne(group);
 
-		const payer = mapped.get(input.paidBy)!;
-		const created = await deps.createExpense(db, store, {
-			groupId: closing.groupId,
-			uid,
-			input: {
-				description: plan.name,
-				amountCents: plan.totalCents,
-				date: input.date,
-				participantUids: input.participantIds.map((id) => mapped.get(id)!),
-				...(payer !== uid ? { paidByUid: payer } : {}),
-				...(input.dueDate ? { dueDate: input.dueDate } : {}),
-			},
-			files: [],
-			planId: pid,
-			expenseId: closing.expenseId,
-			now,
-		});
-		if (created.status !== "ok") {
-			await rollbackAttempt(db, plan._id, closing);
-			if (created.status === "no_pix") return { status: "no_pix", ...(created.name ? { name: created.name } : {}) };
-			if (created.status === "invalid") return { status: "invalid", field: created.field, error: created.error };
-			return { status: "conflict" };
+		if (input.createExpense && paidBy && input.date && closing.expenseId) {
+			const payer = mapped.get(paidBy)!;
+			const created = await deps.createExpense(db, store, {
+				groupId: closing.groupId,
+				uid,
+				input: {
+					description: plan.name,
+					amountCents: plan.totalCents,
+					date: input.date,
+					participantUids: input.participantIds.map((id) => mapped.get(id)!),
+					...(payer !== uid ? { paidByUid: payer } : {}),
+					...(input.dueDate ? { dueDate: input.dueDate } : {}),
+				},
+				files: [],
+				planId: pid,
+				expenseId: closing.expenseId,
+				now,
+			});
+			if (created.status !== "ok") {
+				await rollbackAttempt(db, plan._id, closing);
+				if (created.status === "no_pix") return { status: "no_pix", ...(created.name ? { name: created.name } : {}) };
+				if (created.status === "invalid") return { status: "invalid", field: created.field, error: created.error };
+				return { status: "conflict" };
+			}
+			newExpense = created.newExpense;
 		}
-
-		newExpense = created.newExpense;
 		const done = await plansCollection(db).updateOne(
 			{ _id: plan._id, status: "closing", "closing.attemptId": attemptId },
-			{ $set: { status: "done", closedAttemptId: attemptId, groupId: closing.groupId, groupName: input.groupName, expenseId: closing.expenseId, updatedAt: new Date() }, $unset: { closing: "" }, $inc: { version: 1 } },
+			{ $set: { status: "done", closedAttemptId: attemptId, groupId: closing.groupId, groupName: input.groupName, ...(closing.expenseId ? { expenseId: closing.expenseId } : {}), updatedAt: new Date() }, $unset: { closing: "" }, $inc: { version: 1 } },
 		);
 		if (done.matchedCount === 0) {
 			// A recuperação desfez esta tentativa (ela demorou demais): apaga só o que ELA criou e falha limpo.
 			await rollbackAttempt(db, plan._id, closing);
 			return { status: "conflict" };
 		}
-		return success(input.participantIds, created.newExpense);
+		return success(input.participantIds, newExpense);
 	} catch (err) {
 		// A gravação do `done` pode ter chegado ao banco com a resposta perdida: se o plano já está concluído por ESTA
 		// tentativa, não apaga nada (grupo e despesa são de um fechamento que deu certo) e devolve sucesso.
@@ -161,8 +166,8 @@ export async function closePlan(
 		return {
 			status: "ok",
 			groupId: closing.groupId,
-			expenseId: closing.expenseId,
-			doc: { ...plan!, status: "done", groupId: closing.groupId, groupName: input.groupName, expenseId: closing.expenseId },
+			...(closing.expenseId ? { expenseId: closing.expenseId } : {}),
+			doc: { ...plan!, status: "done", groupId: closing.groupId, groupName: input.groupName, ...(closing.expenseId ? { expenseId: closing.expenseId } : {}) },
 			newExpense: fact,
 			notChosenGoing: [...going].filter((w) => !chosen.has(w)),
 		};

@@ -56,9 +56,9 @@ export function scoreLines(r: Pick<PlanResultView, "answeredCount" | "allCount" 
  * Linha do cartão de um plano na lista. Plano aberto mostra a meta ("Meta: 13 pessoas · R$ 219,24 cada"), nunca o placar de agora
  * (quantos vão, quanto ficaria hoje): confunde quem acabou de ser convidado. Sem previsão de pessoas, só quantas estão no plano.
  */
-export function summaryLine(s: Pick<PlanSummary, "status" | "expectedPeople" | "allCount" | "shareIfAllCents" | "peopleCount">): string {
+export function summaryLine(s: Pick<PlanSummary, "status" | "hasExpense" | "expectedPeople" | "allCount" | "shareIfAllCents" | "peopleCount">): string {
 	if (s.status === "cancelled") return "Cancelado";
-	if (s.status === "done") return "Virou grupo e despesa";
+	if (s.status === "done") return s.hasExpense ? "Virou grupo e despesa" : "Virou grupo";
 	if (s.expectedPeople && s.shareIfAllCents !== null) return `Meta: ${pessoas(s.allCount)} · ${formatBRL(s.shareIfAllCents)} cada`;
 	return `${pessoas(s.peopleCount)} no plano`;
 }

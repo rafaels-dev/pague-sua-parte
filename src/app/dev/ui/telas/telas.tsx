@@ -123,6 +123,8 @@ export function Telas({ tela }: Readonly<{ tela: string }>) {
 			return <MockPlan scene="criador-limites" framed={false} />;
 		case "plano-virou":
 			return <MockPlan scene="virou" framed={false} />;
+		case "plano-virou-sem-despesa":
+			return <MockPlan scene="virou-sem-despesa" framed={false} />;
 		case "plano-cancelado":
 			return <MockPlan scene="cancelado" framed={false} />;
 		case "plano-responder":
@@ -145,6 +147,8 @@ export function Telas({ tela }: Readonly<{ tela: string }>) {
 			return <MockPlanForm errors framed={false} />;
 		case "plano-fechar":
 			return <MockPlanClose framed={false} />;
+		case "plano-fechar-so-grupo":
+			return <MockPlanClose groupOnly framed={false} />;
 		case "plano-fechar-nao-fecha":
 			return <MockPlanClose fits={false} framed={false} />;
 		case "plano-convite":

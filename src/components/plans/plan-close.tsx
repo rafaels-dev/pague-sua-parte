@@ -15,7 +15,7 @@ import { peopleLabel } from "@/lib/ui/invite";
 import { splitPreview } from "@/lib/ui/split-preview";
 import type { PlanPersonView, PlanView } from "@/lib/plans/view";
 
-export type CloseValues = { groupName: string; selected: string[]; paidBy: string; date: string; pay: "cash" | "card"; dueDate: string };
+export type CloseValues = { /** Lançar a despesa inicial com o valor do plano (padrão) ou criar só o grupo. */ withExpense: boolean; groupName: string; selected: string[]; paidBy: string; date: string; pay: "cash" | "card"; dueDate: string };
 export type CloseErrors = Partial<Record<"groupName" | "participants" | "paidBy" | "date" | "dueDate" | "form", string>>;
 
 /** Só entra na divisão quem disse "Vou" (o servidor confere de novo). */
@@ -35,6 +35,7 @@ export function initialClose(plan: PlanView): CloseValues {
 	const suggested = plan.result.fits ? (plan.includedIds ?? []) : (plan.goingIds ?? []);
 	const selected = goingPeople(plan).filter((p) => suggested.includes(p.id)).map((p) => p.id);
 	return {
+		withExpense: true,
 		groupName: Array.from(plan.name).slice(0, MAX_NAME_LENGTH).join(""),
 		selected,
 		paidBy: defaultPayer(plan, selected),
@@ -50,13 +51,22 @@ export function validateClose(v: CloseValues, payerIds?: string[]): CloseErrors 
 	if (!v.groupName.trim()) e.groupName = "Dê um nome ao grupo.";
 	else if (v.groupName.trim().length > MAX_NAME_LENGTH) e.groupName = `Use até ${MAX_NAME_LENGTH} letras.`;
 	if (v.selected.length === 0) e.participants = "Escolha pelo menos uma pessoa.";
-	else if (!v.selected.includes(v.paidBy) || (payerIds && !payerIds.includes(v.paidBy))) e.paidBy = "Escolha quem pagou entre quem divide e usa o app.";
+	if (!v.withExpense) return e;
+	if (v.selected.length > 0 && (!v.selected.includes(v.paidBy) || (payerIds && !payerIds.includes(v.paidBy)))) e.paidBy = "Escolha quem pagou entre quem divide e usa o app.";
 	if (!isValidISODate(v.date) || v.date > todayISO()) e.date = "Escolha uma data válida, que não seja no futuro.";
 	if (v.pay === "card" && !isValidDueDate(v.dueDate, v.date, todayISO())) e.dueDate = "Escolha a data da próxima fatura.";
 	return e;
 }
 
 const nameOf = (p: PlanPersonView) => (p.isYou ? "Você" : p.kind === "guest" ? `${p.name} · sem celular` : p.name);
+
+/** Textos da escolha "lançar a despesa ou só o grupo". */
+export const EXPENSE_CHOICE = {
+	label: "Ao criar o grupo",
+	withExpense: "Grupo e despesa",
+	groupOnly: "Só o grupo",
+	helpGroupOnly: "Você lança as despesas depois, do jeito que quiser.",
+} as const;
 
 /** Visual da tela de confirmação "Criar grupo e despesa". */
 export function PlanCloseView(p: Readonly<{
@@ -96,7 +106,7 @@ export function PlanCloseView(p: Readonly<{
 			className="mx-auto max-w-xl space-y-6 max-md:pb-2"
 		>
 			<header className="space-y-1">
-				<h1 className="text-headline-medium">Criar grupo e despesa</h1>
+				<h1 className="text-headline-medium">{v.withExpense ? "Criar grupo e despesa" : "Criar o grupo"}</h1>
 				<p className="text-body-large text-on-surface-variant">
 					{plan.name} · <span className="money">{formatBRL(plan.totalCents)}</span>
 				</p>
@@ -108,11 +118,24 @@ export function PlanCloseView(p: Readonly<{
 				</Banner>
 			)}
 
+			<div className="space-y-2">
+				<SegmentedButton
+					label={EXPENSE_CHOICE.label}
+					value={v.withExpense ? "expense" : "group"}
+					options={[
+						{ value: "expense", label: EXPENSE_CHOICE.withExpense },
+						{ value: "group", label: EXPENSE_CHOICE.groupOnly },
+					]}
+					onChange={(c) => p.onChange({ withExpense: c === "expense" })}
+				/>
+				{!v.withExpense && <p className="text-body-large text-on-surface-variant">{EXPENSE_CHOICE.helpGroupOnly}</p>}
+			</div>
+
 			<TextField id="campo-grupo" label="Nome do grupo" value={v.groupName} maxLength={MAX_NAME_LENGTH + 20} onChange={(e) => p.onChange({ groupName: e.target.value })} error={errors.groupName} autoComplete="off" />
 
 			<fieldset id="campo-participantes" tabIndex={-1} className="space-y-3 outline-none">
-				<legend className="text-title-large">Dividir entre</legend>
-				<p className="text-body-large text-on-surface-variant">{v.selected.length === 0 ? "Marque quem vai dividir" : `${peopleLabel(v.selected.length)} ${v.selected.length === 1 ? "marcada" : "marcadas"}`}</p>
+				<legend className="text-title-large">{v.withExpense ? "Dividir entre" : "Quem entra no grupo"}</legend>
+				<p className="text-body-large text-on-surface-variant">{v.selected.length === 0 ? (v.withExpense ? "Marque quem vai dividir" : "Marque quem vai entrar") : `${peopleLabel(v.selected.length)} ${v.selected.length === 1 ? "marcada" : "marcadas"}`}</p>
 				<div className="flex flex-wrap gap-2">
 					{going.map((x) => (
 						<FilterChip
@@ -139,6 +162,8 @@ export function PlanCloseView(p: Readonly<{
 				)}
 			</fieldset>
 
+			{v.withExpense && (
+				<>
 			<fieldset className="space-y-3">
 				<legend className="text-title-large">Quem pagou?</legend>
 				<p className="text-body-large text-on-surface-variant">Só quem usa o app e vai dividir. O Pix será o dessa pessoa.</p>
@@ -194,6 +219,8 @@ export function PlanCloseView(p: Readonly<{
 			{v.pay === "card" && (
 				<TextField id="campo-vencimento" type="date" floatLabel label="Data da próxima fatura" value={v.dueDate} min={v.date} onChange={(e) => p.onChange({ dueDate: e.target.value })} error={errors.dueDate} />
 			)}
+				</>
+			)}
 
 			{guestAdders.length > 0 && (
 				<p className="text-body-large text-on-surface-variant">
@@ -208,7 +235,7 @@ export function PlanCloseView(p: Readonly<{
 				</Banner>
 			)}
 			<Button type="submit" fullWidth loading={p.busy} icon={p.busy ? undefined : "check"}>
-				{p.busy ? "Criando..." : "Criar grupo e despesa"}
+				{p.busy ? "Criando..." : v.withExpense ? "Criar grupo e despesa" : "Criar o grupo"}
 			</Button>
 		</form>
 	);
@@ -251,7 +278,7 @@ export function PlanClose({ planId }: Readonly<{ planId: string }>) {
 	if (!plan.canClose) {
 		return (
 			<EmptyState tone="error" icon="error" role="alert" title="Não dá para criar agora" action={<Button href={`/app/planos/${encodeURIComponent(plan.id)}`}>Voltar para o plano</Button>}>
-				Só quem criou o plano pode criar o grupo e a despesa, e só enquanto ele está aberto.
+				Só quem criou o plano pode criar o grupo, e só enquanto ele está aberto.
 			</EmptyState>
 		);
 	}
@@ -263,23 +290,29 @@ export function PlanClose({ planId }: Readonly<{ planId: string }>) {
 		if (Object.keys(bad).length > 0) return;
 		setBusy(true);
 		try {
-			const res = await apiFetch<{ groupId: string; expenseId: string }>(`/api/plans/${encodeURIComponent(plan.id)}/close`, {
+			const res = await apiFetch<{ groupId: string; expenseId?: string }>(`/api/plans/${encodeURIComponent(plan.id)}/close`, {
 				method: "POST",
 				body: JSON.stringify({
 					groupName: values.groupName.trim(),
 					participantIds: values.selected,
-					paidBy: values.paidBy,
-					date: values.date,
-					...(values.pay === "card" ? { dueDate: values.dueDate } : {}),
+					createExpense: values.withExpense,
+					...(values.withExpense
+						? { paidBy: values.paidBy, date: values.date, ...(values.pay === "card" ? { dueDate: values.dueDate } : {}) }
+						: {}),
 				}),
 			});
-			setFlash("Grupo e despesa criados!");
-			router.push(`/app/grupos/${encodeURIComponent(res.groupId)}/despesas/${encodeURIComponent(res.expenseId)}`);
+			if (values.withExpense && res.expenseId) {
+				setFlash("Grupo e despesa criados!");
+				router.push(`/app/grupos/${encodeURIComponent(res.groupId)}/despesas/${encodeURIComponent(res.expenseId)}`);
+			} else {
+				setFlash("Grupo criado!");
+				router.push(`/app/grupos/${encodeURIComponent(res.groupId)}`);
+			}
 		} catch (err) {
 			setBusy(false);
 			if (err instanceof ApiError) {
 				if (err.status === 409 && err.field === "pixKey") return setErrors({ form: `${err.message} O Pix fica no seu Perfil.` });
-				const map: Record<string, keyof CloseErrors> = { groupName: "groupName", participantIds: "participants", paidBy: "paidBy", date: "date", dueDate: "dueDate" };
+				const map: Record<string, keyof CloseErrors> = { createExpense: "form", groupName: "groupName", participantIds: "participants", paidBy: "paidBy", date: "date", dueDate: "dueDate" };
 				const key = err.field ? map[err.field] : undefined;
 				return setErrors(key ? { [key]: err.message } : { form: err.message });
 			}

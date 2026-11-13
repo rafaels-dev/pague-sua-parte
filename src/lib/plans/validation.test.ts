@@ -80,7 +80,7 @@ describe("parseCloseInput", () => {
 	const plan = { name: "Hotel", totalCents: 250000 };
 	const body = { groupName: " Viagem ", participantIds: ["a", "b"], paidBy: "a", date: "2026-11-12" };
 	it("usa o valor e a descrição do plano e valida como o lançamento", () => {
-		expect(parseCloseInput(body, plan, NOW)).toEqual({ ok: true, value: { groupName: "Viagem", participantIds: ["a", "b"], paidBy: "a", date: "2026-11-12" } });
+		expect(parseCloseInput(body, plan, NOW)).toEqual({ ok: true, value: { groupName: "Viagem", participantIds: ["a", "b"], createExpense: true, paidBy: "a", date: "2026-11-12" } });
 		const card = parseCloseInput({ ...body, dueDate: "2026-12-10" }, plan, NOW);
 		expect(card.ok && card.value.dueDate).toBe("2026-12-10");
 	});
@@ -95,5 +95,23 @@ describe("parseCloseInput", () => {
 		expect(bad({ participantIds: ["a", "a"] }).ok).toBe(false);
 		expect(bad({ date: "2030-01-01" }).ok).toBe(false);
 		expect(parseCloseInput(null, plan, NOW).ok).toBe(false);
+	});
+	it("createExpense: ausente vale true; false e true explícitos; outro tipo é 422", () => {
+		expect(parseCloseInput(body, plan, NOW)).toMatchObject({ ok: true, value: { createExpense: true } });
+		expect(parseCloseInput({ ...body, createExpense: true }, plan, NOW)).toMatchObject({ ok: true, value: { createExpense: true, paidBy: "a" } });
+		for (const bad of ["false", 0, 1, null, "sim", {}, []]) {
+			const r = parseCloseInput({ ...body, createExpense: bad }, plan, NOW);
+			expect(r).toMatchObject({ ok: false, status: 422, field: "createExpense" });
+		}
+	});
+	it("só-grupo: não pede pagador nem data, ignora o que vier deles e ainda valida quem entra", () => {
+		const only = parseCloseInput({ groupName: "Sítio", participantIds: ["a", "b"], createExpense: false }, plan, NOW);
+		expect(only).toEqual({ ok: true, value: { groupName: "Sítio", participantIds: ["a", "b"], createExpense: false } });
+		const ignored = parseCloseInput({ ...body, createExpense: false, paidBy: "zzz", date: "2030-01-01", dueDate: "lixo" }, plan, NOW);
+		expect(ignored).toEqual({ ok: true, value: { groupName: "Viagem", participantIds: ["a", "b"], createExpense: false } });
+		const empty = parseCloseInput({ groupName: "x", participantIds: [], createExpense: false }, plan, NOW);
+		expect(!empty.ok && empty.field).toBe("participantIds");
+		expect(parseCloseInput({ groupName: "x", participantIds: ["a", "a"], createExpense: false }, plan, NOW).ok).toBe(false);
+		expect(parseCloseInput({ groupName: " ", participantIds: ["a"], createExpense: false }, plan, NOW).ok).toBe(false);
 	});
 });

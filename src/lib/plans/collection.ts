@@ -32,12 +32,13 @@ export type PlanDoc = {
 	/** Preenchidos quando o plano vira grupo + despesa. */
 	groupId?: string;
 	groupName?: string;
+	/** Ausente quando o plano virou só o grupo (sem despesa inicial). */
 	expenseId?: string;
 	/**
 	 * Enquanto `closing`: a tentativa em andamento. Os códigos do grupo e da despesa são sorteados ANTES e gravados junto com a
 	 * reserva, para o desfazer sempre saber o que apagar; `attemptId` identifica a tentativa (só ela conclui ou desfaz).
 	 */
-	closing?: { at: Date; attemptId: string; groupId: string; expenseId: string };
+	closing?: { at: Date; attemptId: string; groupId: string; /** Ausente quando o fechamento é só do grupo. */ expenseId?: string };
 	/** Código da tentativa que concluiu o fechamento (para uma resposta perdida não desfazer um fechamento concluído). */
 	closedAttemptId?: string;
 	/** Quem o criador tirou do plano: não volta pelo mesmo link. (Quem saiu por conta própria pode voltar.) */

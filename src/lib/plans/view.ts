@@ -68,7 +68,7 @@ export type PlanView = {
 	canEdit: boolean;
 	canAddGuest: boolean;
 	result: PlanResultView;
-	/** SÓ para quem criou o plano: quem entra na divisão e quem disse "Vou" (sugestão do botão "Criar grupo e despesa"). */
+	/** SÓ para quem criou o plano: quem entra na divisão e quem disse "Vou" (sugestão do botão "Criar o grupo"). */
 	includedIds: string[] | null;
 	goingIds: string[] | null;
 	people: PlanPersonView[];
@@ -76,7 +76,7 @@ export type PlanView = {
 	/** SÓ para quem criou o plano, com o plano aberto: quem ele tirou (pode permitir que volte pelo link). */
 	removed: { uid: string; name: string }[];
 	/** Preenchido quando o plano virou grupo. `groupId` só vai para quem entrou no grupo. */
-	closed: { groupName: string; groupId: string | null; expenseId: string | null } | null;
+	closed: { groupName: string; groupId: string | null; expenseId: string | null; hasExpense: boolean } | null;
 };
 
 export type PlanSummary = {
@@ -97,6 +97,8 @@ export type PlanSummary = {
 	/** Você (ou alguém por quem você responde) ainda não respondeu. */
 	needsMyAnswer: boolean;
 	isCreator: boolean;
+	/** Plano fechado que lançou a despesa inicial; falso quando virou só o grupo (ou não foi fechado). */
+	hasExpense: boolean;
 };
 
 /** Quantas pessoas contam em "se forem todas": o previsto pelo criador (sem ficar abaixo de quem já está no plano). */
@@ -211,7 +213,7 @@ export function buildPlanView(
 		people,
 		attachments: plan.attachments.map((a) => ({ id: a.id, name: a.name, contentType: a.contentType, size: a.size })),
 		removed: isCreator && open ? (plan.removed ?? []).map((uid) => ({ uid, name: info(uid).name })) : [],
-		closed: closing && plan.groupName ? { groupName: plan.groupName, groupId: closed?.groupId ?? null, expenseId: closed?.groupId ? (plan.expenseId ?? null) : null } : null,
+		closed: closing && plan.groupName ? { groupName: plan.groupName, groupId: closed?.groupId ?? null, expenseId: closed?.groupId ? (plan.expenseId ?? null) : null, hasExpense: !!plan.expenseId } : null,
 	};
 }
 
@@ -235,5 +237,6 @@ export function buildPlanSummary(plan: PlanDoc, caller: string): PlanSummary {
 		shareIfAllCents: maxShare(plan.totalCents, allCount),
 		needsMyAnswer: mine.some((id) => answerOf(plan, id) === "pending"),
 		isCreator: caller === plan.createdBy,
+		hasExpense: plan.status === "done" && !!plan.expenseId,
 	};
 }

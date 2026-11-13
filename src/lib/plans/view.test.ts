@@ -149,8 +149,14 @@ describe("respostas e permissões", () => {
 	});
 	it("plano fechado: link do grupo só para quem entrou nele", () => {
 		const done = plan({ status: "done", groupName: "Hotel", expenseId: "507f1f77bcf86cd799439012" });
-		expect(buildPlanView(done, "ana", info, { groupId: "g1" }).closed).toEqual({ groupName: "Hotel", groupId: "g1", expenseId: "507f1f77bcf86cd799439012" });
-		expect(buildPlanView(done, "bia", info, { groupId: null }).closed).toEqual({ groupName: "Hotel", groupId: null, expenseId: null });
+		expect(buildPlanView(done, "ana", info, { groupId: "g1" }).closed).toEqual({ groupName: "Hotel", groupId: "g1", expenseId: "507f1f77bcf86cd799439012", hasExpense: true });
+		expect(buildPlanView(done, "bia", info, { groupId: null }).closed).toEqual({ groupName: "Hotel", groupId: null, expenseId: null, hasExpense: true });
+	});
+	it("plano fechado só com o grupo: sem despesa na visão e no resumo", () => {
+		const done = plan({ status: "done", groupName: "Sítio" });
+		expect(buildPlanView(done, "ana", info, { groupId: "g1" }).closed).toEqual({ groupName: "Sítio", groupId: "g1", expenseId: null, hasExpense: false });
+		expect(buildPlanSummary(done, "ana").hasExpense).toBe(false);
+		expect(buildPlanSummary(plan({ status: "done", expenseId: "507f1f77bcf86cd799439012" }), "ana").hasExpense).toBe(true);
 	});
 	it("quantas pessoas previstas: placar, faltantes e parte de todos", () => {
 		const v = buildPlanView(plan({ expectedPeople: 10 }), "bia", info);

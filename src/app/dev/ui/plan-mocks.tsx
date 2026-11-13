@@ -72,9 +72,10 @@ const ABOVE = doc({
 	resp: [["rafa", true], ["maria", true, 15000], ["jose", true, 60000], ["lucia", true], ["pg_1", true, 10000]],
 });
 const DONE = { ...FITS_DETAILS, status: "done" as const, groupId: "1", groupName: "Viagem de fim de ano", expenseId: "e1" };
+const DONE_GROUP_ONLY: PlanDoc = { ...DONE, expenseId: undefined };
 const CANCELLED = { ...FITS, status: "cancelled" as const };
 
-export type PlanScene = "respondendo-limite" | "respondendo-limite-abaixo" | "respondendo-hoje" | "removidos" | "fecha" | "fecha-detalhes" | "nao-fecha" | "acima-limite" | "acima-limite-alto" | "acima-limite-outros" | "criador-limites" | "virou" | "cancelado" | "respondendo";
+export type PlanScene = "respondendo-limite" | "respondendo-limite-abaixo" | "respondendo-hoje" | "removidos" | "fecha" | "fecha-detalhes" | "nao-fecha" | "acima-limite" | "acima-limite-alto" | "acima-limite-outros" | "criador-limites" | "virou" | "virou-sem-despesa" | "cancelado" | "respondendo";
 
 const REMOVED = { ...FITS, removed: ["zeca"] };
 const TODAY_PLAN = doc({ uids: ["rafa", "maria", "ana"], resp: [["rafa", true], ["maria", true, 60000]], expectedPeople: undefined, totalCents: 150000, name: "Passeio de barco" });
@@ -92,6 +93,7 @@ const SCENES: Record<PlanScene, { plan: PlanDoc; as: string; photos?: boolean; a
 	"acima-limite-outros": { plan: ABOVE, as: "lucia" },
 	"criador-limites": { plan: ABOVE, as: "rafa" },
 	virou: { plan: DONE, as: "ana", photos: true },
+	"virou-sem-despesa": { plan: DONE_GROUP_ONLY, as: "ana", photos: true },
 	cancelado: { plan: CANCELLED, as: "ana" },
 	respondendo: { plan: doc({ uids: ["rafa", "ana"], resp: [["rafa", true]], expectedPeople: 10 }), as: "ana" },
 };
@@ -117,7 +119,7 @@ export function MockPlan({ scene, framed = true }: Readonly<{ scene: PlanScene; 
 				onAllowReturn={noop}
 				mockAsking={s.asking}
 				groupHref={view.closed?.groupId ? "/app/grupos/1" : null}
-				expenseHref={view.closed?.groupId ? "/app/grupos/1/despesas/e1" : null}
+				expenseHref={view.closed?.groupId && view.closed.expenseId ? "/app/grupos/1/despesas/e1" : null}
 			/>
 			<Sheet open={share} onClose={() => setShare(false)} title="Compartilhar o plano">
 				<ShareExpenseContent
@@ -193,9 +195,9 @@ export function MockPlanForm({ filled = false, errors = false, framed = true }: 
 	);
 }
 
-export function MockPlanClose({ fits = true, framed = true }: Readonly<{ fits?: boolean; framed?: boolean }>) {
+export function MockPlanClose({ fits = true, groupOnly = false, framed = true }: Readonly<{ fits?: boolean; groupOnly?: boolean; framed?: boolean }>) {
 	const plan = buildPlanView(fits ? FITS : NOT_FIT, "rafa", info);
-	const [values, setValues] = useState<CloseValues>(() => initialClose(plan));
+	const [values, setValues] = useState<CloseValues>(() => ({ ...initialClose(plan), withExpense: !groupOnly }));
 	return (
 		<Shell pathname="/app/planos/p1/fechar" framed={framed}>
 			<PlanCloseView
@@ -232,7 +234,7 @@ const uniqueIds = (list: PlanSummary[], prefix: string): PlanSummary[] => list.m
 export function MockPlanList({ framed = true }: Readonly<{ framed?: boolean }>) {
 	const [showOld, setShowOld] = useState(false);
 	const open = uniqueIds([buildPlanSummary(FITS, "ana"), buildPlanSummary(NOT_FIT, "jose"), buildPlanSummary(ABOVE, "lucia")], "a");
-	const old = uniqueIds([buildPlanSummary(DONE, "ana"), buildPlanSummary(CANCELLED, "ana")], "o");
+	const old = uniqueIds([buildPlanSummary(DONE, "ana"), buildPlanSummary(DONE_GROUP_ONLY, "ana"), buildPlanSummary(CANCELLED, "ana")], "o");
 	return (
 		<Shell pathname="/app" framed={framed}>
 			<PlansSectionView plans={open} oldPlans={showOld ? old : null} loading={false} onToggleOld={() => setShowOld((s) => !s)} />

@@ -25,7 +25,7 @@ export async function rollbackAttempt(db: Db, planId: ObjectId, closing: Closing
 		console.error("closePlan rollback error: plan");
 	}
 	if (opts.onlyIfReverted && !reverted) return false;
-	if (isObjectIdHex(closing.expenseId)) {
+	if (closing.expenseId && isObjectIdHex(closing.expenseId)) {
 		try {
 			await expensesCollection(db).deleteOne({ _id: new ObjectId(closing.expenseId), planId: planId.toHexString() });
 		} catch {

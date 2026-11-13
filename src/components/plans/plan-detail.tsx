@@ -251,7 +251,7 @@ export function PlanDetailView(p: Readonly<PlanDetailViewProps>) {
 			<header className="space-y-1">
 				<p className="flex flex-wrap gap-2 pb-1">
 					{plan.status === "cancelled" && <StatusChip tone="owe">Cancelado</StatusChip>}
-					{plan.status === "done" && <StatusChip tone="ok">Virou grupo e despesa</StatusChip>}
+					{plan.status === "done" && <StatusChip tone="ok">{plan.closed?.hasExpense === false ? "Virou grupo" : "Virou grupo e despesa"}</StatusChip>}
 					{plan.status === "closing" && <StatusChip tone="wait">Criando o grupo...</StatusChip>}
 					{plan.status === "open" && <StatusChip tone="wait">Em planejamento</StatusChip>}
 				</p>
@@ -272,6 +272,7 @@ export function PlanDetailView(p: Readonly<PlanDetailViewProps>) {
 
 			{plan.status === "done" && plan.closed && (
 				<Banner icon="check" title={`Virou o grupo ${plan.closed.groupName}`} role="status">
+					{!plan.closed.hasExpense && <p>Grupo criado. Nenhuma despesa foi lançada ainda.</p>}
 					<div className="flex flex-col gap-2 pt-2 sm:flex-row">
 						{p.groupHref ? (
 							<Button href={p.groupHref} size="md" variant="tonal" icon="group">
@@ -380,7 +381,7 @@ export function PlanDetailView(p: Readonly<PlanDetailViewProps>) {
 								</Banner>
 							)}
 							<Button href={`${base}/fechar`} variant={plan.result.fits ? "filled" : "tonal"} icon="group" fullWidth>
-								Criar grupo e despesa
+								Criar o grupo
 							</Button>
 						</div>
 					)}

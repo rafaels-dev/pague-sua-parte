@@ -25,14 +25,15 @@ describe("textos do plano", () => {
 		expect(scoreLines({ answeredCount: 4, allCount: 4, missingCount: 0 })).toEqual({ answered: "4 de 4 já responderam", missing: null });
 	});
 	it("summaryLine: plano aberto mostra a meta, nunca o placar de agora", () => {
-		const s = { status: "open" as const, expectedPeople: 13, allCount: 13, shareIfAllCents: 21924, peopleCount: 2 };
+		const s = { status: "open" as const, hasExpense: false, expectedPeople: 13, allCount: 13, shareIfAllCents: 21924, peopleCount: 2 };
 		expect(summaryLine(s)).toBe("Meta: 13 pessoas · R$ 219,24 cada");
 		expect(summaryLine({ ...s, expectedPeople: null, allCount: 2, shareIfAllCents: 142500 })).toBe("2 pessoas no plano");
 		expect(summaryLine({ ...s, expectedPeople: null, allCount: 1, peopleCount: 1 })).toBe("1 pessoa no plano");
 		expect(summaryLine({ ...s, shareIfAllCents: null })).toBe("2 pessoas no plano");
 		expect(summaryLine(s)).not.toMatch(/vai|vão|fecha/i);
 		expect(summaryLine({ ...s, status: "cancelled" })).toBe("Cancelado");
-		expect(summaryLine({ ...s, status: "done" })).toBe("Virou grupo e despesa");
+		expect(summaryLine({ ...s, status: "done", hasExpense: true })).toBe("Virou grupo e despesa");
+		expect(summaryLine({ ...s, status: "done", hasExpense: false })).toBe("Virou grupo");
 	});
 	it("frase ao vivo: só quando o limite digitado fica abaixo da parte de hoje", () => {
 		const ana = { name: "Ana", isYou: true, answer: "pending" as const };
